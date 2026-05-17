@@ -40,6 +40,8 @@ pub struct AgentSettings {
     pub loop_detection_window: usize,
     #[serde(default = "default_loop_detection_enabled")]
     pub loop_detection_enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_attributes: Vec<String>,
 }
 
 impl Default for AgentSettings {
@@ -52,6 +54,7 @@ impl Default for AgentSettings {
             step_timeout_seconds: default_step_timeout_seconds(),
             loop_detection_window: default_loop_detection_window(),
             loop_detection_enabled: default_loop_detection_enabled(),
+            include_attributes: Vec::new(),
         }
     }
 }
@@ -1644,6 +1647,11 @@ pub fn build_step_request(
 ) -> Result<ChatRequest, AgentRunError> {
     let mut state_for_text = state.clone();
     state_for_text.screenshot = None;
+    if !settings.include_attributes.is_empty() {
+        state_for_text.dom_state.text = state
+            .dom_state
+            .llm_representation_with_attributes(&settings.include_attributes);
+    }
     let state_json = serde_json::to_string_pretty(&state_for_text)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history);
@@ -1857,6 +1865,7 @@ mod tests {
         assert_eq!(settings.step_timeout_seconds, 180);
         assert_eq!(settings.loop_detection_window, 20);
         assert!(settings.loop_detection_enabled);
+        assert!(settings.include_attributes.is_empty());
     }
 
     #[test]
@@ -3461,6 +3470,48 @@ mod tests {
         };
         assert!(text.contains("Browser state"));
         assert!(!text.contains("abc123"));
+    }
+
+    #[test]
+    fn step_request_uses_custom_dom_include_attributes() {
+        let mut state = blank_state();
+        state.dom_state = SerializedDomState::from_elements(vec![browser_use_dom::DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 1,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Run".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("data-testid".to_owned(), "run-action".to_owned()),
+                ("id".to_owned(), "run".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        }]);
+        let settings = AgentSettings {
+            include_attributes: vec!["data-testid".to_owned()],
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("click run", &state, &AgentHistory::default(), &settings)
+            .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+
+        assert!(text.contains(r#""text": "[1] <button data-testid=run-action> Run""#));
+        assert!(!text.contains(r#""text": "[1] <button id=run> Run""#));
     }
 
     #[test]

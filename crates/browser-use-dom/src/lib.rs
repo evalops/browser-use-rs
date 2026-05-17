@@ -171,11 +171,43 @@ impl SerializedDomState {
     pub fn llm_representation(&self) -> &str {
         self.text.as_str()
     }
+
+    #[must_use]
+    pub fn llm_representation_with_attributes(&self, include_attributes: &[String]) -> String {
+        if include_attributes.is_empty() {
+            return self.text.clone();
+        }
+
+        self.selector_map
+            .values()
+            .map(|element| render_element_line_with_attributes(element, include_attributes))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[must_use]
 pub fn render_element_line(element: &DomElementRef) -> String {
-    let attributes = render_element_attributes(element);
+    render_element_line_with_attribute_names(element, DEFAULT_RENDER_ATTRIBUTES)
+}
+
+#[must_use]
+pub fn render_element_line_with_attributes(
+    element: &DomElementRef,
+    include_attributes: &[String],
+) -> String {
+    let include_attributes = include_attributes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    render_element_line_with_attribute_names(element, &include_attributes)
+}
+
+fn render_element_line_with_attribute_names(
+    element: &DomElementRef,
+    include_attributes: &[&str],
+) -> String {
+    let attributes = render_element_attributes_with_attribute_names(element, include_attributes);
     let tag = if attributes.is_empty() {
         format!("<{}>", element.tag_name)
     } else {
@@ -265,6 +297,25 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
 
 #[must_use]
 pub fn render_element_attributes(element: &DomElementRef) -> String {
+    render_element_attributes_with_attribute_names(element, DEFAULT_RENDER_ATTRIBUTES)
+}
+
+#[must_use]
+pub fn render_element_attributes_with_attributes(
+    element: &DomElementRef,
+    include_attributes: &[String],
+) -> String {
+    let include_attributes = include_attributes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    render_element_attributes_with_attribute_names(element, &include_attributes)
+}
+
+fn render_element_attributes_with_attribute_names(
+    element: &DomElementRef,
+    include_attributes: &[&str],
+) -> String {
     let is_password_field = element.tag_name.eq_ignore_ascii_case("input")
         && element
             .attributes
@@ -272,7 +323,7 @@ pub fn render_element_attributes(element: &DomElementRef) -> String {
             .is_some_and(|value| value.eq_ignore_ascii_case("password"));
     let text = render_element_text(element);
 
-    DEFAULT_RENDER_ATTRIBUTES
+    include_attributes
         .iter()
         .filter_map(|attribute| {
             let value = render_attribute_value(element, attribute)?;
@@ -646,6 +697,35 @@ mod tests {
         assert_eq!(
             state.llm_representation(),
             "[7] |scroll element| <section id=results> Results"
+        );
+    }
+
+    #[test]
+    fn llm_representation_can_use_custom_include_attributes() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Run".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("data-testid".to_owned(), "run-action".to_owned()),
+                ("id".to_owned(), "run".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let state = SerializedDomState::from_elements(vec![element]);
+
+        assert_eq!(state.llm_representation(), "[1] <button id=run> Run");
+        assert_eq!(
+            state.llm_representation_with_attributes(&["data-testid".to_owned()]),
+            "[1] <button data-testid=run-action> Run"
         );
     }
 }
