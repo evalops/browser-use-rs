@@ -464,10 +464,15 @@ where
                 })
             }
         }
-        BrowserAction::UploadFile(_) => Ok(ActionResult::error(format!(
-            "action not implemented yet: {}",
-            action.name()
-        ))),
+        BrowserAction::UploadFile(params) => {
+            session
+                .upload_file(params.index, std::path::Path::new(&params.path))
+                .await?;
+            Ok(ActionResult::extracted(format!(
+                "Uploaded {} to element {}",
+                params.path, params.index
+            )))
+        }
     }
 }
 
@@ -762,7 +767,7 @@ mod tests {
     use browser_use_tools::{
         ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
         GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction, SearchPageAction,
-        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
+        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction, UploadFileAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1022,6 +1027,18 @@ mod tests {
             Ok(())
         }
 
+        async fn upload_file(
+            &self,
+            index: u32,
+            path: &std::path::Path,
+        ) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("upload_file:{index}:{}", path.display()));
+            Ok(())
+        }
+
         async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
             self.events
                 .lock()
@@ -1136,6 +1153,29 @@ mod tests {
 
         assert_eq!(result.error, None);
         assert_eq!(executor.session().events(), vec!["send_keys:EvalOps"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_upload_file_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "/tmp/evalops-upload.txt".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("Uploaded /tmp/evalops-upload.txt to element 3")
+        );
+        assert_eq!(
+            executor.session().events(),
+            vec!["upload_file:3:/tmp/evalops-upload.txt"]
+        );
     }
 
     #[tokio::test]
@@ -1430,9 +1470,8 @@ mod tests {
             "current_state": {},
             "action": [
                 {
-                    "upload_file": {
-                        "index": 1,
-                        "path": "/tmp/missing.txt"
+                    "click": {
+                        "coordinate_x": 10
                     }
                 }
             ]

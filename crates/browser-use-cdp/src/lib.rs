@@ -1227,6 +1227,102 @@ JSON.stringify((() => {{
         Ok(())
     }
 
+    async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError> {
+        let canonical_path = std::fs::canonicalize(path).map_err(|error| {
+            BrowserError::ActionFailed(format!(
+                "failed to resolve upload file '{}': {error}",
+                path.display()
+            ))
+        })?;
+        if !canonical_path.is_file() {
+            return Err(BrowserError::ActionFailed(format!(
+                "upload path is not a file: {}",
+                canonical_path.display()
+            )));
+        }
+        let path_string = canonical_path.to_str().ok_or_else(|| {
+            BrowserError::ActionFailed(format!(
+                "upload path is not valid UTF-8: {}",
+                canonical_path.display()
+            ))
+        })?;
+
+        let token = format!(
+            "browser-use-rs-upload-{}",
+            self.connection.next_id.fetch_add(1, Ordering::Relaxed)
+        );
+        let token_json = serde_json::to_string(&token)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        self.evaluate_effect(element_eval_js(
+            index,
+            &format!(
+                r#"
+  if (el.tagName.toLowerCase() !== 'input' || el.type !== 'file') {{
+    throw new Error('Element is not a file input');
+  }}
+  el.setAttribute('data-browser-use-rs-upload-token', {token_json});
+  return true;
+"#
+            ),
+        ))
+        .await?;
+
+        let page = self.current_page().await;
+        let document = self
+            .connection
+            .command(
+                "DOM.getDocument",
+                json!({ "depth": -1, "pierce": true }),
+                Some(&page.session_id),
+            )
+            .await?;
+        let root_node_id = document
+            .get("root")
+            .and_then(|root| u32_field(root, "nodeId"))
+            .ok_or_else(|| {
+                BrowserError::MissingResponseData("DOM.getDocument root nodeId".to_owned())
+            })?;
+        let selector = format!(r#"[data-browser-use-rs-upload-token="{token}"]"#);
+        let query_result = self
+            .connection
+            .command(
+                "DOM.querySelector",
+                json!({
+                    "nodeId": root_node_id,
+                    "selector": selector,
+                }),
+                Some(&page.session_id),
+            )
+            .await?;
+        let node_id = u32_field(&query_result, "nodeId")
+            .filter(|node_id| *node_id != 0)
+            .ok_or_else(|| {
+                BrowserError::MissingResponseData("DOM.querySelector nodeId".to_owned())
+            })?;
+
+        self.connection
+            .command(
+                "DOM.setFileInputFiles",
+                json!({
+                    "nodeId": node_id,
+                    "files": [path_string],
+                }),
+                Some(&page.session_id),
+            )
+            .await?;
+
+        self.evaluate_effect(element_eval_js(
+            index,
+            r#"
+  el.removeAttribute('data-browser-use-rs-upload-token');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+"#,
+        ))
+        .await
+    }
+
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
         let page = self.current_page().await;
         let result = self
@@ -1328,6 +1424,8 @@ pub trait BrowserSession: Send + Sync {
     ) -> Result<Vec<FoundElement>, BrowserError>;
 
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError>;
+
+    async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError>;
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError>;
 
@@ -1497,10 +1595,13 @@ mod tests {
         let session = CdpBrowserSession::launch(&profile)
             .await
             .expect("launch CDP session");
+        let upload_dir = tempfile::tempdir().expect("upload temp dir");
+        let upload_path = upload_dir.path().join("sample-upload.txt");
+        std::fs::write(&upload_path, "EvalOps upload smoke").expect("write upload file");
 
         session
             .navigate(
-                "data:text/html,<html><head><title>browser-use-rs smoke</title></head><body><button onclick=\"document.title='clicked'\">Click me</button><input placeholder='Name'><div style='height:2000px'>Scroll target</div></body></html>",
+                "data:text/html,<html><head><title>browser-use-rs smoke</title></head><body><button onclick=\"document.title='clicked'\">Click me</button><input placeholder='Name'><input type='file' onchange=\"document.body.dataset.uploaded=this.files[0]?.name || ''\"><div style='height:2000px'>Scroll target</div></body></html>",
                 false,
             )
             .await
@@ -1508,7 +1609,7 @@ mod tests {
         sleep(Duration::from_millis(100)).await;
 
         let initial_state = session.state(false).await.expect("initial state");
-        assert_eq!(initial_state.dom_state.element_count(), 2);
+        assert_eq!(initial_state.dom_state.element_count(), 3);
         assert!(
             initial_state
                 .dom_state
@@ -1526,6 +1627,15 @@ mod tests {
             .click_coordinates(20, 20)
             .await
             .expect("coordinate click");
+        session
+            .upload_file(3, &upload_path)
+            .await
+            .expect("upload file");
+        let uploaded_name = session
+            .evaluate_json("document.body.dataset.uploaded || ''")
+            .await
+            .expect("uploaded file name");
+        assert_eq!(uploaded_name.as_str(), Some("sample-upload.txt"));
         session.scroll(None, true, 0.25).await.expect("scroll");
 
         let state = session.state(true).await.expect("state");
