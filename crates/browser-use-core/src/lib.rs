@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Write;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
 use uuid::Uuid;
@@ -195,6 +195,24 @@ pub struct AgentHistoryItem {
     pub model_output: Option<AgentOutput>,
     pub result: Vec<ActionResult>,
     pub state: BrowserStateSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<StepMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StepMetadata {
+    pub step_start_time: f64,
+    pub step_end_time: f64,
+    pub step_number: usize,
+    #[serde(default)]
+    pub step_interval: Option<f64>,
+}
+
+impl StepMetadata {
+    #[must_use]
+    pub fn duration_seconds(&self) -> f64 {
+        self.step_end_time - self.step_start_time
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1550,6 +1568,7 @@ where
     }
 
     async fn step_inner(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        let step_start_time = now_seconds();
         let state = self
             .executor
             .session()
@@ -1566,10 +1585,12 @@ where
         })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
-        self.record_model_output(state, model_output).await
+        self.record_model_output(state, model_output, Some(step_start_time))
+            .await
     }
 
     async fn step_recovering_model_errors(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        let step_start_time = now_seconds();
         let state = self
             .executor
             .session()
@@ -1584,7 +1605,11 @@ where
         {
             Ok(Ok(completion)) => completion,
             Ok(Err(error)) => {
-                return self.record_model_error(state, format!("LLM provider error: {error}"));
+                return self.record_model_error(
+                    state,
+                    format!("LLM provider error: {error}"),
+                    Some(step_start_time),
+                );
             }
             Err(_) => {
                 return self.record_model_error(
@@ -1593,22 +1618,29 @@ where
                         "LLM call timed out after {} seconds",
                         self.settings.llm_timeout_seconds
                     ),
+                    Some(step_start_time),
                 );
             }
         };
         let model_output: AgentOutput = match serde_json::from_value(completion.content) {
             Ok(model_output) => model_output,
             Err(error) => {
-                return self.record_model_error(state, format!("invalid agent output: {error}"));
+                return self.record_model_error(
+                    state,
+                    format!("invalid agent output: {error}"),
+                    Some(step_start_time),
+                );
             }
         };
-        self.record_model_output(state, model_output).await
+        self.record_model_output(state, model_output, Some(step_start_time))
+            .await
     }
 
     async fn record_model_output(
         &mut self,
         state: BrowserStateSummary,
         model_output: AgentOutput,
+        step_start_time: Option<f64>,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
         let result = if model_output.action.len() > self.settings.max_actions_per_step {
             vec![ActionResult::error(format!(
@@ -1619,11 +1651,13 @@ where
         } else {
             self.executor.execute_sequence(&model_output.action).await
         };
+        let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
         self.history.items.push(AgentHistoryItem {
             model_output: Some(model_output),
             result,
             state,
+            metadata,
         });
 
         self.history
@@ -1636,11 +1670,14 @@ where
         &mut self,
         state: BrowserStateSummary,
         error: String,
+        step_start_time: Option<f64>,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
+        let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
         self.history.items.push(AgentHistoryItem {
             model_output: None,
             result: vec![ActionResult::error(error)],
             state,
+            metadata,
         });
 
         self.history
@@ -1648,6 +1685,29 @@ where
             .last()
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
+
+    fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
+        let step_interval = self
+            .history
+            .items
+            .last()
+            .and_then(|item| item.metadata.as_ref())
+            .map(|metadata| metadata.duration_seconds().max(0.0));
+
+        StepMetadata {
+            step_start_time,
+            step_end_time,
+            step_number: self.history.items.len() + 1,
+            step_interval,
+        }
+    }
+}
+
+fn now_seconds() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 
 pub fn build_step_request(
@@ -1886,6 +1946,7 @@ mod tests {
                 model_output: None,
                 result: vec![ActionResult::done("finished", true)],
                 state: blank_state(),
+                metadata: None,
             }],
         };
 
@@ -1903,11 +1964,13 @@ mod tests {
                     model_output: None,
                     result: vec![ActionResult::error("first failure")],
                     state: blank_state(),
+                    metadata: None,
                 },
                 AgentHistoryItem {
                     model_output: None,
                     result: vec![ActionResult::done("could not finish", false)],
                     state: blank_state(),
+                    metadata: None,
                 },
             ],
         };
@@ -1916,6 +1979,37 @@ mod tests {
         assert!(history.is_done());
         assert_eq!(history.is_successful(), Some(false));
         assert_eq!(history.errors(), vec!["first failure"]);
+    }
+
+    #[test]
+    fn step_metadata_matches_browser_use_shape() {
+        let metadata = StepMetadata {
+            step_number: 2,
+            step_start_time: 10.0,
+            step_end_time: 13.5,
+            step_interval: Some(2.0),
+        };
+
+        assert_eq!(metadata.duration_seconds(), 3.5);
+
+        let serialized = serde_json::to_value(&metadata).expect("serialize metadata");
+        assert_eq!(serialized["step_number"], 2);
+        assert_eq!(serialized["step_start_time"], 10.0);
+        assert_eq!(serialized["step_end_time"], 13.5);
+        assert_eq!(serialized["step_interval"], 2.0);
+
+        let without_interval: StepMetadata = serde_json::from_value(serde_json::json!({
+            "step_number": 1,
+            "step_start_time": 1.0,
+            "step_end_time": 2.0
+        }))
+        .expect("deserialize old metadata");
+        assert_eq!(without_interval.step_interval, None);
+
+        let serialized_without_interval =
+            serde_json::to_value(&without_interval).expect("serialize metadata");
+        assert!(serialized_without_interval.get("step_interval").is_some());
+        assert_eq!(serialized_without_interval["step_interval"], Value::Null);
     }
 
     fn blank_state() -> BrowserStateSummary {
@@ -3070,6 +3164,11 @@ mod tests {
         let item = agent.step().await.expect("agent step");
 
         assert_eq!(item.result, vec![ActionResult::done("finished", true)]);
+        let metadata = item.metadata.as_ref().expect("step metadata");
+        assert_eq!(metadata.step_number, 1);
+        assert_eq!(metadata.step_interval, None);
+        assert!(metadata.step_end_time >= metadata.step_start_time);
+        assert!(metadata.duration_seconds() >= 0.0);
         assert_eq!(agent.history().final_result(), Some("finished"));
     }
 
@@ -3252,6 +3351,12 @@ mod tests {
         let history = agent.run(3).await.expect("agent run");
 
         assert_eq!(history.items.len(), 2);
+        let first_metadata = history.items[0].metadata.as_ref().expect("first metadata");
+        assert_eq!(first_metadata.step_number, 1);
+        assert_eq!(first_metadata.step_interval, None);
+        let second_metadata = history.items[1].metadata.as_ref().expect("second metadata");
+        assert_eq!(second_metadata.step_number, 2);
+        assert!(second_metadata.step_interval.unwrap_or(-1.0) >= 0.0);
         assert_eq!(history.final_result(), Some("recovered"));
         assert_eq!(history.is_successful(), Some(true));
         assert_eq!(history.errors().len(), 1);
@@ -3430,6 +3535,7 @@ mod tests {
                 model_output: None,
                 result: vec![ActionResult::extracted("Clicked element 1")],
                 state: blank_state(),
+                metadata: None,
             }],
         };
 
@@ -3567,11 +3673,13 @@ mod tests {
                         metadata: None,
                     }],
                     state: blank_state(),
+                    metadata: None,
                 },
                 AgentHistoryItem {
                     model_output: None,
                     result: vec![ActionResult::extracted("Clicked element 1")],
                     state: blank_state(),
+                    metadata: None,
                 },
             ],
         };
@@ -3599,6 +3707,7 @@ mod tests {
                     metadata: None,
                 }],
                 state: blank_state(),
+                metadata: None,
             }],
         };
 

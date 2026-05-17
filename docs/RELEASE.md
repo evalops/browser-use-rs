@@ -33,14 +33,14 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   steps, max failures, step and LLM timeouts, repeated-action loop detection,
   previous result context, vision-aware screenshot capture and image prompt
   parts, compact page-stat prompt context, one-time extraction replay handling,
-  invalid model-output recovery, and typed history/final-result/success/error
-  accessors.
+  invalid model-output recovery, per-step timing metadata, and typed
+  history/final-result/success/error accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.
 - Scripted agent replay conformance fixture for schema-guided model output,
   previous-result prompt context, action execution, `done`, and serialized
-  history.
+  history, with semantic checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and

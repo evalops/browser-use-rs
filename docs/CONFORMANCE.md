@@ -21,7 +21,7 @@ browser-use where compatibility is claimed.
    switching, downloads, screenshots, and PDF output.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, prompt attribute settings, extraction
-   metadata, done semantics, and final history.
+   metadata, per-step timing metadata, done semantics, and final history.
 5. Provider contracts: OpenAI-compatible, Anthropic, Gemini, and Ollama
    structured-output payloads first, then generic HTTP and additional provider
    adapters as compatibility expands.
@@ -47,4 +47,6 @@ Upstream bumps must include:
   sequence harness.
 - `simple_agent_history.json`: deterministic scripted-agent replay fixture
   covering schema-guided model output, previous-result prompt context, browser
-  action execution, `done`, and serialized history.
+  action execution, `done`, and serialized history. Runtime step timing
+  metadata is asserted semantically before dynamic timestamps are stripped for
+  golden comparison.

@@ -292,7 +292,7 @@ mod tests {
         };
         let mut agent = Agent::with_settings("Click the Run button", settings, llm, session);
 
-        let actual = {
+        let mut actual = {
             let history = agent.run(2).await.expect("agent run");
             assert!(history.is_done());
             assert_eq!(history.final_result(), Some("Clicked Run"));
@@ -301,6 +301,8 @@ mod tests {
         };
 
         assert_eq!(*clicked.lock().expect("clicked lock"), vec![1]);
+        assert_agent_step_metadata(&actual);
+        strip_agent_step_metadata(&mut actual);
         let expected: Value =
             serde_json::from_str(include_str!("../fixtures/simple_agent_history.json"))
                 .expect("agent history fixture");
@@ -312,6 +314,38 @@ mod tests {
         let request_text = serde_json::to_string(&requests[1]).expect("request text");
         assert!(request_text.contains("Previous action results"));
         assert!(request_text.contains("Clicked element 1"));
+    }
+
+    fn assert_agent_step_metadata(history: &Value) {
+        let items = history["items"].as_array().expect("history items");
+        assert_eq!(items.len(), 2);
+
+        let first = &items[0]["metadata"];
+        assert_eq!(first["step_number"], 1);
+        assert!(first["step_start_time"].as_f64().expect("first start") > 0.0);
+        assert!(
+            first["step_end_time"].as_f64().expect("first end")
+                >= first["step_start_time"].as_f64().unwrap()
+        );
+        assert!(first["step_interval"].is_null());
+
+        let second = &items[1]["metadata"];
+        assert_eq!(second["step_number"], 2);
+        assert!(second["step_start_time"].as_f64().expect("second start") > 0.0);
+        assert!(
+            second["step_end_time"].as_f64().expect("second end")
+                >= second["step_start_time"].as_f64().unwrap()
+        );
+        assert!(second["step_interval"].as_f64().expect("second interval") >= 0.0);
+    }
+
+    fn strip_agent_step_metadata(history: &mut Value) {
+        let items = history["items"].as_array_mut().expect("history items");
+        for item in items {
+            item.as_object_mut()
+                .expect("history item object")
+                .remove("metadata");
+        }
     }
 
     fn fixture_browser_state() -> BrowserStateSummary {

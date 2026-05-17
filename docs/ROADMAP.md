@@ -48,7 +48,7 @@ Implemented:
   prompt context, vision-aware screenshot capture and image prompt parts,
   one-time extraction replay handling, invalid model-output recovery,
   custom prompt-visible DOM attributes, structured extraction metadata,
-  final-result, success, and error helpers.
+  per-step timing metadata, final-result, success, and error helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
@@ -58,7 +58,7 @@ Implemented:
 - Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
 - Conformance fixtures cover a scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`, and
-  serialized history.
+  serialized history, plus semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes common ARIA widget roles and disclosure elements,
   carries image alt text into image-only control names, renders selected
