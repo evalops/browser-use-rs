@@ -308,6 +308,7 @@ fn render_attribute_value(element: &DomElementRef, attribute: &str) -> Option<St
         .get(attribute)
         .or_else(|| aliased_render_attribute(element, attribute))
         .map(|value| value.trim().to_owned())
+        .or_else(|| synthetic_render_attribute(element, attribute))
         .filter(|value| !value.is_empty())
 }
 
@@ -322,6 +323,47 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
         _ => return None,
     };
     element.attributes.get(alias)
+}
+
+fn synthetic_render_attribute(element: &DomElementRef, attribute: &str) -> Option<String> {
+    let input_type = element.attributes.get("type")?.to_ascii_lowercase();
+    if !element.tag_name.eq_ignore_ascii_case("input") {
+        return None;
+    }
+
+    match attribute {
+        "format" => native_input_format(&input_type).map(str::to_owned),
+        "placeholder" => {
+            native_input_placeholder(&input_type, &element.attributes).map(str::to_owned)
+        }
+        _ => None,
+    }
+}
+
+fn native_input_format(input_type: &str) -> Option<&'static str> {
+    match input_type {
+        "date" => Some("YYYY-MM-DD"),
+        "time" => Some("HH:MM"),
+        "datetime-local" => Some("YYYY-MM-DDTHH:MM"),
+        "month" => Some("YYYY-MM"),
+        "week" => Some("YYYY-W##"),
+        _ => None,
+    }
+}
+
+fn native_input_placeholder(
+    input_type: &str,
+    attributes: &BTreeMap<String, String>,
+) -> Option<&'static str> {
+    match input_type {
+        "date" => Some("YYYY-MM-DD"),
+        "time" => Some("HH:MM"),
+        "datetime-local" => Some("YYYY-MM-DDTHH:MM"),
+        "month" => Some("YYYY-MM"),
+        "week" => Some("YYYY-W##"),
+        "tel" if !attributes.contains_key("pattern") => Some("123-456-7890"),
+        _ => None,
+    }
 }
 
 fn cap_attribute_value(value: &str) -> String {
@@ -526,5 +568,53 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "aria-expanded=true aria-checked=true");
+    }
+
+    #[test]
+    fn rendered_attributes_add_native_input_format_hints() {
+        let date = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Start date".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "start".to_owned()),
+                ("type".to_owned(), "date".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let tel = DomElementRef {
+            index: 2,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Phone".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("type".to_owned(), "tel".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let state = SerializedDomState::from_elements(vec![date, tel]);
+
+        assert!(state.llm_representation().contains(
+            "[1] <input type=date id=start placeholder=YYYY-MM-DD format=YYYY-MM-DD> Start date"
+        ));
+        assert!(
+            state
+                .llm_representation()
+                .contains("[2] <input type=tel placeholder=123-456-7890> Phone")
+        );
     }
 }
