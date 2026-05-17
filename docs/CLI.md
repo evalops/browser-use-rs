@@ -11,6 +11,7 @@ browser-use-rs version-target
 browser-use-rs schema action
 browser-use-rs schema browser-state
 browser-use-rs mcp-tools
+browser-use-rs mcp-stdio
 browser-use-rs open <url>
 browser-use-rs state <url> [--screenshot]
 browser-use-rs screenshot <url> <output.png>
@@ -51,11 +52,16 @@ Agent runs use the same one-shot browser lifecycle and accept
 `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_BASE_URL` from the environment.
 They print the typed `AgentHistory` JSON after the bounded run completes.
 
+`mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
+supports `initialize`, `ping`, `tools/list`, and `tools/call` for
+`browser_use_state`, `browser_use_actions`, and `browser_use_agent`.
+
 ## Current Limits
 
 - Commands are not persistent sessions yet.
 - DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
-- Indexed click/input work for same-document interactive elements; iframe and
-  shadow-root support belong to the DOM parity track.
+- Indexed actions currently target same-document interactive elements; iframe
+  and shadow-root support belong to the DOM parity track.
 - Agent runs currently use the OpenAI-compatible Chat Completions adapter.
-- MCP is not implemented yet.
+- MCP tools are real over stdio, but each call still launches a fresh browser
+  session.

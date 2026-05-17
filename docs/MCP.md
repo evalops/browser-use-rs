@@ -1,7 +1,14 @@
 # MCP
 
-`browser-use-mcp` owns the stable JSON tool contracts that the MCP server will
-expose.
+`browser-use-mcp` owns the stable JSON tool contracts used by the stdio MCP
+server exposed through:
+
+```sh
+browser-use-rs mcp-stdio
+```
+
+The server implements newline-delimited JSON-RPC over stdin/stdout for the MCP
+`2025-06-18` lifecycle and tools surface.
 
 Current tool contracts:
 
@@ -13,11 +20,21 @@ Current tool contracts:
   typed agent history.
 
 Provider secrets are intentionally not part of MCP tool input schemas. A server
-implementation should read provider credentials from its process environment or
-host configuration.
+implementation reads provider credentials from its process environment or host
+configuration. `browser_use_agent` requires `OPENAI_API_KEY` plus either a tool
+`model` argument or `OPENAI_MODEL`; `OPENAI_BASE_URL` is optional.
 
 To inspect the manifest from the CLI:
 
 ```sh
 browser-use-rs mcp-tools
+```
+
+Minimal protocol smoke:
+
+```sh
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | browser-use-rs mcp-stdio
 ```

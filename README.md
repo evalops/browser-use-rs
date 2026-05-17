@@ -22,10 +22,11 @@ This repository is brand new. The initial milestones are:
 4. DOM and accessibility snapshot serialization compatible with browser-use's
    numbered element/action model.
 5. Built-in tools: `navigate`, `search`, `click`, `input`, `scroll`,
-   `send_keys`, `screenshot`, `extract`, and `done`.
+   `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`, `extract`,
+   `search_page`, `find_elements`, tab actions, dropdown actions, and `done`.
 6. Agent loop: state construction, schema-guided LLM output, retries, step
    limits, page-change guards, loop detection, and history.
-7. CLI, daemon sessions, MCP server, and conformance harnesses.
+7. CLI, MCP server, daemon sessions, and conformance harnesses.
 
 ## Design Rules
 
@@ -59,7 +60,8 @@ result, then exits.
 
 See [docs/CLI.md](docs/CLI.md).
 
-The MCP contract surface is documented in [docs/MCP.md](docs/MCP.md).
+The MCP stdio server and contract surface are documented in
+[docs/MCP.md](docs/MCP.md).
 
 ## Development
 

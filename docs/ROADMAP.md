@@ -23,18 +23,20 @@ Implemented:
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
-- Minimal CDP WebSocket session for navigation, URL/title state, screenshots,
-  coordinate clicks, scroll, and compact DOM-indexed click/input actions.
-- One-shot CLI commands backed by the CDP session.
+- CDP WebSocket session for navigation, tab switching/closing, URL/title state,
+  screenshots, PDF capture, file uploads, coordinate clicks, scroll, and compact
+  DOM-indexed browser actions.
+- One-shot CLI commands and a stdio MCP server backed by the CDP session.
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, and max-failure handling.
 - OpenAI-compatible Chat Completions provider with structured-output request
   payloads.
 - One-shot CLI agent command backed by the provider abstraction.
-- MCP tool contract schemas for state, actions, and agent runs.
+- MCP tool contract schemas and stdio JSON-RPC tool execution for state,
+  actions, and agent runs.
 
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Add persistent CLI/MCP sessions.
-3. Add loop-detection and timeout enforcement in the agent loop.
+3. Expand agent planning, loop detection, and provider parity.

@@ -7,6 +7,8 @@ use browser_use_core::{BrowserActionExecutor, execute_action_sequence};
 use browser_use_llm::OpenAiCompatibleChatModel;
 use clap::Parser;
 use schemars::schema_for;
+use serde_json::Value;
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 
 #[derive(Debug, Parser)]
@@ -27,6 +29,8 @@ enum Command {
     Schema { contract: SchemaContract },
     /// Print the MCP tool manifest JSON exposed by browser-use-mcp.
     McpTools,
+    /// Run a stdio MCP server exposing browser-use tools.
+    McpStdio,
     /// Launch Chrome, navigate to a URL, print state JSON, then exit.
     Open { url: String },
     /// Launch Chrome, navigate to a URL, and print browser state JSON.
@@ -109,6 +113,9 @@ async fn main() -> anyhow::Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&browser_use_mcp::tool_manifest_json())?
             );
+        }
+        Some(Command::McpStdio) => {
+            run_mcp_stdio().await?;
         }
         Some(Command::Open { url }) => {
             let session = launch_and_navigate(&url).await?;
@@ -199,4 +206,146 @@ async fn print_state(session: &CdpBrowserSession, include_screenshot: bool) -> a
     let state = session.state(include_screenshot).await?;
     println!("{}", serde_json::to_string_pretty(&state)?);
     Ok(())
+}
+
+async fn run_mcp_stdio() -> anyhow::Result<()> {
+    let stdin = BufReader::new(io::stdin());
+    let mut lines = stdin.lines();
+    let mut stdout = io::stdout();
+
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(response) = handle_mcp_message(&line).await {
+            let mut encoded = serde_json::to_vec(&response)?;
+            encoded.push(b'\n');
+            stdout.write_all(&encoded).await?;
+            stdout.flush().await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_mcp_message(raw: &str) -> Option<Value> {
+    let request = match serde_json::from_str::<browser_use_mcp::JsonRpcRequest>(raw) {
+        Ok(request) => request,
+        Err(error) => {
+            return Some(browser_use_mcp::json_rpc_error(
+                None,
+                -32700,
+                format!("Parse error: {error}"),
+            ));
+        }
+    };
+
+    let id = request.id.clone()?;
+
+    if request.jsonrpc != "2.0" {
+        return Some(browser_use_mcp::json_rpc_error(
+            Some(id),
+            -32600,
+            "Invalid JSON-RPC version",
+        ));
+    }
+
+    match request.method.as_str() {
+        "initialize" => Some(browser_use_mcp::json_rpc_success(
+            id,
+            browser_use_mcp::initialize_result(),
+        )),
+        "ping" => Some(browser_use_mcp::json_rpc_success(id, serde_json::json!({}))),
+        "tools/list" => Some(browser_use_mcp::json_rpc_success(
+            id,
+            browser_use_mcp::tools_list_result(),
+        )),
+        "tools/call" => Some(handle_mcp_tool_call(id, request.params).await),
+        method => Some(browser_use_mcp::json_rpc_error(
+            Some(id),
+            -32601,
+            format!("Method not found: {method}"),
+        )),
+    }
+}
+
+async fn handle_mcp_tool_call(id: Value, params: Option<Value>) -> Value {
+    let params = match serde_json::from_value::<browser_use_mcp::CallToolParams>(
+        params.unwrap_or(Value::Null),
+    ) {
+        Ok(params) => params,
+        Err(error) => {
+            return browser_use_mcp::json_rpc_error(
+                Some(id),
+                -32602,
+                format!("Invalid tools/call params: {error}"),
+            );
+        }
+    };
+
+    if !matches!(
+        params.name.as_str(),
+        browser_use_mcp::STATE_TOOL_NAME
+            | browser_use_mcp::ACTIONS_TOOL_NAME
+            | browser_use_mcp::AGENT_TOOL_NAME
+    ) {
+        return browser_use_mcp::json_rpc_error(
+            Some(id),
+            -32602,
+            format!("Unknown tool: {}", params.name),
+        );
+    }
+
+    let result = execute_mcp_tool(&params.name, params.arguments)
+        .await
+        .unwrap_or_else(|error| browser_use_mcp::tool_error_result(error.to_string()));
+    browser_use_mcp::json_rpc_success(id, result)
+}
+
+async fn execute_mcp_tool(name: &str, arguments: Value) -> anyhow::Result<Value> {
+    match name {
+        browser_use_mcp::STATE_TOOL_NAME => {
+            let input: browser_use_mcp::StateToolInput = serde_json::from_value(arguments)?;
+            let session = launch_and_navigate(&input.url).await?;
+            let state = session.state(input.screenshot).await?;
+            let output = browser_use_mcp::StateToolOutput { state };
+            Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
+                output,
+            )?))
+        }
+        browser_use_mcp::ACTIONS_TOOL_NAME => {
+            let input: browser_use_mcp::ActionsToolInput = serde_json::from_value(arguments)?;
+            let session = launch_and_navigate(&input.url).await?;
+            let mut executor = BrowserActionExecutor::new(session);
+            let results = execute_action_sequence(&mut executor, &input.actions).await;
+            let state = executor.session().state(input.screenshot).await?;
+            let output = browser_use_mcp::ActionsToolOutput { results, state };
+            Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
+                output,
+            )?))
+        }
+        browser_use_mcp::AGENT_TOOL_NAME => {
+            let input: browser_use_mcp::AgentToolInput = serde_json::from_value(arguments)?;
+            let api_key = std::env::var("OPENAI_API_KEY")?;
+            let model = input
+                .model
+                .or_else(|| std::env::var("OPENAI_MODEL").ok())
+                .ok_or_else(|| anyhow::anyhow!("OPENAI_MODEL or model input is required"))?;
+            let base_url = input
+                .base_url
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+            let session = launch_and_navigate(&input.url).await?;
+            let llm = OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url);
+            let mut agent = browser_use_core::Agent::new(input.task, llm, session);
+            let history = agent.run(input.max_steps).await?;
+            let output = browser_use_mcp::AgentToolOutput {
+                history: history.clone(),
+            };
+            Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
+                output,
+            )?))
+        }
+        _ => unreachable!("tool name was validated before execution"),
+    }
 }
