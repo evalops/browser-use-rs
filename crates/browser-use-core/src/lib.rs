@@ -9,6 +9,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use async_trait::async_trait;
+use base64::Engine;
 use browser_use_cdp::{BrowserError, BrowserSession};
 use url::form_urlencoded;
 
@@ -325,14 +326,59 @@ where
                 params.text, params.index
             )))
         }
+        BrowserAction::SendKeys(params) => {
+            session.send_keys(&params.keys).await?;
+            Ok(ActionResult::extracted(format!(
+                "Sent keys '{}'",
+                params.keys
+            )))
+        }
+        BrowserAction::SaveAsPdf(params) => {
+            let pdf = session
+                .save_pdf(
+                    params.print_background,
+                    params.landscape,
+                    params.scale,
+                    &params.paper_format,
+                )
+                .await?;
+
+            if let Some(file_name) = &params.file_name {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&pdf.base64_pdf)
+                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+                std::fs::write(file_name, bytes)
+                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+                Ok(ActionResult {
+                    extracted_content: Some(format!("Saved PDF to {file_name}")),
+                    error: None,
+                    long_term_memory: Some(format!("Saved PDF to {file_name}")),
+                    include_extracted_content_only_once: true,
+                    include_in_memory: true,
+                    is_done: false,
+                    success: None,
+                })
+            } else {
+                Ok(ActionResult {
+                    extracted_content: Some(format!(
+                        "Captured PDF ({} base64 chars)",
+                        pdf.base64_pdf.len()
+                    )),
+                    error: None,
+                    long_term_memory: None,
+                    include_extracted_content_only_once: true,
+                    include_in_memory: false,
+                    is_done: false,
+                    success: None,
+                })
+            }
+        }
         BrowserAction::Extract(_)
         | BrowserAction::SearchPage(_)
         | BrowserAction::FindElements(_)
         | BrowserAction::SwitchTab(_)
         | BrowserAction::CloseTab(_)
-        | BrowserAction::SendKeys(_)
-        | BrowserAction::UploadFile(_)
-        | BrowserAction::SaveAsPdf(_) => Ok(ActionResult::error(format!(
+        | BrowserAction::UploadFile(_) => Ok(ActionResult::error(format!(
             "action not implemented yet: {}",
             action.name()
         ))),
@@ -566,11 +612,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use browser_use_cdp::Screenshot;
+    use browser_use_cdp::{Pdf, Screenshot};
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
-        ClickElementAction, DoneAction, GetDropdownOptionsAction, NavigateAction,
-        SelectDropdownOptionAction,
+        ClickElementAction, DoneAction, GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction,
+        SelectDropdownOptionAction, SendKeysAction,
     };
     use std::{collections::VecDeque, sync::Mutex};
 
@@ -778,6 +824,14 @@ mod tests {
             Ok(())
         }
 
+        async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("send_keys:{keys}"));
+            Ok(())
+        }
+
         async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
             self.events
                 .lock()
@@ -785,6 +839,21 @@ mod tests {
                 .push("screenshot".to_owned());
             Ok(Screenshot {
                 base64_png: "abc".to_owned(),
+            })
+        }
+
+        async fn save_pdf(
+            &self,
+            print_background: bool,
+            landscape: bool,
+            scale: f64,
+            paper_format: &str,
+        ) -> Result<Pdf, BrowserError> {
+            self.events.lock().expect("events lock").push(format!(
+                "save_pdf:{print_background}:{landscape}:{scale}:{paper_format}"
+            ));
+            Ok(Pdf {
+                base64_pdf: base64::engine::general_purpose::STANDARD.encode("%PDF-1.7"),
             })
         }
     }
@@ -837,6 +906,57 @@ mod tests {
         assert_eq!(
             executor.session().events(),
             vec!["dropdown_options:1", "select_dropdown_option:1:Two"]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_send_keys_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::SendKeys(SendKeysAction {
+                keys: "EvalOps".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(executor.session().events(), vec!["send_keys:EvalOps"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_saves_pdf_when_file_name_is_present() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let output_path = temp_dir.path().join("out.pdf");
+        let output = output_path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::SaveAsPdf(SaveAsPdfAction {
+                file_name: Some(output.clone()),
+                print_background: true,
+                landscape: false,
+                scale: 1.0,
+                paper_format: "Letter".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert!(
+            result
+                .extracted_content
+                .expect("pdf content")
+                .contains(&output)
+        );
+        assert!(
+            std::fs::read(&output_path)
+                .expect("pdf file")
+                .starts_with(b"%PDF")
+        );
+        assert_eq!(
+            executor.session().events(),
+            vec!["save_pdf:true:false:1:Letter"]
         );
     }
 

@@ -8,6 +8,7 @@ rust-version.workspace = true
 authors.workspace = true
 
 [dependencies]
+base64.workspace = true
 browser-use-cdp = { path = "../browser-use-cdp" }
 browser-use-dom = { path = "../browser-use-dom" }
 browser-use-llm = { path = "../browser-use-llm" }
@@ -20,3 +21,6 @@ thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

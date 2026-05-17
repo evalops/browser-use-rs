@@ -144,6 +144,7 @@ name = "browser-use-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "browser-use-cdp",
  "browser-use-dom",
  "browser-use-llm",
@@ -151,6 +152,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "url",

@@ -172,6 +172,11 @@ pub struct Screenshot {
     pub base64_png: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pdf {
+    pub base64_pdf: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserViewport {
     pub width: u32,
@@ -941,8 +946,11 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
-        self.evaluate_effect(element_action_js(index, "el.click();"))
-            .await
+        self.evaluate_effect(element_action_js(
+            index,
+            "if (typeof el.focus === 'function') el.focus(); el.click();",
+        ))
+        .await
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
@@ -1034,6 +1042,19 @@ impl BrowserSession for CdpBrowserSession {
         .await
     }
 
+    async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
+        self.connection
+            .command(
+                "Input.insertText",
+                json!({
+                    "text": keys,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
         let result = self
             .connection
@@ -1057,6 +1078,47 @@ impl BrowserSession for CdpBrowserSession {
 
         Ok(Screenshot { base64_png })
     }
+
+    async fn save_pdf(
+        &self,
+        print_background: bool,
+        landscape: bool,
+        scale: f64,
+        paper_format: &str,
+    ) -> Result<Pdf, BrowserError> {
+        let (paper_width, paper_height) = paper_size_inches(paper_format);
+        let result = self
+            .connection
+            .command(
+                "Page.printToPDF",
+                json!({
+                    "printBackground": print_background,
+                    "landscape": landscape,
+                    "scale": scale,
+                    "paperWidth": paper_width,
+                    "paperHeight": paper_height,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+
+        let base64_pdf = result
+            .get("data")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| BrowserError::MissingResponseData("Page.printToPDF data".to_owned()))?;
+
+        Ok(Pdf { base64_pdf })
+    }
+}
+
+fn paper_size_inches(format: &str) -> (f64, f64) {
+    match format.to_ascii_lowercase().as_str() {
+        "a4" => (8.27, 11.69),
+        "legal" => (8.5, 14.0),
+        "tabloid" => (11.0, 17.0),
+        _ => (8.5, 11.0),
+    }
 }
 
 #[async_trait]
@@ -1077,7 +1139,17 @@ pub trait BrowserSession: Send + Sync {
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
 
+    async fn send_keys(&self, keys: &str) -> Result<(), BrowserError>;
+
     async fn screenshot(&self) -> Result<Screenshot, BrowserError>;
+
+    async fn save_pdf(
+        &self,
+        print_background: bool,
+        landscape: bool,
+        scale: f64,
+        paper_format: &str,
+    ) -> Result<Pdf, BrowserError>;
 }
 
 #[cfg(test)]
