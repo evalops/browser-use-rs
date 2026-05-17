@@ -29,9 +29,9 @@ includes:
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file
-  read/write/replace, `screenshot`, `save_as_pdf`, `extract`, `search_page`,
-  `find_elements`, back navigation, 4-character tab-id actions, native/ARIA
-  dropdown actions, and `done`.
+  read/write/replace, `screenshot`, `save_as_pdf` with filename normalization,
+  `extract`, `search_page`, `find_elements`, back navigation, 4-character
+  tab-id actions, native/ARIA dropdown actions, and `done`.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture and screenshot image prompts, compact
   page-stat prompt context, one-time extraction replay handling, step/LLM

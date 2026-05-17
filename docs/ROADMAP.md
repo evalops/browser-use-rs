@@ -26,6 +26,8 @@ Implemented:
 - Built-in browser action parity for wait/sleep steps with the upstream default
   and bounded delay behavior, browser-history back navigation, and text-target
   scrolling, plus browser JavaScript evaluation.
+- PDF save action behavior for local files, including default page-title names,
+  `.pdf` extension normalization, and duplicate filename avoidance.
 - Built-in text-file read/write/replace action parity for local agent artifacts.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use

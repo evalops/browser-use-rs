@@ -575,35 +575,34 @@ where
                 )
                 .await?;
 
-            if let Some(file_name) = &params.file_name {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&pdf.base64_pdf)
-                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-                std::fs::write(file_name, bytes)
-                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-                Ok(ActionResult {
-                    extracted_content: Some(format!("Saved PDF to {file_name}")),
-                    error: None,
-                    long_term_memory: Some(format!("Saved PDF to {file_name}")),
-                    include_extracted_content_only_once: true,
-                    include_in_memory: true,
-                    is_done: false,
-                    success: None,
-                })
+            let page_title = if params.file_name.is_none() {
+                session.state(false).await.ok().map(|state| state.title)
             } else {
-                Ok(ActionResult {
-                    extracted_content: Some(format!(
-                        "Captured PDF ({} base64 chars)",
-                        pdf.base64_pdf.len()
-                    )),
-                    error: None,
-                    long_term_memory: None,
-                    include_extracted_content_only_once: true,
-                    include_in_memory: false,
-                    is_done: false,
-                    success: None,
-                })
+                None
+            };
+            let output_path = pdf_output_path(params.file_name.as_deref(), page_title.as_deref());
+            if let Some(parent) = output_path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             }
+            let output_path = next_available_pdf_path(output_path);
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&pdf.base64_pdf)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            std::fs::write(&output_path, bytes)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            let file_name = output_path.display().to_string();
+            Ok(ActionResult {
+                extracted_content: Some(format!("Saved PDF to {file_name}")),
+                error: None,
+                long_term_memory: Some(format!("Saved PDF to {file_name}")),
+                include_extracted_content_only_once: true,
+                include_in_memory: true,
+                is_done: false,
+                success: None,
+            })
         }
         BrowserAction::UploadFile(params) => {
             session
@@ -620,6 +619,84 @@ where
             replace_file_action(&params.file_name, &params.old_str, &params.new_str)
         }
     }
+}
+
+fn pdf_output_path(file_name: Option<&str>, page_title: Option<&str>) -> std::path::PathBuf {
+    let raw_name = file_name
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            page_title
+                .map(sanitize_pdf_title)
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| "page".to_owned())
+        });
+    let path = std::path::PathBuf::from(raw_name);
+    ensure_pdf_extension(path)
+}
+
+fn sanitize_pdf_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|character| {
+            character.is_alphanumeric()
+                || *character == '_'
+                || *character == ' '
+                || *character == '-'
+        })
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(50)
+        .collect()
+}
+
+fn ensure_pdf_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
+    let has_pdf_extension = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|file_name| file_name.to_ascii_lowercase().ends_with(".pdf"));
+    if has_pdf_extension {
+        return path;
+    }
+
+    let Some(file_name) = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+    else {
+        return std::path::PathBuf::from("page.pdf");
+    };
+    path.set_file_name(format!("{file_name}.pdf"));
+    path
+}
+
+fn next_available_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    if !path.exists() {
+        return path;
+    }
+
+    let parent = path.parent().map(std::path::Path::to_path_buf);
+    let stem = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("page");
+    let extension = path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("pdf");
+
+    for counter in 1.. {
+        let candidate_name = format!("{stem} ({counter}).{extension}");
+        let candidate = parent.as_ref().map_or_else(
+            || std::path::PathBuf::from(&candidate_name),
+            |parent| parent.join(&candidate_name),
+        );
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded PDF filename counter should always return")
 }
 
 fn write_file_action(
@@ -2062,8 +2139,9 @@ mod tests {
     #[tokio::test]
     async fn browser_executor_saves_pdf_when_file_name_is_present() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
+        let requested_output_path = temp_dir.path().join("out");
         let output_path = temp_dir.path().join("out.pdf");
-        let output = output_path.display().to_string();
+        let output = requested_output_path.display().to_string();
         let session = MockSession::new();
         let mut executor = BrowserActionExecutor::new(session);
 
@@ -2082,7 +2160,7 @@ mod tests {
             result
                 .extracted_content
                 .expect("pdf content")
-                .contains(&output)
+                .contains(&output_path.display().to_string())
         );
         assert!(
             std::fs::read(&output_path)
@@ -2092,6 +2170,30 @@ mod tests {
         assert_eq!(
             executor.session().events(),
             vec!["save_pdf:true:false:1:Letter"]
+        );
+    }
+
+    #[test]
+    fn pdf_output_path_uses_sanitized_title_and_deduplicates() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let existing = temp_dir.path().join("Quarterly Plan  2026.pdf");
+        std::fs::write(&existing, b"existing").expect("existing pdf");
+
+        let output = pdf_output_path(None, Some("Quarterly: Plan / 2026"));
+        assert_eq!(output, std::path::PathBuf::from("Quarterly Plan  2026.pdf"));
+
+        let duplicate = next_available_pdf_path(existing);
+        assert_eq!(
+            duplicate.file_name().and_then(std::ffi::OsStr::to_str),
+            Some("Quarterly Plan  2026 (1).pdf")
+        );
+        assert_eq!(
+            pdf_output_path(Some("/tmp/report"), None),
+            std::path::PathBuf::from("/tmp/report.pdf")
+        );
+        assert_eq!(
+            pdf_output_path(Some("/tmp/report.PDF"), None),
+            std::path::PathBuf::from("/tmp/report.PDF")
         );
     }
 
