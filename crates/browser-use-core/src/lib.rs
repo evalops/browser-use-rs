@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use async_trait::async_trait;
 use base64::Engine;
-use browser_use_cdp::{BrowserError, BrowserSession};
+use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
 use url::form_urlencoded;
 
 pub use browser_use_dom::BrowserStateSummary;
@@ -489,23 +489,42 @@ where
         BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
         BrowserAction::Extract(params) => {
             let text = session.page_text().await?;
-            let extracted: String = text
-                .chars()
-                .skip(params.start_from_char)
-                .take(4_000)
-                .collect();
-            Ok(ActionResult {
-                extracted_content: Some(format!(
-                    "Extracted page content for '{}':\n{}",
-                    params.query, extracted
-                )),
-                error: None,
-                long_term_memory: Some(extracted),
-                include_extracted_content_only_once: true,
-                include_in_memory: true,
-                is_done: false,
-                success: None,
-            })
+            let extract_images = should_extract_images(&params.query, params.extract_images);
+            let links = if params.extract_links {
+                Some(
+                    session
+                        .find_elements(
+                            "a[href]",
+                            &extract_link_attributes(),
+                            MAX_EXTRACT_RELATED_ELEMENTS,
+                            true,
+                        )
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let images = if extract_images {
+                Some(
+                    session
+                        .find_elements(
+                            "img[src], img[data-src], picture source[srcset]",
+                            &extract_image_attributes(),
+                            MAX_EXTRACT_RELATED_ELEMENTS,
+                            false,
+                        )
+                        .await?,
+                )
+            } else {
+                None
+            };
+            Ok(extract_action_result(
+                params,
+                &text,
+                extract_images,
+                links.as_deref(),
+                images.as_deref(),
+            ))
         }
         BrowserAction::SearchPage(params) => {
             let text = if let Some(scope) = &params.css_scope {
@@ -641,6 +660,224 @@ where
             replace_file_action(&params.file_name, &params.old_str, &params.new_str)
         }
     }
+}
+
+const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
+const MAX_EXTRACT_RELATED_ELEMENTS: usize = 200;
+const IMAGE_QUERY_KEYWORDS: &[&str] = &[
+    "image",
+    "photo",
+    "picture",
+    "thumbnail",
+    "img url",
+    "image url",
+    "photo url",
+    "product image",
+];
+
+fn should_extract_images(query: &str, requested: bool) -> bool {
+    let query = query.to_ascii_lowercase();
+    requested
+        || IMAGE_QUERY_KEYWORDS
+            .iter()
+            .any(|keyword| query.contains(keyword))
+}
+
+fn extract_action_result(
+    params: &browser_use_tools::ExtractAction,
+    page_text: &str,
+    extract_images: bool,
+    links: Option<&[FoundElement]>,
+    images: Option<&[FoundElement]>,
+) -> ActionResult {
+    let total_chars = page_text.chars().count();
+    if params.start_from_char > total_chars {
+        return ActionResult::error(format!(
+            "start_from_char ({}) exceeds content length {total_chars} characters.",
+            params.start_from_char
+        ));
+    }
+
+    let available_chars = total_chars.saturating_sub(params.start_from_char);
+    let truncated = available_chars > MAX_EXTRACT_CHAR_LIMIT;
+    let content: String = page_text
+        .chars()
+        .skip(params.start_from_char)
+        .take(MAX_EXTRACT_CHAR_LIMIT)
+        .collect();
+    let next_start_char = params.start_from_char + content.chars().count();
+    let content_stats = extract_content_stats(
+        total_chars,
+        params.start_from_char,
+        content.chars().count(),
+        truncated,
+        next_start_char,
+        params.extract_links,
+        extract_images,
+    );
+    let rendered = render_extract_envelope(params, &content, &content_stats, links, images);
+    let memory = if rendered.chars().count() < 10_000 {
+        rendered.clone()
+    } else {
+        format!(
+            "Query: {}\nContent prepared for extraction, length: {} characters.",
+            params.query,
+            content.chars().count()
+        )
+    };
+
+    ActionResult {
+        extracted_content: Some(rendered),
+        error: None,
+        long_term_memory: Some(memory),
+        include_extracted_content_only_once: true,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+    }
+}
+
+fn extract_content_stats(
+    total_chars: usize,
+    start_from_char: usize,
+    content_chars: usize,
+    truncated: bool,
+    next_start_char: usize,
+    extract_links: bool,
+    extract_images: bool,
+) -> String {
+    let mut stats =
+        format!("Content processed: {total_chars} text chars -> {total_chars} filtered text chars");
+    if start_from_char > 0 {
+        stats.push_str(&format!(" (started from char {start_from_char})"));
+    }
+    if truncated {
+        stats.push_str(&format!(
+            " -> {content_chars} final chars (use start_from_char={next_start_char} to continue)"
+        ));
+    }
+    if extract_links || extract_images {
+        stats.push_str(&format!(
+            "\nExtraction options: extract_links={extract_links}, extract_images={extract_images}"
+        ));
+    }
+    stats
+}
+
+fn render_extract_envelope(
+    params: &browser_use_tools::ExtractAction,
+    content: &str,
+    content_stats: &str,
+    links: Option<&[FoundElement]>,
+    images: Option<&[FoundElement]>,
+) -> String {
+    let mut rendered = format!("<query>\n{}\n</query>\n\n", params.query);
+
+    if let Some(schema) = &params.output_schema {
+        let schema = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+        rendered.push_str(&format!("<output_schema>\n{schema}\n</output_schema>\n\n"));
+    }
+
+    rendered.push_str(&format!(
+        "<content_stats>\n{content_stats}\n</content_stats>\n\n<webpage_content>\n{content}\n</webpage_content>"
+    ));
+
+    if let Some(links) = links.and_then(render_link_appendix) {
+        rendered.push_str(&format!("\n\n<links>\n{links}\n</links>"));
+    }
+
+    if let Some(images) = images.and_then(render_image_appendix) {
+        rendered.push_str(&format!("\n\n<images>\n{images}\n</images>"));
+    }
+
+    if !params.already_collected.is_empty() {
+        let items = params
+            .already_collected
+            .iter()
+            .take(100)
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        rendered.push_str(&format!(
+            "\n\n<already_collected>\nSkip items whose name/title/URL matches any of these already-collected identifiers:\n{items}\n</already_collected>"
+        ));
+    }
+
+    rendered
+}
+
+fn render_link_appendix(elements: &[FoundElement]) -> Option<String> {
+    let lines = elements
+        .iter()
+        .filter_map(|element| {
+            let href = element.attributes.get("href")?.trim();
+            if href.is_empty() {
+                return None;
+            }
+            let label = element_label(element)
+                .filter(|label| !label.is_empty())
+                .unwrap_or(href);
+            Some(format!("- {label}: {href}"))
+        })
+        .collect::<Vec<_>>();
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn render_image_appendix(elements: &[FoundElement]) -> Option<String> {
+    let lines = elements
+        .iter()
+        .filter_map(|element| {
+            let src = element
+                .attributes
+                .get("src")
+                .or_else(|| element.attributes.get("data-src"))
+                .or_else(|| element.attributes.get("srcset"))?
+                .trim();
+            if src.is_empty() {
+                return None;
+            }
+            let label = element_label(element)
+                .filter(|label| !label.is_empty())
+                .unwrap_or("image");
+            Some(format!("- {label}: {src}"))
+        })
+        .collect::<Vec<_>>();
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn element_label(element: &FoundElement) -> Option<&str> {
+    element
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .or_else(|| attr_label(element, "alt"))
+        .or_else(|| attr_label(element, "title"))
+        .or_else(|| attr_label(element, "aria-label"))
+}
+
+fn attr_label<'a>(element: &'a FoundElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .get(name)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_link_attributes() -> Vec<String> {
+    ["href", "title", "aria-label", "rel"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn extract_image_attributes() -> Vec<String> {
+    ["src", "data-src", "srcset", "alt", "title", "aria-label"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 fn pdf_output_path(file_name: Option<&str>, page_title: Option<&str>) -> std::path::PathBuf {
@@ -1747,6 +1984,26 @@ mod tests {
                 "find_elements:{selector}:{}:{max_results}:{include_text}",
                 attributes.join("|")
             ));
+            if selector == "a[href]" {
+                let mut attrs = BTreeMap::new();
+                attrs.insert("href".to_owned(), "https://evalops.dev/run".to_owned());
+                attrs.insert("title".to_owned(), "Run EvalOps".to_owned());
+                return Ok(vec![FoundElement {
+                    tag_name: "a".to_owned(),
+                    text: include_text.then(|| "Run EvalOps".to_owned()),
+                    attributes: attrs,
+                }]);
+            }
+            if selector == "img[src], img[data-src], picture source[srcset]" {
+                let mut attrs = BTreeMap::new();
+                attrs.insert("src".to_owned(), "https://evalops.dev/hero.png".to_owned());
+                attrs.insert("alt".to_owned(), "Hero shot".to_owned());
+                return Ok(vec![FoundElement {
+                    tag_name: "img".to_owned(),
+                    text: include_text.then(|| "ignored".to_owned()),
+                    attributes: attrs,
+                }]);
+            }
             let mut attrs = BTreeMap::new();
             attrs.insert("id".to_owned(), "run".to_owned());
             Ok(vec![FoundElement {
@@ -2328,7 +2585,76 @@ mod tests {
             .await;
 
         let content = result.extracted_content.expect("extracted content");
+        assert!(content.contains("<query>\ncompany\n</query>"));
+        assert!(content.contains("<content_stats>"));
+        assert!(content.contains("started from char 6"));
+        assert!(content.contains("<webpage_content>"));
         assert!(content.contains("EvalOps Beta"));
+        assert_eq!(executor.session().events(), vec!["page_text"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_extracts_links_images_schema_and_dedupe_hints() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Extract(ExtractAction {
+                query: "product image URLs".to_owned(),
+                extract_links: true,
+                extract_images: false,
+                start_from_char: 0,
+                output_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "products": { "type": "array" }
+                    }
+                })),
+                already_collected: vec!["Existing product".to_owned()],
+            }))
+            .await;
+
+        let content = result.extracted_content.expect("extracted content");
+        assert!(content.contains("<output_schema>"));
+        assert!(content.contains(r#""type": "object""#));
+        assert!(content.contains("extract_links=true, extract_images=true"));
+        assert!(content.contains("<links>\n- Run EvalOps: https://evalops.dev/run\n</links>"));
+        assert!(content.contains("<images>\n- Hero shot: https://evalops.dev/hero.png\n</images>"));
+        assert!(content.contains("<already_collected>"));
+        assert!(content.contains("- Existing product"));
+        assert_eq!(
+            executor.session().events(),
+            vec![
+                "page_text",
+                "find_elements:a[href]:href|title|aria-label|rel:200:true",
+                "find_elements:img[src], img[data-src], picture source[srcset]:src|data-src|srcset|alt|title|aria-label:200:false"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_extract_start_beyond_content() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Extract(ExtractAction {
+                query: "company".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 999,
+                output_schema: None,
+                already_collected: vec![],
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("extract error")
+                .contains("exceeds content length")
+        );
         assert_eq!(executor.session().events(), vec!["page_text"]);
     }
 
