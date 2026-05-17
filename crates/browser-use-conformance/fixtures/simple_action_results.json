@@ -1,0 +1,16 @@
+[
+  {
+    "extracted_content": "Clicked element 1",
+    "long_term_memory": "Clicked element 1",
+    "include_extracted_content_only_once": false,
+    "include_in_memory": false,
+    "is_done": false
+  },
+  {
+    "extracted_content": "Typed text into element 2",
+    "long_term_memory": "Typed text into element 2",
+    "include_extracted_content_only_once": false,
+    "include_in_memory": false,
+    "is_done": false
+  }
+]

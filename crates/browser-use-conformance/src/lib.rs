@@ -40,6 +40,8 @@ pub fn simple_interactive_state() -> SerializedDomState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use browser_use_core::{ActionExecutor, ActionResult, execute_action_sequence};
     use browser_use_tools::BrowserAction;
     use schemars::schema_for;
     use serde_json::Value;
@@ -59,8 +61,55 @@ mod tests {
         let schema = serde_json::to_value(schema_for!(BrowserAction)).expect("serialize schema");
         let schema_text = serde_json::to_string(&schema).expect("schema text");
 
-        for action in ["navigate", "click", "input", "scroll", "screenshot", "done"] {
+        for action in [
+            "navigate",
+            "click",
+            "input",
+            "scroll",
+            "screenshot",
+            "send_keys",
+            "save_as_pdf",
+            "extract",
+            "search_page",
+            "find_elements",
+            "done",
+        ] {
             assert!(schema_text.contains(action), "schema missing {action}");
         }
+    }
+
+    struct FixtureExecutor;
+
+    #[async_trait]
+    impl ActionExecutor for FixtureExecutor {
+        async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
+            match action {
+                BrowserAction::Click(params) => {
+                    ActionResult::extracted(format!("Clicked element {}", params.index.unwrap()))
+                }
+                BrowserAction::Input(params) => {
+                    ActionResult::extracted(format!("Typed text into element {}", params.index))
+                }
+                other => {
+                    ActionResult::error(format!("unexpected fixture action: {}", other.name()))
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn simple_action_sequence_matches_golden_results() {
+        let actions: Vec<BrowserAction> =
+            serde_json::from_str(include_str!("../fixtures/simple_action_sequence.json"))
+                .expect("action fixture");
+        let expected: Value =
+            serde_json::from_str(include_str!("../fixtures/simple_action_results.json"))
+                .expect("result fixture");
+        let mut executor = FixtureExecutor;
+
+        let results = execute_action_sequence(&mut executor, &actions).await;
+        let actual = serde_json::to_value(results).expect("serialize results");
+
+        assert_eq!(actual, expected);
     }
 }

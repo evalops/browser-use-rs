@@ -33,3 +33,10 @@ Upstream bumps must include:
 - A summary of changed contracts.
 - Updated conformance fixtures or explicit deferred gaps.
 - A changelog entry describing compatibility impact.
+
+## Current Fixtures
+
+- `simple_interactive_state.json`: compact DOM text and selector-map fixture.
+- `simple_action_sequence.json`: typed browser action sequence fixture.
+- `simple_action_results.json`: expected action-result fixture for the action
+  sequence harness.

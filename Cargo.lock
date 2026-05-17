@@ -142,10 +142,13 @@ dependencies = [
 name = "browser-use-conformance"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "browser-use-core",
  "browser-use-dom",
  "browser-use-tools",
  "schemars",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

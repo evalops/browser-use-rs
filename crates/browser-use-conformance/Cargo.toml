@@ -12,3 +12,8 @@ browser-use-dom = { path = "../browser-use-dom" }
 browser-use-tools = { path = "../browser-use-tools" }
 schemars.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+browser-use-core = { path = "../browser-use-core" }
+tokio.workspace = true

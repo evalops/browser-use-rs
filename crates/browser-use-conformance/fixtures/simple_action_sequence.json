@@ -1,0 +1,14 @@
+[
+  {
+    "click": {
+      "index": 1
+    }
+  },
+  {
+    "input": {
+      "index": 2,
+      "text": "EvalOps",
+      "clear": true
+    }
+  }
+]
