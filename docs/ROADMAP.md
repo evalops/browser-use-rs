@@ -36,8 +36,9 @@ Implemented:
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, max-failure handling, step and LLM timeouts, invalid model-output
   recovery, final-result, success, and error helpers.
-- OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini
-  GenerateContent providers with structured-output request payloads.
+- OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
+  GenerateContent, and Ollama Chat providers with structured-output request
+  payloads.
 - One-shot CLI agent command backed by explicit provider selection.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs.
@@ -54,4 +55,4 @@ Next:
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Harden the network daemon with HTTP, auth, and supervision options.
 3. Expand agent planning depth, replay coverage, and provider parity beyond
-   OpenAI-compatible, Anthropic, and Gemini.
+   OpenAI-compatible, Anthropic, Gemini, and Ollama.

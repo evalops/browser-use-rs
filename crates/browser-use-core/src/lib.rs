@@ -16,7 +16,7 @@ use url::form_urlencoded;
 pub use browser_use_dom::BrowserStateSummary;
 pub use browser_use_llm::{
     AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, GeminiChatModel,
-    LlmError, MessageRole, OpenAiCompatibleChatModel,
+    LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
 };
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 

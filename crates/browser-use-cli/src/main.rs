@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::BrowserActionExecutor;
-use browser_use_llm::{AnthropicChatModel, ChatModel, GeminiChatModel, OpenAiCompatibleChatModel};
+use browser_use_llm::{
+    AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
+};
 use clap::Parser;
 use schemars::schema_for;
 use serde_json::Value;
@@ -104,6 +106,8 @@ enum LlmProvider {
     Anthropic,
     #[value(alias = "google")]
     Gemini,
+    #[value(alias = "local")]
+    Ollama,
 }
 
 impl LlmProvider {
@@ -112,6 +116,7 @@ impl LlmProvider {
             browser_use_mcp::AgentProvider::OpenAiCompatible => Self::OpenAiCompatible,
             browser_use_mcp::AgentProvider::Anthropic => Self::Anthropic,
             browser_use_mcp::AgentProvider::Gemini => Self::Gemini,
+            browser_use_mcp::AgentProvider::Ollama => Self::Ollama,
         }
     }
 }
@@ -818,6 +823,18 @@ fn configured_chat_model(
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_owned());
             Ok(Box::new(
                 GeminiChatModel::new(api_key, model).with_base_url(base_url),
+            ))
+        }
+        LlmProvider::Ollama => {
+            let model = model
+                .or_else(|| nonempty_env("OLLAMA_MODEL"))
+                .ok_or_else(|| anyhow::anyhow!("OLLAMA_MODEL or --model is required"))?;
+            let base_url = base_url
+                .or_else(|| nonempty_env("OLLAMA_BASE_URL"))
+                .or_else(|| nonempty_env("OLLAMA_HOST"))
+                .unwrap_or_else(|| "http://localhost:11434".to_owned());
+            Ok(Box::new(
+                OllamaChatModel::new(model).with_base_url(base_url),
             ))
         }
     }

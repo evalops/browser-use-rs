@@ -29,6 +29,8 @@ browser-use-rs agent <url> <task> --provider anthropic \
 browser-use-rs agent <url> <task> --provider gemini \
   [--api-key <key>] [--model <model>] \
   [--base-url https://generativelanguage.googleapis.com/v1beta] [--max-steps 10]
+browser-use-rs agent <url> <task> --provider ollama \
+  [--model <model>] [--base-url http://localhost:11434] [--max-steps 10]
 browser-use-rs session start <id> <url> [--screenshot]
 browser-use-rs session state <id> [--screenshot]
 browser-use-rs session actions <id> <actions.json> [--screenshot]
@@ -67,9 +69,11 @@ Agent runs use the same one-shot browser lifecycle and print typed
 `OPENAI_BASE_URL` from the environment. `--provider anthropic` reads
 `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, optional `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS`. `--provider gemini` reads
-`GEMINI_API_KEY`, `GEMINI_MODEL`, and optional `GEMINI_BASE_URL`. CLI
-`--api-key`, `--model`, and `--base-url` override the provider-specific
-environment values.
+`GEMINI_API_KEY`, `GEMINI_MODEL`, and optional `GEMINI_BASE_URL`.
+`--provider ollama` reads `OLLAMA_MODEL` and optional `OLLAMA_BASE_URL` or
+`OLLAMA_HOST`; it does not require an API key. CLI `--api-key`, `--model`, and
+`--base-url` override the provider-specific environment values where they
+apply.
 
 `session` commands persist a local Chrome session across CLI invocations. The
 session registry defaults to `~/.browser-use-rs/sessions` and can be overridden
@@ -99,7 +103,7 @@ uses the same persistent session registry as the CLI and MCP session tool.
 - Indexed actions currently target same-document interactive elements; iframe
   and shadow-root support belong to the DOM parity track.
 - Agent runs currently support OpenAI-compatible Chat Completions, Anthropic
-  Messages, and Gemini GenerateContent structured-output adapters.
+  Messages, Gemini GenerateContent, and Ollama Chat structured-output adapters.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.

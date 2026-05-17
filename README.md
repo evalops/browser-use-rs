@@ -30,8 +30,8 @@ includes:
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   step/LLM timeouts, max-failure handling, page-change guards, loop detection,
   final-result helpers, and history.
-- OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini
-  GenerateContent providers.
+- OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
+  GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
   registry, and conformance fixtures.
 

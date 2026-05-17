@@ -88,6 +88,8 @@ pub enum AgentProvider {
     Anthropic,
     #[serde(rename = "gemini", alias = "google")]
     Gemini,
+    #[serde(rename = "ollama", alias = "local")]
+    Ollama,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -307,6 +309,7 @@ mod tests {
         assert!(schema_text.contains("openai-compatible"));
         assert!(schema_text.contains("anthropic"));
         assert!(schema_text.contains("gemini"));
+        assert!(schema_text.contains("ollama"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
     }

@@ -21,8 +21,8 @@ browser-use where compatibility is claimed.
    switching, downloads, screenshots, and PDF output.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, done semantics, and final history.
-5. Provider contracts: OpenAI-compatible, Anthropic, and Gemini
-   structured-output payloads first, then local/Ollama and generic HTTP
+5. Provider contracts: OpenAI-compatible, Anthropic, Gemini, and Ollama
+   structured-output payloads first, then generic HTTP and additional provider
    adapters as compatibility expands.
 6. CLI/MCP: persistent session lifecycle, JSON output stability, and error
    shapes.

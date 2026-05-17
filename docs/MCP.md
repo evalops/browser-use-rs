@@ -26,13 +26,15 @@ Current tool contracts:
 Provider secrets are intentionally not part of MCP tool input schemas. A server
 implementation reads provider credentials from its process environment or host
 configuration. `browser_use_agent` accepts an optional `provider` input:
-`openai-compatible` (default), `anthropic`, or `gemini`. OpenAI-compatible runs
-require `OPENAI_API_KEY` plus a tool `model` argument or `OPENAI_MODEL`;
-`OPENAI_BASE_URL` is optional. Anthropic runs require `ANTHROPIC_API_KEY` plus a
-tool `model` argument or `ANTHROPIC_MODEL`; `ANTHROPIC_BASE_URL`,
-`ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are optional. Gemini runs
-require `GEMINI_API_KEY` plus a tool `model` argument or `GEMINI_MODEL`;
-`GEMINI_BASE_URL` is optional.
+`openai-compatible` (default), `anthropic`, `gemini`, or `ollama`.
+OpenAI-compatible runs require `OPENAI_API_KEY` plus a tool `model` argument or
+`OPENAI_MODEL`; `OPENAI_BASE_URL` is optional. Anthropic runs require
+`ANTHROPIC_API_KEY` plus a tool `model` argument or `ANTHROPIC_MODEL`;
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are
+optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or
+`GEMINI_MODEL`; `GEMINI_BASE_URL` is optional. Ollama runs require a tool
+`model` argument or `OLLAMA_MODEL`; `OLLAMA_BASE_URL` or `OLLAMA_HOST` is
+optional and defaults to `http://localhost:11434`.
 
 Browser and agent tools support an optional `session_id` argument. When omitted,
 the tool call uses a fresh one-shot browser. When present, the stdio server
