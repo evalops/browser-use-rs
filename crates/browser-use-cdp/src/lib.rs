@@ -42,6 +42,19 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   };
+  const referencedText = (el, attribute) => {
+    const ids = (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean);
+    return ids.map((id) => {
+      const ref = el.ownerDocument.getElementById(id);
+      return ref ? (ref.innerText || ref.textContent || '').trim() : '';
+    }).filter(Boolean).join(' ');
+  };
+  const labelText = (el) => {
+    const aria = referencedText(el, 'aria-labelledby');
+    if (aria) return aria;
+    const labels = Array.from(el.labels || []).map((label) => (label.innerText || label.textContent || '').trim()).filter(Boolean);
+    return labels.join(' ');
+  };
   const elements = [];
   const visitFrame = (iframe, offset) => {
     if (!isVisible(iframe)) return;
@@ -73,7 +86,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       if (value) attrs[name] = value;
     }
     const text = (el.innerText || el.value || '').trim().slice(0, 200);
-    const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || text || '').trim();
+    const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || text || '').trim();
     return {
       index: index + 1,
       tag_name: el.tagName.toLowerCase(),
@@ -1804,6 +1817,34 @@ mod tests {
             .await
             .expect("iframe input value");
         assert_eq!(iframe_input_value.as_str(), Some("EvalOps"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_uses_labels_for_form_control_names() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>label smoke</title></head><body><label for='email'>Email address</label><input id='email' placeholder='Placeholder only'><span id='submit-name'>Submit request</span><button aria-labelledby='submit-name'>Ignored text</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let input = state.dom_state.selector_map.get(&1).expect("labeled input");
+        assert_eq!(input.name.as_deref(), Some("Email address"));
+        let button = state
+            .dom_state
+            .selector_map
+            .get(&2)
+            .expect("labelled button");
+        assert_eq!(button.name.as_deref(), Some("Submit request"));
     }
 
     #[tokio::test]

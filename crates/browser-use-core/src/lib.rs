@@ -1413,15 +1413,8 @@ mod tests {
             &self,
             _request: ChatRequest,
         ) -> Result<ChatCompletion<Value>, LlmError> {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            Ok(ChatCompletion {
-                model: self.model().to_owned(),
-                content: serde_json::json!({
-                    "current_state": {},
-                    "action": []
-                }),
-                raw_response: None,
-            })
+            std::future::pending::<()>().await;
+            unreachable!("pending model should be cancelled by timeout")
         }
     }
 
