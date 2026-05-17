@@ -363,10 +363,24 @@ where
                 (Some(0), _, _) => Ok(ActionResult::error(
                     "Cannot click on element with index 0. Use a positive browser_state index.",
                 )),
-                (Some(index), _, _) => {
-                    session.click(index).await?;
-                    Ok(ActionResult::extracted(format!("Clicked element {index}")))
-                }
+                (Some(index), _, _) => match session.click(index).await {
+                    Ok(()) => Ok(ActionResult::extracted(format!("Clicked element {index}"))),
+                    Err(error) if is_select_click_validation_error(&error) => {
+                        match session.dropdown_options(index).await {
+                            Ok(options) => Ok(ActionResult::extracted(format!(
+                                "Dropdown options: {}",
+                                options.join(", ")
+                            ))),
+                            Err(_) => Ok(ActionResult::error(error.to_string())),
+                        }
+                    }
+                    Err(error) if is_file_input_click_validation_error(&error) => {
+                        Ok(ActionResult::error(
+                            "Cannot click on file input elements. Use upload_file with the same index instead.",
+                        ))
+                    }
+                    Err(error) => Err(error),
+                },
                 (None, Some(x), Some(y)) => {
                     session.click_coordinates(x, y).await?;
                     Ok(ActionResult::extracted(format!(
@@ -648,6 +662,18 @@ where
             replace_file_action(&params.file_name, &params.old_str, &params.new_str)
         }
     }
+}
+
+fn is_select_click_validation_error(error: &BrowserError) -> bool {
+    error
+        .to_string()
+        .contains("Cannot click on <select> elements.")
+}
+
+fn is_file_input_click_validation_error(error: &BrowserError) -> bool {
+    error
+        .to_string()
+        .contains("Cannot click on file input elements.")
 }
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
@@ -1902,6 +1928,7 @@ mod tests {
         states: Mutex<VecDeque<BrowserStateSummary>>,
         state_screenshot_requests: Mutex<Vec<bool>>,
         state_error: Mutex<Option<String>>,
+        click_error: Mutex<Option<String>>,
     }
 
     impl MockSession {
@@ -1911,6 +1938,7 @@ mod tests {
                 states: Mutex::new(VecDeque::new()),
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(None),
+                click_error: Mutex::new(None),
             }
         }
 
@@ -1920,6 +1948,7 @@ mod tests {
                 states: Mutex::new(VecDeque::from(states)),
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(None),
+                click_error: Mutex::new(None),
             }
         }
 
@@ -1929,6 +1958,17 @@ mod tests {
                 states: Mutex::new(VecDeque::new()),
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(Some(error.into())),
+                click_error: Mutex::new(None),
+            }
+        }
+
+        fn with_click_error(error: impl Into<String>) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                states: Mutex::new(VecDeque::new()),
+                state_screenshot_requests: Mutex::new(Vec::new()),
+                state_error: Mutex::new(None),
+                click_error: Mutex::new(Some(error.into())),
             }
         }
 
@@ -2003,6 +2043,9 @@ mod tests {
                 .lock()
                 .expect("events lock")
                 .push(format!("click:{index}"));
+            if let Some(error) = self.click_error.lock().expect("click error lock").take() {
+                return Err(BrowserError::ActionFailed(error));
+            }
             Ok(())
         }
 
@@ -2255,6 +2298,56 @@ mod tests {
                 .contains("index 0")
         );
         assert_eq!(executor.session().events(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_click_select_returns_dropdown_options() {
+        let session = MockSession::with_click_error(
+            "Cannot click on <select> elements. Use get_dropdown_options and select_dropdown_option instead.",
+        );
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Click(ClickElementAction {
+                index: Some(1),
+                coordinate_x: None,
+                coordinate_y: None,
+            }))
+            .await;
+
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("Dropdown options: One, Two")
+        );
+        assert_eq!(
+            executor.session().events(),
+            vec!["click:1", "dropdown_options:1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_click_file_input_points_to_upload_file() {
+        let session = MockSession::with_click_error(
+            "Cannot click on file input elements. Use upload_file instead.",
+        );
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Click(ClickElementAction {
+                index: Some(2),
+                coordinate_x: None,
+                coordinate_y: None,
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("file input click error")
+                .contains("upload_file")
+        );
+        assert_eq!(executor.session().events(), vec!["click:2"]);
     }
 
     #[tokio::test]

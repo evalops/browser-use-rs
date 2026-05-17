@@ -330,6 +330,21 @@ fn element_action_js(index: u32, action: &str) -> String {
     element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
+fn click_element_js(index: u32) -> String {
+    element_action_js(
+        index,
+        r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
+  if (tag === 'select') {
+    throw new Error('Cannot click on <select> elements. Use get_dropdown_options and select_dropdown_option instead.');
+  }
+  if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file') {
+    throw new Error('Cannot click on file input elements. Use upload_file instead.');
+  }
+  if (typeof el.focus === 'function') el.focus();
+  el.click();"#,
+    )
+}
+
 fn dropdown_options_js(index: u32) -> String {
     element_eval_js(
         index,
@@ -1785,11 +1800,7 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
-        self.evaluate_effect(element_action_js(
-            index,
-            "if (typeof el.focus === 'function') el.focus(); el.click();",
-        ))
-        .await
+        self.evaluate_effect(click_element_js(index)).await
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
@@ -2634,6 +2645,16 @@ mod tests {
         assert!(select_script.contains(r#"const requested = "Two \"quoted\"";"#));
         assert!(select_script.contains("aria-selected"));
         assert!(select_script.contains("MouseEvent('click'"));
+    }
+
+    #[test]
+    fn click_script_rejects_select_and_file_inputs() {
+        let script = click_element_js(1);
+
+        assert!(script.contains("Cannot click on <select> elements."));
+        assert!(script.contains("select_dropdown_option"));
+        assert!(script.contains("Cannot click on file input elements."));
+        assert!(script.contains("Use upload_file instead."));
     }
 
     #[test]
