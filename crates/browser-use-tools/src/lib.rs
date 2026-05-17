@@ -90,6 +90,7 @@ pub struct NavigateAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ClickElementAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
     pub index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinate_x: Option<i32>,

@@ -360,6 +360,9 @@ where
         }
         BrowserAction::Click(params) => {
             match (params.index, params.coordinate_x, params.coordinate_y) {
+                (Some(0), _, _) => Ok(ActionResult::error(
+                    "Cannot click on element with index 0. Use a positive browser_state index.",
+                )),
                 (Some(index), _, _) => {
                     session.click(index).await?;
                     Ok(ActionResult::extracted(format!("Clicked element {index}")))
@@ -385,9 +388,8 @@ where
             )))
         }
         BrowserAction::Scroll(params) => {
-            session
-                .scroll(params.index, params.down, params.pages)
-                .await?;
+            let index = params.index.filter(|index| *index != 0);
+            session.scroll(index, params.down, params.pages).await?;
             Ok(ActionResult::extracted("Scrolled page"))
         }
         BrowserAction::FindText(params) => {
@@ -1280,8 +1282,8 @@ mod tests {
         ClickElementAction, CloseTabAction, DoneAction, EvaluateAction, ExtractAction,
         FindElementsAction, FindTextAction, GetDropdownOptionsAction, InputTextAction,
         NavigateAction, NoParamsAction, ReadFileAction, ReplaceFileAction, SaveAsPdfAction,
-        SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
-        UploadFileAction, WaitAction, WriteFileAction,
+        ScrollAction, SearchPageAction, SelectDropdownOptionAction, SendKeysAction,
+        SwitchTabAction, UploadFileAction, WaitAction, WriteFileAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1738,6 +1740,46 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(executor.session().events(), vec!["click:1"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_zero_click_index() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Click(ClickElementAction {
+                index: Some(0),
+                coordinate_x: None,
+                coordinate_y: None,
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("click error")
+                .contains("index 0")
+        );
+        assert_eq!(executor.session().events(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_treats_zero_scroll_index_as_page_scroll() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Scroll(ScrollAction {
+                down: true,
+                pages: 1.0,
+                index: Some(0),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(executor.session().events(), vec!["scroll:None:true:1"]);
     }
 
     #[tokio::test]
