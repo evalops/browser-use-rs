@@ -10,8 +10,11 @@ authors.workspace = true
 [dependencies]
 async-trait.workspace = true
 browser-use-dom = { path = "../browser-use-dom" }
+futures-util.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true

@@ -2,16 +2,23 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use browser_use_dom::BrowserStateSummary;
+use browser_use_dom::{BrowserStateSummary, SerializedDomState, TabInfo};
+use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use thiserror::Error;
+use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 use tokio::time::sleep;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 #[derive(Debug, Error)]
 pub enum BrowserError {
@@ -23,6 +30,12 @@ pub enum BrowserError {
     LaunchFailed(String),
     #[error("timed out waiting for DevToolsActivePort at {0}")]
     DevToolsEndpointTimedOut(PathBuf),
+    #[error("CDP transport error: {0}")]
+    Transport(String),
+    #[error("CDP command {method} failed: {message}")]
+    CommandFailed { method: String, message: String },
+    #[error("CDP response for {0} was missing expected data")]
+    MissingResponseData(String),
     #[error("navigation failed: {0}")]
     NavigationFailed(String),
     #[error("action failed: {0}")]
@@ -371,6 +384,349 @@ pub async fn wait_for_devtools_endpoint(
     }
 }
 
+type CdpSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+pub struct CdpConnection {
+    socket: Mutex<CdpSocket>,
+    next_id: AtomicU64,
+}
+
+impl CdpConnection {
+    pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Self, BrowserError> {
+        let (socket, _) = connect_async(&endpoint.websocket_url)
+            .await
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+
+        Ok(Self {
+            socket: Mutex::new(socket),
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    pub async fn command(
+        &self,
+        method: &str,
+        params: Value,
+        session_id: Option<&str>,
+    ) -> Result<Value, BrowserError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut request = json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        if let Some(session_id) = session_id {
+            request["sessionId"] = Value::String(session_id.to_owned());
+        }
+
+        let mut socket = self.socket.lock().await;
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+
+        while let Some(message) = socket.next().await {
+            let message = message.map_err(|error| BrowserError::Transport(error.to_string()))?;
+            let Message::Text(text) = message else {
+                continue;
+            };
+            let payload: Value = serde_json::from_str(&text)
+                .map_err(|error| BrowserError::Transport(error.to_string()))?;
+
+            if payload.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+
+            if let Some(error) = payload.get("error") {
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown CDP error")
+                    .to_owned();
+                return Err(BrowserError::CommandFailed {
+                    method: method.to_owned(),
+                    message,
+                });
+            }
+
+            return payload
+                .get("result")
+                .cloned()
+                .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} result")));
+        }
+
+        Err(BrowserError::Transport(
+            "CDP websocket closed while waiting for response".to_owned(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedPage {
+    pub target_id: String,
+    pub session_id: String,
+}
+
+pub struct CdpBrowserSession {
+    connection: CdpConnection,
+    page: AttachedPage,
+    _launched_browser: Option<LaunchedBrowser>,
+}
+
+impl CdpBrowserSession {
+    pub async fn connect(endpoint: DevToolsEndpoint) -> Result<Self, BrowserError> {
+        let connection = CdpConnection::connect(&endpoint).await?;
+        let page = attach_or_create_page(&connection).await?;
+
+        Ok(Self {
+            connection,
+            page,
+            _launched_browser: None,
+        })
+    }
+
+    pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
+        let launched_browser = profile.launch_local().await?;
+        let connection = CdpConnection::connect(launched_browser.endpoint()).await?;
+        let page = attach_or_create_page(&connection).await?;
+
+        Ok(Self {
+            connection,
+            page,
+            _launched_browser: Some(launched_browser),
+        })
+    }
+
+    async fn evaluate_json(&self, expression: &str) -> Result<Value, BrowserError> {
+        let result = self
+            .connection
+            .command(
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "returnByValue": true,
+                    "awaitPromise": true,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+
+        result
+            .get("result")
+            .and_then(|result| result.get("value"))
+            .cloned()
+            .ok_or_else(|| BrowserError::MissingResponseData("Runtime.evaluate value".to_owned()))
+    }
+
+    async fn page_location(&self) -> Result<(String, String), BrowserError> {
+        let value = self
+            .evaluate_json("JSON.stringify({ url: location.href, title: document.title })")
+            .await?;
+        let encoded = value.as_str().ok_or_else(|| {
+            BrowserError::MissingResponseData("Runtime.evaluate string value".to_owned())
+        })?;
+        let page: Value = serde_json::from_str(encoded)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+
+        Ok((
+            page.get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("about:blank")
+                .to_owned(),
+            page.get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        ))
+    }
+}
+
+async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPage, BrowserError> {
+    let targets = connection
+        .command("Target.getTargets", json!({}), None)
+        .await?;
+    let page_target = targets
+        .get("targetInfos")
+        .and_then(Value::as_array)
+        .and_then(|targets| {
+            targets
+                .iter()
+                .find(|target| {
+                    target.get("type").and_then(Value::as_str) == Some("page")
+                        && target.get("url").and_then(Value::as_str) != Some("chrome://newtab/")
+                })
+                .or_else(|| {
+                    targets
+                        .iter()
+                        .find(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+                })
+        })
+        .and_then(|target| {
+            target
+                .get("targetId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+
+    let target_id = match page_target {
+        Some(target_id) => target_id,
+        None => connection
+            .command("Target.createTarget", json!({ "url": "about:blank" }), None)
+            .await?
+            .get("targetId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                BrowserError::MissingResponseData("Target.createTarget targetId".to_owned())
+            })?,
+    };
+
+    let session_id = connection
+        .command(
+            "Target.attachToTarget",
+            json!({
+                "targetId": target_id,
+                "flatten": true,
+            }),
+            None,
+        )
+        .await?
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            BrowserError::MissingResponseData("Target.attachToTarget sessionId".to_owned())
+        })?;
+
+    Ok(AttachedPage {
+        target_id,
+        session_id,
+    })
+}
+
+#[async_trait]
+impl BrowserSession for CdpBrowserSession {
+    async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
+        let (url, title) = self.page_location().await?;
+        let screenshot = if include_screenshot {
+            Some(self.screenshot().await?.base64_png)
+        } else {
+            None
+        };
+
+        Ok(BrowserStateSummary {
+            dom_state: SerializedDomState::default(),
+            url: url.clone(),
+            title: title.clone(),
+            tabs: vec![TabInfo {
+                url,
+                title,
+                target_id: self.page.target_id.clone(),
+                parent_target_id: None,
+            }],
+            screenshot,
+            page_info: None,
+            pixels_above: 0,
+            pixels_below: 0,
+            browser_errors: vec![],
+            is_pdf_viewer: false,
+            recent_events: None,
+            pending_network_requests: vec![],
+            pagination_buttons: vec![],
+            closed_popup_messages: vec![],
+        })
+    }
+
+    async fn navigate(&self, url: &str, _new_tab: bool) -> Result<(), BrowserError> {
+        self.connection
+            .command(
+                "Page.navigate",
+                json!({
+                    "url": url,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn click(&self, _index: u32) -> Result<(), BrowserError> {
+        Err(BrowserError::ActionFailed(
+            "click by index requires DOM selector-map support".to_owned(),
+        ))
+    }
+
+    async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
+        for event_type in ["mousePressed", "mouseReleased"] {
+            self.connection
+                .command(
+                    "Input.dispatchMouseEvent",
+                    json!({
+                        "type": event_type,
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 1,
+                    }),
+                    Some(&self.page.session_id),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn input_text(&self, _index: u32, _text: &str, _clear: bool) -> Result<(), BrowserError> {
+        Err(BrowserError::ActionFailed(
+            "text input by index requires DOM selector-map support".to_owned(),
+        ))
+    }
+
+    async fn scroll(
+        &self,
+        _index: Option<u32>,
+        down: bool,
+        pages: f64,
+    ) -> Result<(), BrowserError> {
+        let direction = if down { 1.0 } else { -1.0 };
+        self.connection
+            .command(
+                "Runtime.evaluate",
+                json!({
+                    "expression": format!("window.scrollBy(0, window.innerHeight * {});", pages * direction),
+                    "awaitPromise": true,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+        let result = self
+            .connection
+            .command(
+                "Page.captureScreenshot",
+                json!({
+                    "format": "png",
+                    "fromSurface": true,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+
+        let base64_png = result
+            .get("data")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                BrowserError::MissingResponseData("Page.captureScreenshot data".to_owned())
+            })?;
+
+        Ok(Screenshot { base64_png })
+    }
+}
+
 #[async_trait]
 pub trait BrowserSession: Send + Sync {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
@@ -516,5 +872,35 @@ mod tests {
                 .websocket_url
                 .starts_with("ws://127.0.0.1:")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_can_navigate_read_state_and_capture_screenshot() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>browser-use-rs smoke</title></head><body><button>Click me</button><div style='height:2000px'>Scroll target</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        session
+            .click_coordinates(20, 20)
+            .await
+            .expect("coordinate click");
+        session.scroll(None, true, 0.25).await.expect("scroll");
+
+        let state = session.state(true).await.expect("state");
+
+        assert!(state.url.starts_with("data:text/html"));
+        assert_eq!(state.title, "browser-use-rs smoke");
+        assert!(state.screenshot.expect("screenshot").len() > 100);
     }
 }
