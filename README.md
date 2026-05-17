@@ -59,6 +59,8 @@ result, then exits.
 
 See [docs/CLI.md](docs/CLI.md).
 
+The MCP contract surface is documented in [docs/MCP.md](docs/MCP.md).
+
 ## Development
 
 ```sh

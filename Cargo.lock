@@ -181,6 +181,14 @@ dependencies = [
 [[package]]
 name = "browser-use-mcp"
 version = "0.1.0"
+dependencies = [
+ "browser-use-core",
+ "browser-use-dom",
+ "browser-use-tools",
+ "schemars",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "browser-use-tools"

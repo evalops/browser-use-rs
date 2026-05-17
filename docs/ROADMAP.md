@@ -31,6 +31,7 @@ Implemented:
 - OpenAI-compatible Chat Completions provider with structured-output request
   payloads.
 - One-shot CLI agent command backed by the provider abstraction.
+- MCP tool contract schemas for state, actions, and agent runs.
 
 Next:
 
