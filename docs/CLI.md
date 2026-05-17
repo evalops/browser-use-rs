@@ -16,6 +16,7 @@ browser-use-rs screenshot <url> <output.png>
 browser-use-rs click <url> <index>
 browser-use-rs type <url> <index> <text>
 browser-use-rs scroll <url> [--pages 1.0] [--down]
+browser-use-rs actions <url> <actions.json> [--screenshot]
 browser-use-rs agent <url> <task> --api-key <key> --model <model> \
   [--base-url https://api.openai.com/v1] [--max-steps 10]
 ```
@@ -33,6 +34,16 @@ cargo run -q -p browser-use-cli -- type \
 cargo run -q -p browser-use-cli -- screenshot \
   "data:text/html,<html><head><title>shot</title></head><body><h1>Screenshot</h1></body></html>" \
   /tmp/browser-use-rs-cli-smoke.png
+```
+
+`actions` accepts a JSON array of `BrowserAction` objects, runs them in a
+single launched browser session, and prints:
+
+```json
+{
+  "results": [],
+  "state": {}
+}
 ```
 
 Agent runs use the same one-shot browser lifecycle and accept

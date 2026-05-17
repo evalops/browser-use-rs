@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
+use browser_use_core::{BrowserActionExecutor, execute_action_sequence};
 use browser_use_llm::OpenAiCompatibleChatModel;
 use clap::Parser;
 use schemars::schema_for;
@@ -51,6 +52,13 @@ enum Command {
         pages: f64,
         #[arg(long, default_value_t = true)]
         down: bool,
+    },
+    /// Launch Chrome, run a JSON action list in one session, and print results plus final state.
+    Actions {
+        url: String,
+        actions: PathBuf,
+        #[arg(long, default_value_t = true)]
+        screenshot: bool,
     },
     /// Run a bounded browser agent task through an OpenAI-compatible chat model.
     Agent {
@@ -129,6 +137,25 @@ async fn main() -> anyhow::Result<()> {
             let session = launch_and_navigate(&url).await?;
             session.scroll(None, down, pages).await?;
             print_state(&session, true).await?;
+        }
+        Some(Command::Actions {
+            url,
+            actions,
+            screenshot,
+        }) => {
+            let session = launch_and_navigate(&url).await?;
+            let actions = std::fs::read_to_string(&actions)?;
+            let actions: Vec<browser_use_tools::BrowserAction> = serde_json::from_str(&actions)?;
+            let mut executor = BrowserActionExecutor::new(session);
+            let results = execute_action_sequence(&mut executor, &actions).await;
+            let state = executor.session().state(screenshot).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "results": results,
+                    "state": state,
+                }))?
+            );
         }
         Some(Command::Agent {
             url,
