@@ -1,12 +1,17 @@
 //! Chrome DevTools Protocol browser-session layer.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use browser_use_dom::BrowserStateSummary;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tempfile::TempDir;
 use thiserror::Error;
+use tokio::process::{Child, Command};
+use tokio::time::sleep;
 
 #[derive(Debug, Error)]
 pub enum BrowserError {
@@ -14,6 +19,10 @@ pub enum BrowserError {
     NotConnected,
     #[error("Chrome/Chromium executable not found; checked: {0:?}")]
     ExecutableNotFound(Vec<PathBuf>),
+    #[error("browser launch failed: {0}")]
+    LaunchFailed(String),
+    #[error("timed out waiting for DevToolsActivePort at {0}")]
+    DevToolsEndpointTimedOut(PathBuf),
     #[error("navigation failed: {0}")]
     NavigationFailed(String),
     #[error("action failed: {0}")]
@@ -71,6 +80,8 @@ pub struct BrowserProfile {
     pub prohibited_domains: Vec<String>,
     #[serde(default)]
     pub viewport: BrowserViewport,
+    #[serde(default = "default_browser_start_timeout_ms")]
+    pub browser_start_timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxySettings>,
 }
@@ -87,6 +98,7 @@ impl Default for BrowserProfile {
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
             viewport: BrowserViewport::default(),
+            browser_start_timeout_ms: default_browser_start_timeout_ms(),
             proxy: None,
         }
     }
@@ -94,6 +106,10 @@ impl Default for BrowserProfile {
 
 fn default_headless() -> bool {
     true
+}
+
+fn default_browser_start_timeout_ms() -> u64 {
+    10_000
 }
 
 impl BrowserProfile {
@@ -135,6 +151,48 @@ impl BrowserProfile {
         BrowserLaunchPlan {
             executable_path: self.executable_path.clone(),
             args,
+        }
+    }
+
+    pub async fn launch_local(&self) -> Result<LaunchedBrowser, BrowserError> {
+        let executable_path = self.resolve_executable()?;
+        let (user_data_dir, owned_user_data_dir) = match &self.user_data_dir {
+            Some(path) => (path.clone(), None),
+            None => {
+                let temp_dir = tempfile::Builder::new()
+                    .prefix("browser-use-rs-")
+                    .tempdir()
+                    .map_err(|error| BrowserError::LaunchFailed(error.to_string()))?;
+                (temp_dir.path().to_path_buf(), Some(temp_dir))
+            }
+        };
+
+        let mut launch_profile = self.clone();
+        launch_profile.executable_path = Some(executable_path.clone());
+        launch_profile.user_data_dir = Some(user_data_dir.clone());
+        let plan = launch_profile.launch_plan();
+
+        let mut command = Command::new(&executable_path);
+        command
+            .args(&plan.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let mut child = command
+            .spawn()
+            .map_err(|error| BrowserError::LaunchFailed(error.to_string()))?;
+
+        match wait_for_devtools_endpoint(&user_data_dir, self.browser_start_timeout_ms).await {
+            Ok(endpoint) => Ok(LaunchedBrowser {
+                child,
+                endpoint,
+                _user_data_dir: owned_user_data_dir,
+            }),
+            Err(error) => {
+                let _ = child.start_kill();
+                Err(error)
+            }
         }
     }
 }
@@ -263,6 +321,56 @@ impl DevToolsEndpoint {
     }
 }
 
+pub struct LaunchedBrowser {
+    child: Child,
+    endpoint: DevToolsEndpoint,
+    _user_data_dir: Option<TempDir>,
+}
+
+impl LaunchedBrowser {
+    #[must_use]
+    pub fn endpoint(&self) -> &DevToolsEndpoint {
+        &self.endpoint
+    }
+
+    #[must_use]
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.id()
+    }
+}
+
+impl Drop for LaunchedBrowser {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+#[must_use]
+pub fn devtools_active_port_path(user_data_dir: &Path) -> PathBuf {
+    user_data_dir.join("DevToolsActivePort")
+}
+
+pub async fn wait_for_devtools_endpoint(
+    user_data_dir: &Path,
+    timeout_ms: u64,
+) -> Result<DevToolsEndpoint, BrowserError> {
+    let active_port_path = devtools_active_port_path(user_data_dir);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+
+    loop {
+        match tokio::fs::read_to_string(&active_port_path).await {
+            Ok(contents) => return DevToolsEndpoint::from_active_port_file("127.0.0.1", &contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if Instant::now() >= deadline {
+                    return Err(BrowserError::DevToolsEndpointTimedOut(active_port_path));
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => return Err(BrowserError::StateUnavailable(error.to_string())),
+        }
+    }
+}
+
 #[async_trait]
 pub trait BrowserSession: Send + Sync {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
@@ -351,6 +459,14 @@ mod tests {
     }
 
     #[test]
+    fn active_port_path_lives_under_user_data_dir() {
+        assert_eq!(
+            devtools_active_port_path(Path::new("/tmp/profile")),
+            PathBuf::from("/tmp/profile/DevToolsActivePort")
+        );
+    }
+
+    #[test]
     fn executable_resolution_prefers_explicit_path() {
         let current_exe = std::env::current_exe().expect("current exe");
         let resolved = resolve_chrome_executable(Some(&current_exe), None, Vec::<PathBuf>::new())
@@ -369,5 +485,36 @@ mod tests {
             BrowserError::ExecutableNotFound(checked) => assert_eq!(checked, vec![missing]),
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[tokio::test]
+    async fn waits_for_devtools_endpoint_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let active_port_path = devtools_active_port_path(temp_dir.path());
+        tokio::fs::write(&active_port_path, "38119\n/devtools/browser/abc123\n")
+            .await
+            .expect("write endpoint");
+
+        let endpoint = wait_for_devtools_endpoint(temp_dir.path(), 100)
+            .await
+            .expect("endpoint");
+
+        assert_eq!(endpoint.http_url, "http://127.0.0.1:38119");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn launches_local_chrome_when_available() {
+        let profile = BrowserProfile::default();
+        let browser = profile.launch_local().await.expect("launch local browser");
+
+        assert!(browser.process_id().is_some());
+        assert!(browser.endpoint().http_url.starts_with("http://127.0.0.1:"));
+        assert!(
+            browser
+                .endpoint()
+                .websocket_url
+                .starts_with("ws://127.0.0.1:")
+        );
     }
 }

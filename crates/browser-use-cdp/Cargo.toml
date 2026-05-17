@@ -12,4 +12,6 @@ async-trait.workspace = true
 browser-use-dom = { path = "../browser-use-dom" }
 schemars.workspace = true
 serde.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
