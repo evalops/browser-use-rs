@@ -12,21 +12,27 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 
 ## Status
 
-This repository is brand new. The initial milestones are:
+This repository is an active public Rust conformance port. Current support
+includes:
 
-1. Workspace, CI, license, and attribution.
-2. Typed Rust contracts for browser state, DOM state, actions, action results,
-   LLM requests, and agent history.
-3. CDP-backed browser session primitives: launch/connect, tabs, navigation,
-   screenshots, and page state.
-4. DOM and accessibility snapshot serialization compatible with browser-use's
-   numbered element/action model.
-5. Built-in tools: `navigate`, `search`, `click`, `input`, `scroll`,
-   `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`, `extract`,
-   `search_page`, `find_elements`, tab actions, dropdown actions, and `done`.
-6. Agent loop: state construction, schema-guided LLM output, retries, step
-   limits, page-change guards, loop detection, and history.
-7. CLI, MCP server, daemon sessions, and conformance harnesses.
+- Typed Rust contracts for browser state, DOM state, actions, action results,
+  LLM requests, and agent history.
+- CDP-backed Chrome/Chromium launch/connect, tabs, navigation, screenshots,
+  PDF capture, uploads, indexed actions, and page state.
+- DOM and accessibility-oriented snapshot serialization for browser-use's
+  numbered element/action model, including open shadow DOM, same-origin
+  iframes, accessible labels, bounds, hidden-element filtering, and scrollable
+  element metadata.
+- Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
+  `scroll`, `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`,
+  `extract`, `search_page`, `find_elements`, tab actions, dropdown actions,
+  and `done`.
+- Agent loop: state construction, schema-guided LLM output, bounded runs,
+  max-failure handling, page-change guards, loop detection, final-result
+  helpers, and history.
+- OpenAI-compatible Chat Completions and Anthropic Messages providers.
+- CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
+  registry, and conformance fixtures.
 
 ## Design Rules
 
@@ -54,9 +60,8 @@ repository issue tracker.
 
 ## CLI
 
-The current CLI is intentionally one-shot: each command launches local
-Chrome/Chromium, performs the requested browser work, prints or writes the
-result, then exits.
+The CLI includes one-shot browser commands, persistent local sessions, MCP
+stdio, and a local TCP JSON-RPC daemon.
 
 See [docs/CLI.md](docs/CLI.md).
 
@@ -77,6 +82,21 @@ Tagged GitHub releases publish a Linux x86_64 tarball containing the
 
 See [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
 browser-use surface.
+
+## Smokes
+
+```sh
+cargo run -q -p browser-use-cli -- state \
+  "data:text/html,<html><head><title>smoke</title></head><body><button>Run</button><input placeholder='Name'></body></html>"
+
+cargo run -q -p browser-use-cli -- mcp-tools | jq -r '.[].name'
+
+tmp=$(mktemp -d)
+BROWSER_USE_RS_STATE_DIR="$tmp" cargo run -q -p browser-use-cli -- session start smoke \
+  "data:text/html,<html><head><title>session smoke</title></head><body><button>Run</button></body></html>"
+BROWSER_USE_RS_STATE_DIR="$tmp" cargo run -q -p browser-use-cli -- session stop smoke
+rm -rf "$tmp"
+```
 
 ## Development
 
