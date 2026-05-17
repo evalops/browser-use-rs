@@ -309,6 +309,22 @@ where
             })
         }
         BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
+        BrowserAction::GetDropdownOptions(params) => {
+            let options = session.dropdown_options(params.index).await?;
+            Ok(ActionResult::extracted(format!(
+                "Dropdown options: {}",
+                options.join(", ")
+            )))
+        }
+        BrowserAction::SelectDropdownOption(params) => {
+            session
+                .select_dropdown_option(params.index, &params.text)
+                .await?;
+            Ok(ActionResult::extracted(format!(
+                "Selected dropdown option '{}' on element {}",
+                params.text, params.index
+            )))
+        }
         BrowserAction::Extract(_)
         | BrowserAction::SearchPage(_)
         | BrowserAction::FindElements(_)
@@ -316,9 +332,7 @@ where
         | BrowserAction::CloseTab(_)
         | BrowserAction::SendKeys(_)
         | BrowserAction::UploadFile(_)
-        | BrowserAction::SaveAsPdf(_)
-        | BrowserAction::GetDropdownOptions(_)
-        | BrowserAction::SelectDropdownOption(_) => Ok(ActionResult::error(format!(
+        | BrowserAction::SaveAsPdf(_) => Ok(ActionResult::error(format!(
             "action not implemented yet: {}",
             action.name()
         ))),
@@ -554,7 +568,10 @@ mod tests {
     use super::*;
     use browser_use_cdp::Screenshot;
     use browser_use_dom::SerializedDomState;
-    use browser_use_tools::{ClickElementAction, DoneAction, NavigateAction};
+    use browser_use_tools::{
+        ClickElementAction, DoneAction, GetDropdownOptionsAction, NavigateAction,
+        SelectDropdownOptionAction,
+    };
     use std::{collections::VecDeque, sync::Mutex};
 
     #[test]
@@ -745,6 +762,22 @@ mod tests {
             Ok(())
         }
 
+        async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("dropdown_options:{index}"));
+            Ok(vec!["One".to_owned(), "Two".to_owned()])
+        }
+
+        async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("select_dropdown_option:{index}:{text}"));
+            Ok(())
+        }
+
         async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
             self.events
                 .lock()
@@ -772,6 +805,38 @@ mod tests {
         assert_eq!(
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_dropdown_actions_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let options_result = executor
+            .execute(&BrowserAction::GetDropdownOptions(
+                GetDropdownOptionsAction { index: 1 },
+            ))
+            .await;
+        let select_result = executor
+            .execute(&BrowserAction::SelectDropdownOption(
+                SelectDropdownOptionAction {
+                    index: 1,
+                    text: "Two".to_owned(),
+                },
+            ))
+            .await;
+
+        assert!(
+            options_result
+                .extracted_content
+                .expect("options content")
+                .contains("One, Two")
+        );
+        assert!(select_result.error.is_none());
+        assert_eq!(
+            executor.session().events(),
+            vec!["dropdown_options:1", "select_dropdown_option:1:Two"]
         );
     }
 

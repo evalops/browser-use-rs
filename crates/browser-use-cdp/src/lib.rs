@@ -107,7 +107,7 @@ JSON.stringify((() => {
 })())
 "#;
 
-fn element_action_js(index: u32, action: &str) -> String {
+fn element_eval_js(index: u32, body: &str) -> String {
     format!(
         r#"
 (() => {{
@@ -130,14 +130,17 @@ fn element_action_js(index: u32, action: &str) -> String {
   const el = elements[{zero_based}];
   if (!el) throw new Error('No interactive element found for index {index}');
   el.scrollIntoView({{ block: 'center', inline: 'center' }});
-  {action}
-  return true;
+  {body}
 }})()
 "#,
         zero_based = index.saturating_sub(1),
         index = index,
-        action = action
+        body = body
     )
+}
+
+fn element_action_js(index: u32, action: &str) -> String {
+    element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
 #[derive(Debug, Error)]
@@ -991,6 +994,46 @@ impl BrowserSession for CdpBrowserSession {
         .await
     }
 
+    async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
+        let value = self
+            .evaluate_json(&element_eval_js(
+                index,
+                r#"
+  if (el.tagName.toLowerCase() !== 'select') throw new Error('Element is not a select');
+  return JSON.stringify(Array.from(el.options).map((option) => (option.text || option.value || '').trim()));
+"#,
+            ))
+            .await?;
+        let encoded = value.as_str().ok_or_else(|| {
+            BrowserError::MissingResponseData("dropdown options string".to_owned())
+        })?;
+        serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
+    }
+
+    async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
+        let text_json = serde_json::to_string(text)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        self.evaluate_effect(element_eval_js(
+            index,
+            &format!(
+                r#"
+  if (el.tagName.toLowerCase() !== 'select') throw new Error('Element is not a select');
+  const requested = {text_json};
+  const option = Array.from(el.options).find((candidate) => {{
+    return candidate.value === requested || (candidate.text || '').trim() === requested;
+  }});
+  if (!option) throw new Error(`No dropdown option found for ${{requested}}`);
+  el.value = option.value;
+  option.selected = true;
+  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  return true;
+"#
+            ),
+        ))
+        .await
+    }
+
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
         let result = self
             .connection
@@ -1029,6 +1072,10 @@ pub trait BrowserSession: Send + Sync {
     async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError>;
 
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError>;
+
+    async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError>;
+
+    async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError>;
 }
