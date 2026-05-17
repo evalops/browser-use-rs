@@ -186,6 +186,7 @@ mod tests {
             "input",
             "scroll",
             "find_text",
+            "evaluate",
             "wait",
             "screenshot",
             "send_keys",
@@ -435,6 +436,10 @@ mod tests {
 
         async fn find_text(&self, _text: &str) -> Result<bool, BrowserError> {
             Err(unsupported_action("find_text"))
+        }
+
+        async fn evaluate(&self, _code: &str) -> Result<String, BrowserError> {
+            Err(unsupported_action("evaluate"))
         }
 
         async fn dropdown_options(&self, _index: u32) -> Result<Vec<String>, BrowserError> {

@@ -406,6 +406,31 @@ where
                 })
             }
         }
+        BrowserAction::Evaluate(params) => match session.evaluate(&params.code).await {
+            Ok(result_text) => {
+                let result_text = truncate_evaluate_result(result_text);
+                let long_term_memory = if result_text.chars().count() < 10_000 {
+                    result_text.clone()
+                } else {
+                    format!(
+                        "JavaScript executed successfully, result length: {} characters.",
+                        result_text.chars().count()
+                    )
+                };
+                Ok(ActionResult {
+                    include_extracted_content_only_once: long_term_memory != result_text,
+                    extracted_content: Some(result_text),
+                    error: None,
+                    long_term_memory: Some(long_term_memory),
+                    include_in_memory: true,
+                    is_done: false,
+                    success: None,
+                })
+            }
+            Err(error) => Ok(ActionResult::error(format!(
+                "Failed to execute JavaScript: {error}"
+            ))),
+        },
         BrowserAction::Wait(params) => {
             let actual_seconds = params.seconds.saturating_sub(1).clamp(0, 30) as u64;
             sleep(Duration::from_secs(actual_seconds)).await;
@@ -597,6 +622,19 @@ fn default_find_element_attributes() -> Vec<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+fn truncate_evaluate_result(result: String) -> String {
+    const MAX_CHARS: usize = 20_000;
+    const PREFIX_CHARS: usize = 19_950;
+
+    if result.chars().count() <= MAX_CHARS {
+        return result;
+    }
+
+    let mut truncated: String = result.chars().take(PREFIX_CHARS).collect();
+    truncated.push_str("\n... [Truncated after 20000 characters]");
+    truncated
 }
 
 #[must_use]
@@ -1060,10 +1098,10 @@ mod tests {
     use browser_use_cdp::{FoundElement, Pdf, Screenshot};
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
-        ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
-        FindTextAction, GetDropdownOptionsAction, InputTextAction, NavigateAction, NoParamsAction,
-        SaveAsPdfAction, SearchPageAction, SelectDropdownOptionAction, SendKeysAction,
-        SwitchTabAction, UploadFileAction, WaitAction,
+        ClickElementAction, CloseTabAction, DoneAction, EvaluateAction, ExtractAction,
+        FindElementsAction, FindTextAction, GetDropdownOptionsAction, InputTextAction,
+        NavigateAction, NoParamsAction, SaveAsPdfAction, SearchPageAction,
+        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction, UploadFileAction, WaitAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1341,6 +1379,14 @@ mod tests {
             Ok(true)
         }
 
+        async fn evaluate(&self, code: &str) -> Result<String, BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("evaluate:{code}"));
+            Ok("EvalOps JS result".to_owned())
+        }
+
         async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
             self.events
                 .lock()
@@ -1533,6 +1579,25 @@ mod tests {
             Some("Scrolled to text: Needle")
         );
         assert_eq!(executor.session().events(), vec!["find_text:Needle"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_evaluate_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Evaluate(EvaluateAction {
+                code: "document.title".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("EvalOps JS result")
+        );
+        assert_eq!(executor.session().events(), vec!["evaluate:document.title"]);
     }
 
     #[tokio::test]

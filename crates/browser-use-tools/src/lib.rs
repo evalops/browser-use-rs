@@ -144,6 +144,11 @@ pub struct FindTextAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EvaluateAction {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WaitAction {
     #[serde(default = "default_wait_seconds")]
     pub seconds: i64,
@@ -226,6 +231,7 @@ pub enum BrowserAction {
     CloseTab(CloseTabAction),
     Scroll(ScrollAction),
     FindText(FindTextAction),
+    Evaluate(EvaluateAction),
     Wait(WaitAction),
     SendKeys(SendKeysAction),
     UploadFile(UploadFileAction),
@@ -252,6 +258,7 @@ impl BrowserAction {
             Self::CloseTab(_) => "close_tab",
             Self::Scroll(_) => "scroll",
             Self::FindText(_) => "find_text",
+            Self::Evaluate(_) => "evaluate",
             Self::Wait(_) => "wait",
             Self::SendKeys(_) => "send_keys",
             Self::UploadFile(_) => "upload_file",
@@ -271,6 +278,7 @@ impl BrowserAction {
                 | Self::GoBack(_)
                 | Self::SwitchTab(_)
                 | Self::CloseTab(_)
+                | Self::Evaluate(_)
                 | Self::Done(_)
         )
     }
@@ -347,5 +355,21 @@ mod tests {
             })
         );
         assert!(!action.terminates_sequence());
+    }
+
+    #[test]
+    fn evaluate_action_uses_code_param_and_terminates() {
+        let action: BrowserAction =
+            serde_json::from_value(serde_json::json!({ "evaluate": { "code": "document.title" } }))
+                .expect("evaluate action");
+
+        assert_eq!(action.name(), "evaluate");
+        assert_eq!(
+            action,
+            BrowserAction::Evaluate(EvaluateAction {
+                code: "document.title".to_owned()
+            })
+        );
+        assert!(action.terminates_sequence());
     }
 }
