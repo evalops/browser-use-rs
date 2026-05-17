@@ -1775,9 +1775,12 @@ pub fn build_step_request(
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history);
     let page_stats = render_page_stats(state);
+    let loop_awareness = render_loop_awareness(history, state, settings)
+        .map(|message| format!("\n\nLoop awareness:\n{message}"))
+        .unwrap_or_default();
     let mut user_content = vec![ContentPart::Text {
         text: format!(
-            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}\n\nBrowser state:\n{state_json}"
+            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}{loop_awareness}\n\nBrowser state:\n{state_json}"
         ),
     }];
     if settings.use_vision
@@ -1878,6 +1881,106 @@ fn render_previous_results(history: &AgentHistory) -> String {
     } else {
         rendered.join("\n")
     }
+}
+
+fn render_loop_awareness(
+    history: &AgentHistory,
+    state: &BrowserStateSummary,
+    settings: &AgentSettings,
+) -> Option<String> {
+    if !settings.loop_detection_enabled {
+        return None;
+    }
+
+    let mut messages = Vec::new();
+    if let Some((count, window)) = repeated_action_nudge(history, settings.loop_detection_window) {
+        messages.push(format!(
+            "Heads up: you have repeated a similar action {count} times in the last {window} actions. If this is intentional and making progress, carry on. If not, try a different approach."
+        ));
+    }
+
+    let stagnant_pages = consecutive_stagnant_pages(history, state);
+    if stagnant_pages >= 5 {
+        messages.push(format!(
+            "The page content has not changed across {stagnant_pages} consecutive observations. Your actions might not be having the intended effect."
+        ));
+    }
+
+    if messages.is_empty() {
+        None
+    } else {
+        Some(messages.join("\n\n"))
+    }
+}
+
+fn repeated_action_nudge(history: &AgentHistory, window: usize) -> Option<(usize, usize)> {
+    if window == 0 {
+        return None;
+    }
+
+    let signatures = history
+        .items
+        .iter()
+        .rev()
+        .flat_map(|item| item.model_output.as_ref())
+        .flat_map(|output| output.action.iter())
+        .filter(|action| !matches!(action.name(), "wait" | "done" | "go_back"))
+        .take(window)
+        .filter_map(action_similarity_signature)
+        .collect::<Vec<_>>();
+
+    if signatures.len() < 5 {
+        return None;
+    }
+
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for signature in &signatures {
+        *counts.entry(signature.clone()).or_default() += 1;
+    }
+    let max_count = counts.values().copied().max().unwrap_or_default();
+    (max_count >= 5).then_some((max_count, signatures.len()))
+}
+
+fn action_similarity_signature(action: &BrowserAction) -> Option<String> {
+    match action {
+        BrowserAction::Click(params) => params.index.map(|index| format!("click|{index}")),
+        BrowserAction::Input(params) => Some(format!(
+            "input|{}|{}",
+            params.index,
+            params.text.trim().to_ascii_lowercase()
+        )),
+        BrowserAction::Navigate(params) => Some(format!("navigate|{}", params.url)),
+        BrowserAction::Search(params) => Some(format!(
+            "search|{:?}|{}",
+            params.engine,
+            normalized_search_query(&params.query)
+        )),
+        BrowserAction::Scroll(params) => Some(format!("scroll|{}|{:?}", params.down, params.index)),
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+fn normalized_search_query(query: &str) -> String {
+    let mut tokens = query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.dedup();
+    tokens.join("|")
+}
+
+fn consecutive_stagnant_pages(history: &AgentHistory, state: &BrowserStateSummary) -> usize {
+    let mut count = 0;
+    for item in history.items.iter().rev() {
+        if item.state.url == state.url && item.state.dom_state.text == state.dom_state.text {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
 }
 
 fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> &str {
@@ -3674,6 +3777,51 @@ mod tests {
         assert!(request_text.contains("1 scroll containers"));
         assert!(user_text.contains(r#""tab_id": "abcd""#));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
+    }
+
+    #[test]
+    fn step_request_includes_loop_awareness_nudge() {
+        let mut state = blank_state();
+        state.dom_state.text = "[1] <button> Refresh".to_owned();
+        let history = AgentHistory {
+            items: (0..5)
+                .map(|_| AgentHistoryItem {
+                    model_output: Some(AgentOutput {
+                        current_state: AgentCurrentState {
+                            thinking: None,
+                            evaluation_previous_goal: None,
+                            memory: None,
+                            next_goal: None,
+                        },
+                        action: vec![BrowserAction::Click(ClickElementAction {
+                            index: Some(1),
+                            coordinate_x: None,
+                            coordinate_y: None,
+                        })],
+                    }),
+                    result: vec![ActionResult::extracted("Clicked element 1")],
+                    state: state.clone(),
+                    metadata: None,
+                })
+                .collect(),
+        };
+
+        let request = build_step_request("unstick", &state, &history, &AgentSettings::default())
+            .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+
+        assert!(request_text.contains("Loop awareness"));
+        assert!(request_text.contains("repeated a similar action 5 times"));
+        assert!(request_text.contains("page content has not changed across 5"));
+
+        let disabled_settings = AgentSettings {
+            loop_detection_enabled: false,
+            ..AgentSettings::default()
+        };
+        let request = build_step_request("unstick", &state, &history, &disabled_settings)
+            .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+        assert!(!request_text.contains("Loop awareness"));
     }
 
     #[test]

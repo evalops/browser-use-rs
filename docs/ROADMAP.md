@@ -47,9 +47,9 @@ Implemented:
   max-step, max-failure handling, step and LLM timeouts, compact page-stat
   prompt context, vision-aware screenshot capture and image prompt parts,
   one-time extraction replay handling, invalid model-output recovery,
-  custom prompt-visible DOM attributes, structured extraction metadata,
-  per-step timing metadata, final-result, success, error, duration, action,
-  and URL helpers.
+  loop-awareness prompt nudges, custom prompt-visible DOM attributes,
+  structured extraction metadata, per-step timing metadata, final-result,
+  success, error, duration, action, and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
