@@ -18,6 +18,7 @@ small pushed checkpoints as each surface becomes real.
 Implemented:
 
 - Public repository, MIT license, upstream attribution, CI, and Rust workspace.
+- Tag-triggered GitHub release workflow and release support matrix.
 - Frozen upstream target: `browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.

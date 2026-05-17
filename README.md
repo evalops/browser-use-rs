@@ -63,6 +63,21 @@ See [docs/CLI.md](docs/CLI.md).
 The MCP stdio server and contract surface are documented in
 [docs/MCP.md](docs/MCP.md).
 
+## Install
+
+From source:
+
+```sh
+cargo install --path crates/browser-use-cli
+browser-use-rs version-target
+```
+
+Tagged GitHub releases publish a Linux x86_64 tarball containing the
+`browser-use-rs` binary, license files, and the release support matrix.
+
+See [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
+browser-use surface.
+
 ## Development
 
 ```sh
