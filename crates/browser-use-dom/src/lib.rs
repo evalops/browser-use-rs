@@ -182,10 +182,15 @@ pub fn render_element_line(element: &DomElementRef) -> String {
         format!("<{} {attributes}>", element.tag_name)
     };
     let text = render_element_text(element);
-    if text.is_empty() {
-        format!("[{}] {tag}", element.index)
+    let prefix = if element.is_scrollable {
+        format!("[{}] |scroll element|", element.index)
     } else {
-        format!("[{}] {tag} {text}", element.index)
+        format!("[{}]", element.index)
+    };
+    if text.is_empty() {
+        format!("{prefix} {tag}")
+    } else {
+        format!("{prefix} {tag} {text}")
     }
 }
 
@@ -615,6 +620,32 @@ mod tests {
             state
                 .llm_representation()
                 .contains("[2] <input type=tel placeholder=123-456-7890> Phone")
+        );
+    }
+
+    #[test]
+    fn serialized_state_marks_scrollable_elements_for_agent() {
+        let element = DomElementRef {
+            index: 7,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "section".to_owned(),
+            role: None,
+            name: Some("Results".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("id".to_owned(), "results".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: true,
+        };
+
+        let state = SerializedDomState::from_elements(vec![element]);
+
+        assert_eq!(
+            state.llm_representation(),
+            "[7] |scroll element| <section id=results> Results"
         );
     }
 }
