@@ -920,23 +920,17 @@ fn schema_for_agent_output() -> Value {
 }
 
 fn render_previous_results(history: &AgentHistory) -> String {
-    let rendered: Vec<String> = history
-        .items
-        .iter()
-        .rev()
-        .take(5)
-        .rev()
+    let recent_items: Vec<&AgentHistoryItem> = history.items.iter().rev().take(5).rev().collect();
+    let latest_recent_index = recent_items.len().saturating_sub(1);
+    let rendered: Vec<String> = recent_items
+        .into_iter()
         .enumerate()
         .flat_map(|(step_index, item)| {
             item.result
                 .iter()
                 .enumerate()
                 .map(move |(result_index, result)| {
-                    let text = result
-                        .error
-                        .as_deref()
-                        .or(result.extracted_content.as_deref())
-                        .unwrap_or("no content");
+                    let text = render_result_for_prompt(result, step_index == latest_recent_index);
                     format!("{}.{} {}", step_index + 1, result_index + 1, text)
                 })
         })
@@ -947,6 +941,25 @@ fn render_previous_results(history: &AgentHistory) -> String {
     } else {
         rendered.join("\n")
     }
+}
+
+fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> &str {
+    if let Some(error) = result.error.as_deref() {
+        return error;
+    }
+
+    if result.include_extracted_content_only_once && !is_latest_step {
+        return result
+            .long_term_memory
+            .as_deref()
+            .unwrap_or("[extracted content omitted after first prompt]");
+    }
+
+    result
+        .extracted_content
+        .as_deref()
+        .or(result.long_term_memory.as_deref())
+        .unwrap_or("no content")
 }
 
 fn repeated_action_loop(history: &AgentHistory, window: usize) -> bool {
@@ -2101,6 +2114,62 @@ mod tests {
         assert_eq!(user_message.content.len(), 1);
         let request_text = serde_json::to_string(user_message).expect("message json");
         assert!(!request_text.contains("abc123"));
+    }
+
+    #[test]
+    fn previous_results_only_include_one_time_extractions_once() {
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult {
+                        extracted_content: Some("very large extracted payload".to_owned()),
+                        error: None,
+                        long_term_memory: Some("Large extraction saved to file".to_owned()),
+                        include_extracted_content_only_once: true,
+                        include_in_memory: true,
+                        is_done: false,
+                        success: None,
+                    }],
+                    state: blank_state(),
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::extracted("Clicked element 1")],
+                    state: blank_state(),
+                },
+            ],
+        };
+
+        let rendered = render_previous_results(&history);
+
+        assert!(!rendered.contains("very large extracted payload"));
+        assert!(rendered.contains("Large extraction saved to file"));
+        assert!(rendered.contains("Clicked element 1"));
+    }
+
+    #[test]
+    fn previous_results_include_latest_one_time_extraction() {
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult {
+                    extracted_content: Some("fresh extracted payload".to_owned()),
+                    error: None,
+                    long_term_memory: Some("Extraction saved to file".to_owned()),
+                    include_extracted_content_only_once: true,
+                    include_in_memory: true,
+                    is_done: false,
+                    success: None,
+                }],
+                state: blank_state(),
+            }],
+        };
+
+        let rendered = render_previous_results(&history);
+
+        assert!(rendered.contains("fresh extracted payload"));
+        assert!(!rendered.contains("Extraction saved to file"));
     }
 
     #[test]

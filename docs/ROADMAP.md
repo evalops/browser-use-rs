@@ -36,7 +36,8 @@ Implemented:
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, max-failure handling, step and LLM timeouts, compact page-stat
   prompt context, vision-aware screenshot capture and image prompt parts,
-  invalid model-output recovery, final-result, success, and error helpers.
+  one-time extraction replay handling, invalid model-output recovery,
+  final-result, success, and error helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
