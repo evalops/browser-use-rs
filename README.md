@@ -51,6 +51,14 @@ This repository is brand new. The initial milestones are:
 The active roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and the
 repository issue tracker.
 
+## CLI
+
+The current CLI is intentionally one-shot: each command launches local
+Chrome/Chromium, performs the requested browser work, prints or writes the
+result, then exits.
+
+See [docs/CLI.md](docs/CLI.md).
+
 ## Development
 
 ```sh
