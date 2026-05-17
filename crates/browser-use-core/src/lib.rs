@@ -247,6 +247,54 @@ impl AgentHistory {
             .collect()
     }
 
+    #[must_use]
+    pub fn total_duration_seconds(&self) -> f64 {
+        self.items
+            .iter()
+            .filter_map(|item| item.metadata.as_ref())
+            .map(StepMetadata::duration_seconds)
+            .sum()
+    }
+
+    #[must_use]
+    pub fn number_of_steps(&self) -> usize {
+        self.items.len()
+    }
+
+    #[must_use]
+    pub fn urls(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .map(|item| item.state.url.as_str())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn action_results(&self) -> Vec<&ActionResult> {
+        self.items
+            .iter()
+            .flat_map(|item| item.result.iter())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn extracted_content(&self) -> Vec<&str> {
+        self.action_results()
+            .into_iter()
+            .filter_map(|result| result.extracted_content.as_deref())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn action_names(&self) -> Vec<&'static str> {
+        self.items
+            .iter()
+            .filter_map(|item| item.model_output.as_ref())
+            .flat_map(|output| output.action.iter())
+            .map(BrowserAction::name)
+            .collect()
+    }
+
     fn final_done_result(&self) -> Option<&ActionResult> {
         self.items
             .iter()
@@ -2010,6 +2058,73 @@ mod tests {
             serde_json::to_value(&without_interval).expect("serialize metadata");
         assert!(serialized_without_interval.get("step_interval").is_some());
         assert_eq!(serialized_without_interval["step_interval"], Value::Null);
+    }
+
+    #[test]
+    fn history_helpers_match_browser_use_accessors() {
+        let mut first_state = blank_state();
+        first_state.url = "https://example.test/start".to_owned();
+        let mut second_state = blank_state();
+        second_state.url = "https://example.test/done".to_owned();
+        let current_state = AgentCurrentState {
+            thinking: None,
+            evaluation_previous_goal: None,
+            memory: None,
+            next_goal: None,
+        };
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: Some(AgentOutput {
+                        current_state: current_state.clone(),
+                        action: vec![BrowserAction::Click(ClickElementAction {
+                            index: Some(1),
+                            coordinate_x: None,
+                            coordinate_y: None,
+                        })],
+                    }),
+                    result: vec![ActionResult::extracted("Clicked element 1")],
+                    state: first_state,
+                    metadata: Some(StepMetadata {
+                        step_number: 1,
+                        step_start_time: 10.0,
+                        step_end_time: 11.5,
+                        step_interval: None,
+                    }),
+                },
+                AgentHistoryItem {
+                    model_output: Some(AgentOutput {
+                        current_state,
+                        action: vec![BrowserAction::Done(DoneAction {
+                            text: "finished".to_owned(),
+                            success: true,
+                            files_to_display: Vec::new(),
+                        })],
+                    }),
+                    result: vec![ActionResult::done("finished", true)],
+                    state: second_state,
+                    metadata: Some(StepMetadata {
+                        step_number: 2,
+                        step_start_time: 20.0,
+                        step_end_time: 22.0,
+                        step_interval: Some(1.5),
+                    }),
+                },
+            ],
+        };
+
+        assert_eq!(history.number_of_steps(), 2);
+        assert_eq!(history.action_results().len(), 2);
+        assert_eq!(
+            history.extracted_content(),
+            vec!["Clicked element 1", "finished"]
+        );
+        assert_eq!(
+            history.urls(),
+            vec!["https://example.test/start", "https://example.test/done"]
+        );
+        assert_eq!(history.action_names(), vec!["click", "done"]);
+        assert!((history.total_duration_seconds() - 3.5).abs() < f64::EPSILON);
     }
 
     fn blank_state() -> BrowserStateSummary {

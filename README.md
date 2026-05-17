@@ -39,7 +39,7 @@ includes:
   page-stat prompt context, one-time extraction replay handling, step/LLM
   timeouts, max-failure handling, page-change guards, loop detection,
   structured extraction metadata, per-step timing metadata, final-result
-  helpers, and history.
+  helpers, duration/action/url history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
