@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use browser_use_dom::{
-    BrowserStateSummary, DomElementRef, ElementBounds, PageInfo, SerializedDomState, TabInfo,
+    BrowserStateSummary, DomElementRef, ElementBounds, PageInfo, PaginationButton,
+    PaginationButtonType, SerializedDomState, TabInfo, render_element_text,
 };
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
@@ -1046,6 +1047,137 @@ fn page_info_from_value(value: &Value) -> Option<PageInfo> {
     })
 }
 
+fn detect_pagination_buttons(dom_state: &SerializedDomState) -> Vec<PaginationButton> {
+    let mut buttons = Vec::new();
+
+    for element in dom_state.selector_map.values() {
+        if !element.is_interactive {
+            continue;
+        }
+
+        let label = pagination_label_text(element);
+        let label_lower = label.to_lowercase();
+        let role = element
+            .role
+            .as_deref()
+            .or_else(|| element.attributes.get("role").map(String::as_str))
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let button_type = if contains_any(
+            &label_lower,
+            &["first", "⇤", "primera", "première", "erste", "eerste"],
+        ) {
+            Some(PaginationButtonType::First)
+        } else if contains_any(
+            &label_lower,
+            &["last", "⇥", "última", "dernier", "letzte", "laatste"],
+        ) {
+            Some(PaginationButtonType::Last)
+        } else if contains_any(
+            &label_lower,
+            &[
+                "next",
+                ">",
+                "›",
+                "→",
+                "»",
+                "siguiente",
+                "suivant",
+                "volgende",
+            ],
+        ) {
+            Some(PaginationButtonType::Next)
+        } else if contains_any(
+            &label_lower,
+            &[
+                "prev",
+                "previous",
+                "<",
+                "‹",
+                "←",
+                "«",
+                "anterior",
+                "précédent",
+                "vorige",
+            ],
+        ) {
+            Some(PaginationButtonType::Prev)
+        } else if label_lower.trim().len() <= 2
+            && label_lower
+                .trim()
+                .chars()
+                .all(|character| character.is_ascii_digit())
+            && matches!(role.as_str(), "" | "button" | "link")
+        {
+            Some(PaginationButtonType::PageNumber)
+        } else {
+            None
+        };
+
+        let Some(button_type) = button_type else {
+            continue;
+        };
+
+        buttons.push(PaginationButton {
+            button_type,
+            backend_node_id: if element.backend_node_id == 0 {
+                u64::from(element.index)
+            } else {
+                element.backend_node_id
+            },
+            text: label.trim().to_owned(),
+            selector: pagination_selector(element),
+            is_disabled: pagination_is_disabled(element),
+        });
+    }
+
+    buttons
+}
+
+fn pagination_label_text(element: &DomElementRef) -> String {
+    let mut parts = vec![render_element_text(element)];
+    for attribute in ["aria-label", "title", "class"] {
+        if let Some(value) = element.attributes.get(attribute) {
+            parts.push(value.clone());
+        }
+    }
+    parts
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn pagination_is_disabled(element: &DomElementRef) -> bool {
+    element
+        .attributes
+        .get("disabled")
+        .is_some_and(|value| value == "true" || value.is_empty())
+        || element
+            .attributes
+            .get("aria-disabled")
+            .is_some_and(|value| value == "true")
+        || element
+            .attributes
+            .get("class")
+            .is_some_and(|value| value.to_lowercase().contains("disabled"))
+}
+
+fn pagination_selector(element: &DomElementRef) -> String {
+    if let Some(id) = element.attributes.get("id") {
+        format!("#{id}")
+    } else if let Some(name) = element.attributes.get("name") {
+        format!("{}[name=\"{}\"]", element.tag_name, name)
+    } else {
+        format!("{}:nth-index({})", element.tag_name, element.index)
+    }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
 fn u32_field(value: &Value, field: &str) -> Option<u32> {
     value
         .get(field)?
@@ -1261,6 +1393,7 @@ impl BrowserSession for CdpBrowserSession {
         let (url, title) = self.page_location().await?;
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
+        let pagination_buttons = detect_pagination_buttons(&dom_state);
         let current_page = self.current_page().await;
         let tabs = page_tabs(&self.connection).await?;
         let screenshot = if include_screenshot {
@@ -1291,7 +1424,7 @@ impl BrowserSession for CdpBrowserSession {
             is_pdf_viewer: false,
             recent_events: None,
             pending_network_requests: vec![],
-            pagination_buttons: vec![],
+            pagination_buttons,
             closed_popup_messages: vec![],
         })
     }
@@ -1997,6 +2130,51 @@ mod tests {
     }
 
     #[test]
+    fn detects_pagination_buttons_from_dom_state() {
+        let dom_state = SerializedDomState::from_elements(vec![
+            test_dom_element(1, "button", Some("Next"), &[("id", "next")]),
+            test_dom_element(2, "a", Some("2"), &[("href", "/page/2"), ("role", "link")]),
+            test_dom_element(3, "button", Some("Export"), &[("id", "export")]),
+            test_dom_element(4, "button", Some("Previous"), &[("class", "disabled")]),
+        ]);
+
+        let buttons = detect_pagination_buttons(&dom_state);
+
+        assert_eq!(buttons.len(), 3);
+        assert_eq!(buttons[0].button_type, PaginationButtonType::Next);
+        assert_eq!(buttons[0].selector, "#next");
+        assert_eq!(buttons[1].button_type, PaginationButtonType::PageNumber);
+        assert_eq!(buttons[2].button_type, PaginationButtonType::Prev);
+        assert!(buttons[2].is_disabled);
+    }
+
+    fn test_dom_element(
+        index: u32,
+        tag_name: &str,
+        name: Option<&str>,
+        attributes: &[(&str, &str)],
+    ) -> DomElementRef {
+        DomElementRef {
+            index,
+            target_id: "target".to_owned(),
+            backend_node_id: u64::from(index),
+            node_id: None,
+            tag_name: tag_name.to_owned(),
+            role: None,
+            name: name.map(str::to_owned),
+            text: None,
+            attributes: attributes
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        }
+    }
+
+    #[test]
     fn finds_previous_navigation_history_entry() {
         let entry_id = previous_navigation_entry_id(&json!({
             "currentIndex": 2,
@@ -2352,6 +2530,38 @@ mod tests {
             "DOM state included unselected option text: {}",
             state.dom_state.llm_representation()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_detects_pagination_buttons() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>pagination smoke</title></head><body><nav><button id='previous' class='disabled'>Previous</button><a id='page-two' href='https://example.com/page/2'>2</a><button id='next'>Next</button><button id='export'>Export</button></nav></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        assert_eq!(state.pagination_buttons.len(), 3);
+        assert!(state.pagination_buttons.iter().any(|button| {
+            button.button_type == PaginationButtonType::Prev
+                && button.text.contains("Previous")
+                && button.is_disabled
+        }));
+        assert!(state.pagination_buttons.iter().any(|button| {
+            button.button_type == PaginationButtonType::Next && button.selector == "#next"
+        }));
+        assert!(state.pagination_buttons.iter().any(|button| {
+            button.button_type == PaginationButtonType::PageNumber && button.text == "2"
+        }));
     }
 
     #[tokio::test]

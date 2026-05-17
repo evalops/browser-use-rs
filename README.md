@@ -23,7 +23,7 @@ includes:
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, accessible labels, image-alt control names, selected
   dropdown values, bounds, hidden-element filtering, and scrollable element
-  metadata, plus common ARIA widget roles.
+  metadata, plus common ARIA widget roles and pagination affordances.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`, `extract`,
