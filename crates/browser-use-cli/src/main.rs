@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
+use browser_use_llm::OpenAiCompatibleChatModel;
 use clap::Parser;
 use schemars::schema_for;
 use tokio::time::sleep;
@@ -50,6 +51,23 @@ enum Command {
         pages: f64,
         #[arg(long, default_value_t = true)]
         down: bool,
+    },
+    /// Run a bounded browser agent task through an OpenAI-compatible chat model.
+    Agent {
+        url: String,
+        task: String,
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: String,
+        #[arg(long, env = "OPENAI_MODEL")]
+        model: String,
+        #[arg(
+            long,
+            env = "OPENAI_BASE_URL",
+            default_value = "https://api.openai.com/v1"
+        )]
+        base_url: String,
+        #[arg(long, default_value_t = 10)]
+        max_steps: usize,
     },
 }
 
@@ -111,6 +129,20 @@ async fn main() -> anyhow::Result<()> {
             let session = launch_and_navigate(&url).await?;
             session.scroll(None, down, pages).await?;
             print_state(&session, true).await?;
+        }
+        Some(Command::Agent {
+            url,
+            task,
+            api_key,
+            model,
+            base_url,
+            max_steps,
+        }) => {
+            let session = launch_and_navigate(&url).await?;
+            let llm = OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url);
+            let mut agent = browser_use_core::Agent::new(task, llm, session);
+            let history = agent.run(max_steps).await?;
+            println!("{}", serde_json::to_string_pretty(history)?);
         }
         None if cli.version_target => {
             println!("{}", browser_use_core::INITIAL_UPSTREAM_COMMIT);

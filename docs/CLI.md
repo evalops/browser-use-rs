@@ -16,6 +16,8 @@ browser-use-rs screenshot <url> <output.png>
 browser-use-rs click <url> <index>
 browser-use-rs type <url> <index> <text>
 browser-use-rs scroll <url> [--pages 1.0] [--down]
+browser-use-rs agent <url> <task> --api-key <key> --model <model> \
+  [--base-url https://api.openai.com/v1] [--max-steps 10]
 ```
 
 ## Local Smokes
@@ -33,10 +35,15 @@ cargo run -q -p browser-use-cli -- screenshot \
   /tmp/browser-use-rs-cli-smoke.png
 ```
 
+Agent runs use the same one-shot browser lifecycle and accept
+`OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_BASE_URL` from the environment.
+They print the typed `AgentHistory` JSON after the bounded run completes.
+
 ## Current Limits
 
 - Commands are not persistent sessions yet.
 - DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
 - Indexed click/input work for same-document interactive elements; iframe and
   shadow-root support belong to the DOM parity track.
+- Agent runs currently use the OpenAI-compatible Chat Completions adapter.
 - MCP is not implemented yet.
