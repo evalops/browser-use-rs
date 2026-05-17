@@ -108,6 +108,13 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const labels = Array.from(el.labels || []).map((label) => (label.innerText || label.textContent || '').trim()).filter(Boolean);
     return labels.join(' ');
   };
+  const descendantAltText = (el) => {
+    return Array.from(el.querySelectorAll?.('img[alt], svg[aria-label]') || [])
+      .map((child) => child.getAttribute('alt') || child.getAttribute('aria-label') || '')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(' ');
+  };
   const elements = [];
   const visitFrame = (iframe, offset) => {
     if (!isVisible(iframe)) return;
@@ -134,12 +141,13 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'aria-checked', 'aria-expanded', 'aria-pressed', 'aria-selected', 'role', 'title', 'contenteditable']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-checked', 'aria-expanded', 'aria-pressed', 'aria-selected', 'role', 'title', 'contenteditable']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
-    const text = (el.innerText || el.value || '').trim().slice(0, 200);
-    const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || text || '').trim();
+    const altText = descendantAltText(el);
+    const text = (el.innerText || el.value || altText || '').trim().slice(0, 200);
+    const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
     return {
       index: index + 1,
       tag_name: el.tagName.toLowerCase(),
@@ -2013,6 +2021,14 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_uses_image_alt_text_sources() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("descendantAltText"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'img[alt], svg[aria-label]'"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'alt'"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'aria-describedby'"));
+    }
+
+    #[test]
     fn renders_runtime_evaluate_values() {
         assert_eq!(
             render_runtime_evaluate_result(&json!({
@@ -2235,6 +2251,52 @@ mod tests {
             .get(&2)
             .expect("labelled button");
         assert_eq!(button.name.as_deref(), Some("Submit request"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_uses_image_alt_for_control_names() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>alt smoke</title></head><body><a id='report' href='https://example.com/report'><img alt='Download report' src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==' style='width:24px;height:24px'></a><button id='settings'><img alt='Open settings' src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==' style='width:24px;height:24px'></button><input id='image-submit' type='image' alt='Search icon' style='width:24px;height:24px'></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing interactive element with id {id}"))
+        };
+
+        assert_eq!(
+            element_by_id("report").name.as_deref(),
+            Some("Download report")
+        );
+        assert_eq!(
+            element_by_id("settings").name.as_deref(),
+            Some("Open settings")
+        );
+        assert_eq!(
+            element_by_id("image-submit").name.as_deref(),
+            Some("Search icon")
+        );
     }
 
     #[tokio::test]
