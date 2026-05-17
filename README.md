@@ -25,7 +25,8 @@ includes:
   tags and contents, accessible labels, image-alt control names, selected
   dropdown values, bounds, automation-friendly data/ARIA/value attributes,
   hidden-element filtering, and scrollable element metadata, plus common ARIA
-  widget roles and pagination affordances.
+  widget roles, pagination affordances, and configurable prompt-visible
+  attributes.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file
@@ -37,7 +38,7 @@ includes:
   vision-aware browser-state capture and screenshot image prompts, compact
   page-stat prompt context, one-time extraction replay handling, step/LLM
   timeouts, max-failure handling, page-change guards, loop detection,
-  final-result helpers, and history.
+  structured extraction metadata, final-result helpers, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session

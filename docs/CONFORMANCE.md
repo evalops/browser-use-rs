@@ -14,13 +14,14 @@ browser-use where compatibility is claimed.
 ## Test Families
 
 1. Schema snapshots: action JSON schemas, browser state JSON, and agent output.
-2. DOM fixtures: numbered clickable elements, text representation, selector
-   maps, iframes, hidden elements, dropdowns, ARIA widget roles, and
-   accessibility names.
+2. DOM fixtures: numbered clickable elements, text representation, configurable
+   prompt attributes, selector maps, iframes, hidden elements, dropdowns, ARIA
+   widget roles, and accessibility names.
 3. Browser actions: navigation, search, click, input, scroll, keyboard, tab
    switching, downloads, screenshots, and PDF output.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
-   loop nudges, planning fields, done semantics, and final history.
+   loop nudges, planning fields, prompt attribute settings, extraction
+   metadata, done semantics, and final history.
 5. Provider contracts: OpenAI-compatible, Anthropic, Gemini, and Ollama
    structured-output payloads first, then generic HTTP and additional provider
    adapters as compatibility expands.

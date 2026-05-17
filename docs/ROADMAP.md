@@ -47,6 +47,7 @@ Implemented:
   max-step, max-failure handling, step and LLM timeouts, compact page-stat
   prompt context, vision-aware screenshot capture and image prompt parts,
   one-time extraction replay handling, invalid model-output recovery,
+  custom prompt-visible DOM attributes, structured extraction metadata,
   final-result, success, and error helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
@@ -62,7 +63,8 @@ Implemented:
   tags and contents, indexes common ARIA widget roles and disclosure elements,
   carries image alt text into image-only control names, renders selected
   dropdown values, preserves automation-friendly data/ARIA/value attributes,
-  detects pagination affordances, and excludes hidden or disabled interactive
+  renders native input format hints, detects pagination affordances, supports
+  caller-selected prompt attributes, and excludes hidden or disabled interactive
   elements from the selector map.
 
 Next:
