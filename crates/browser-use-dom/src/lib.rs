@@ -313,9 +313,7 @@ fn render_attribute_value(element: &DomElementRef, attribute: &str) -> Option<St
 
 fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> Option<&'a String> {
     let alias = match attribute {
-        "checked" => "aria-checked",
         "disabled" => "aria-disabled",
-        "expanded" => "aria-expanded",
         "haspopup" => "aria-haspopup",
         "invalid" => "aria-invalid",
         "pressed" => "aria-pressed",
@@ -502,5 +500,31 @@ mod tests {
                 .contains("[2] <input type=password> Password")
         );
         assert!(!state.llm_representation().contains("secret"));
+    }
+
+    #[test]
+    fn rendered_attributes_do_not_duplicate_direct_aria_state() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Toggle details".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("aria-checked".to_owned(), "true".to_owned()),
+                ("aria-expanded".to_owned(), "true".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(attributes, "aria-expanded=true aria-checked=true");
     }
 }
