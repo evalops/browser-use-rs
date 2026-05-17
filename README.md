@@ -46,6 +46,11 @@ This repository is brand new. The initial milestones are:
 - `browser-use-mcp`: MCP bridge.
 - `browser-use-conformance`: golden fixtures and parity test utilities.
 
+## Roadmap
+
+The active roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and the
+repository issue tracker.
+
 ## Development
 
 ```sh
