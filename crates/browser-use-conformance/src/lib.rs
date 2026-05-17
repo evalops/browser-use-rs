@@ -195,6 +195,7 @@ mod tests {
             "find_elements",
             "switch_tab",
             "close_tab",
+            "go_back",
             "get_dropdown_options",
             "select_dropdown_option",
             "done",
@@ -390,6 +391,10 @@ mod tests {
 
         async fn navigate(&self, _url: &str, _new_tab: bool) -> Result<(), BrowserError> {
             Err(unsupported_action("navigate"))
+        }
+
+        async fn go_back(&self) -> Result<(), BrowserError> {
+            Err(unsupported_action("go_back"))
         }
 
         async fn switch_tab(&self, _target_id: &str) -> Result<(), BrowserError> {

@@ -24,7 +24,7 @@ Implemented:
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
 - Built-in browser action parity for wait/sleep steps with the upstream default
-  and bounded delay behavior.
+  and bounded delay behavior, plus browser-history back navigation.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, tab switching/closing, URL/title state,
   screenshots, PDF capture, file uploads, coordinate clicks, scroll, and compact

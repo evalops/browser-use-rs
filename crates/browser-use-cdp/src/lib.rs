@@ -1214,6 +1214,27 @@ impl BrowserSession for CdpBrowserSession {
         Ok(())
     }
 
+    async fn go_back(&self) -> Result<(), BrowserError> {
+        let page = self.current_page().await;
+        let history = self
+            .connection
+            .command(
+                "Page.getNavigationHistory",
+                json!({}),
+                Some(&page.session_id),
+            )
+            .await?;
+        let entry_id = previous_navigation_entry_id(&history)?;
+        self.connection
+            .command(
+                "Page.navigateToHistoryEntry",
+                json!({ "entryId": entry_id }),
+                Some(&page.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
         let page = attach_to_target(&self.connection, target_id.to_owned()).await?;
         self.set_current_page(page).await;
@@ -1574,11 +1595,38 @@ fn paper_size_inches(format: &str) -> (f64, f64) {
     }
 }
 
+fn previous_navigation_entry_id(history: &Value) -> Result<i64, BrowserError> {
+    let current_index = history
+        .get("currentIndex")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            BrowserError::MissingResponseData("Page.getNavigationHistory currentIndex".to_owned())
+        })?;
+
+    if current_index <= 0 {
+        return Err(BrowserError::ActionFailed(
+            "No previous browser history entry".to_owned(),
+        ));
+    }
+
+    history
+        .get("entries")
+        .and_then(Value::as_array)
+        .and_then(|entries| entries.get((current_index - 1) as usize))
+        .and_then(|entry| entry.get("id"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            BrowserError::MissingResponseData("Page.getNavigationHistory entries".to_owned())
+        })
+}
+
 #[async_trait]
 pub trait BrowserSession: Send + Sync {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
+
+    async fn go_back(&self) -> Result<(), BrowserError>;
 
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError>;
 
@@ -1632,6 +1680,10 @@ where
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
         self.as_ref().navigate(url, new_tab).await
+    }
+
+    async fn go_back(&self) -> Result<(), BrowserError> {
+        self.as_ref().go_back().await
     }
 
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
@@ -1803,6 +1855,34 @@ mod tests {
 
         assert_eq!(page_info.scroll_y, 300);
         assert_eq!(page_info.pixels_below, 980);
+    }
+
+    #[test]
+    fn finds_previous_navigation_history_entry() {
+        let entry_id = previous_navigation_entry_id(&json!({
+            "currentIndex": 2,
+            "entries": [
+                { "id": 10, "url": "https://example.com/one" },
+                { "id": 11, "url": "https://example.com/two" },
+                { "id": 12, "url": "https://example.com/three" }
+            ]
+        }))
+        .expect("previous entry");
+
+        assert_eq!(entry_id, 11);
+    }
+
+    #[test]
+    fn reports_missing_previous_navigation_entry() {
+        let error = previous_navigation_entry_id(&json!({
+            "currentIndex": 0,
+            "entries": [
+                { "id": 10, "url": "https://example.com/one" }
+            ]
+        }))
+        .expect_err("missing previous entry");
+
+        assert!(matches!(error, BrowserError::ActionFailed(_)));
     }
 
     #[test]

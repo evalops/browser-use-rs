@@ -213,6 +213,7 @@ pub enum BrowserAction {
     FindElements(FindElementsAction),
     Search(SearchAction),
     Navigate(NavigateAction),
+    GoBack(NoParamsAction),
     Click(ClickElementAction),
     Input(InputTextAction),
     Done(DoneAction),
@@ -237,6 +238,7 @@ impl BrowserAction {
             Self::FindElements(_) => "find_elements",
             Self::Search(_) => "search",
             Self::Navigate(_) => "navigate",
+            Self::GoBack(_) => "go_back",
             Self::Click(_) => "click",
             Self::Input(_) => "input",
             Self::Done(_) => "done",
@@ -259,6 +261,7 @@ impl BrowserAction {
             self,
             Self::Search(_)
                 | Self::Navigate(_)
+                | Self::GoBack(_)
                 | Self::SwitchTab(_)
                 | Self::CloseTab(_)
                 | Self::Done(_)
@@ -308,5 +311,18 @@ mod tests {
         assert_eq!(action.name(), "wait");
         assert_eq!(action, BrowserAction::Wait(WaitAction { seconds: 3 }));
         assert!(!action.terminates_sequence());
+    }
+
+    #[test]
+    fn go_back_action_uses_no_params_and_terminates() {
+        let action: BrowserAction =
+            serde_json::from_value(serde_json::json!({ "go_back": {} })).expect("go_back action");
+
+        assert_eq!(action.name(), "go_back");
+        assert_eq!(
+            action,
+            BrowserAction::GoBack(NoParamsAction { description: None })
+        );
+        assert!(action.terminates_sequence());
     }
 }

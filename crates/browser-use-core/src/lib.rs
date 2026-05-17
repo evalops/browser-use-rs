@@ -332,6 +332,10 @@ where
                 params.url
             )))
         }
+        BrowserAction::GoBack(_) => {
+            session.go_back().await?;
+            Ok(ActionResult::extracted("Navigated back"))
+        }
         BrowserAction::SwitchTab(params) => {
             session.switch_tab(&params.tab_id).await?;
             Ok(ActionResult::extracted(format!(
@@ -1033,7 +1037,7 @@ mod tests {
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
         ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
-        GetDropdownOptionsAction, InputTextAction, NavigateAction, SaveAsPdfAction,
+        GetDropdownOptionsAction, InputTextAction, NavigateAction, NoParamsAction, SaveAsPdfAction,
         SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
         UploadFileAction, WaitAction,
     };
@@ -1236,6 +1240,14 @@ mod tests {
                 .lock()
                 .expect("events lock")
                 .push(format!("navigate:{url}:{new_tab}"));
+            Ok(())
+        }
+
+        async fn go_back(&self) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push("go_back".to_owned());
             Ok(())
         }
 
@@ -1456,6 +1468,20 @@ mod tests {
             executor.session().events(),
             vec!["switch_tab:target-2", "close_tab:target-1"]
         );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_go_back_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::GoBack(NoParamsAction { description: None }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(result.extracted_content.as_deref(), Some("Navigated back"));
+        assert_eq!(executor.session().events(), vec!["go_back"]);
     }
 
     #[tokio::test]
