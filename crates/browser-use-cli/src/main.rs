@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::BrowserActionExecutor;
-use browser_use_llm::OpenAiCompatibleChatModel;
+use browser_use_llm::{AnthropicChatModel, ChatModel, OpenAiCompatibleChatModel};
 use clap::Parser;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
@@ -75,23 +75,37 @@ enum Command {
         #[arg(long, default_value_t = true)]
         screenshot: bool,
     },
-    /// Run a bounded browser agent task through an OpenAI-compatible chat model.
+    /// Run a bounded browser agent task through a schema-guided chat model.
     Agent {
         url: String,
         task: String,
-        #[arg(long, env = "OPENAI_API_KEY")]
-        api_key: String,
-        #[arg(long, env = "OPENAI_MODEL")]
-        model: String,
-        #[arg(
-            long,
-            env = "OPENAI_BASE_URL",
-            default_value = "https://api.openai.com/v1"
-        )]
-        base_url: String,
+        #[arg(long, value_enum, default_value = "openai-compatible")]
+        provider: LlmProvider,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
         #[arg(long, default_value_t = 10)]
         max_steps: usize,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum LlmProvider {
+    #[value(name = "openai-compatible", alias = "openai")]
+    OpenAiCompatible,
+    Anthropic,
+}
+
+impl LlmProvider {
+    fn from_mcp(provider: Option<browser_use_mcp::AgentProvider>) -> Self {
+        match provider.unwrap_or(browser_use_mcp::AgentProvider::OpenAiCompatible) {
+            browser_use_mcp::AgentProvider::OpenAiCompatible => Self::OpenAiCompatible,
+            browser_use_mcp::AgentProvider::Anthropic => Self::Anthropic,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -224,13 +238,14 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Agent {
             url,
             task,
+            provider,
             api_key,
             model,
             base_url,
             max_steps,
         }) => {
+            let llm = configured_chat_model(provider, api_key, model, base_url)?;
             let session = launch_and_navigate(&url).await?;
-            let llm = OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url);
             let mut agent = browser_use_core::Agent::new(task, llm, session);
             let history = agent.run(max_steps).await?;
             println!("{}", serde_json::to_string_pretty(history)?);
@@ -611,21 +626,13 @@ async fn execute_mcp_tool(
         }
         browser_use_mcp::AGENT_TOOL_NAME => {
             let input: browser_use_mcp::AgentToolInput = serde_json::from_value(arguments)?;
-            let api_key = std::env::var("OPENAI_API_KEY")?;
-            let model = input
-                .model
-                .or_else(|| std::env::var("OPENAI_MODEL").ok())
-                .ok_or_else(|| anyhow::anyhow!("OPENAI_MODEL or model input is required"))?;
-            let base_url = input
-                .base_url
-                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+            let provider = LlmProvider::from_mcp(input.provider);
+            let llm = configured_chat_model(provider, None, input.model, input.base_url)?;
             let session = if let Some(session_id) = input.session_id {
                 runtime.session(&session_id, input.url).await?
             } else {
                 Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
             };
-            let llm = OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url);
             let mut agent = browser_use_core::Agent::new(input.task, llm, session);
             let history = agent.run(input.max_steps).await?;
             let output = browser_use_mcp::AgentToolOutput {
@@ -641,4 +648,51 @@ async fn execute_mcp_tool(
 
 fn require_mcp_url(url: Option<String>) -> anyhow::Result<String> {
     url.ok_or_else(|| anyhow::anyhow!("url is required when session_id is not provided"))
+}
+
+fn configured_chat_model(
+    provider: LlmProvider,
+    api_key: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> anyhow::Result<Box<dyn ChatModel>> {
+    match provider {
+        LlmProvider::OpenAiCompatible => {
+            let api_key = api_key
+                .or_else(|| nonempty_env("OPENAI_API_KEY"))
+                .ok_or_else(|| anyhow::anyhow!("OPENAI_API_KEY or --api-key is required"))?;
+            let model = model
+                .or_else(|| nonempty_env("OPENAI_MODEL"))
+                .ok_or_else(|| anyhow::anyhow!("OPENAI_MODEL or --model is required"))?;
+            let base_url = base_url
+                .or_else(|| nonempty_env("OPENAI_BASE_URL"))
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+            Ok(Box::new(
+                OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url),
+            ))
+        }
+        LlmProvider::Anthropic => {
+            let api_key = api_key
+                .or_else(|| nonempty_env("ANTHROPIC_API_KEY"))
+                .ok_or_else(|| anyhow::anyhow!("ANTHROPIC_API_KEY or --api-key is required"))?;
+            let model = model
+                .or_else(|| nonempty_env("ANTHROPIC_MODEL"))
+                .ok_or_else(|| anyhow::anyhow!("ANTHROPIC_MODEL or --model is required"))?;
+            let base_url = base_url
+                .or_else(|| nonempty_env("ANTHROPIC_BASE_URL"))
+                .unwrap_or_else(|| "https://api.anthropic.com/v1".to_owned());
+            let mut llm = AnthropicChatModel::new(api_key, model).with_base_url(base_url);
+            if let Some(version) = nonempty_env("ANTHROPIC_VERSION") {
+                llm = llm.with_anthropic_version(version);
+            }
+            if let Some(max_tokens) = nonempty_env("ANTHROPIC_MAX_TOKENS") {
+                llm = llm.with_max_tokens(max_tokens.parse()?);
+            }
+            Ok(Box::new(llm))
+        }
+    }
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
 }

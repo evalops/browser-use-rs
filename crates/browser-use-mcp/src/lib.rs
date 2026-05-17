@@ -67,11 +67,21 @@ pub struct AgentToolInput {
     pub url: Option<String>,
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AgentProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentProvider {
+    #[serde(rename = "openai-compatible", alias = "openai")]
+    OpenAiCompatible,
+    #[serde(rename = "anthropic")]
+    Anthropic,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -238,6 +248,9 @@ mod tests {
         let schema_text = serde_json::to_string(&schema).expect("schema text");
 
         assert!(!schema_text.contains("api_key"));
+        assert!(schema_text.contains("provider"));
+        assert!(schema_text.contains("openai-compatible"));
+        assert!(schema_text.contains("anthropic"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
     }

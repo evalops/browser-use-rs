@@ -20,7 +20,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Agent runs with schema-guided provider output, max actions per step, max
   steps, max failures, LLM timeout, repeated-action loop detection, previous
   result context, and typed history/final result.
-- OpenAI-compatible Chat Completions provider with structured-output requests.
+- OpenAI-compatible Chat Completions and Anthropic Messages providers with
+  structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and
   local persistent `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including in-process
@@ -35,5 +36,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   pragmatic compact representation rather than full browser-use AX snapshots.
 - MCP sessions are in-process only and are lost when the stdio server exits.
 - CLI sessions are local registry records and are not yet a network daemon API.
-- Provider parity beyond OpenAI-compatible Chat Completions is not implemented.
+- Provider parity beyond OpenAI-compatible Chat Completions and Anthropic
+  Messages is not implemented.
 - Package publishing is limited to the GitHub release artifact.

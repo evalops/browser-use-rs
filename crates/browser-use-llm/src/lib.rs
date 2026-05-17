@@ -73,6 +73,24 @@ pub trait ChatModel: Send + Sync {
     async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError>;
 }
 
+#[async_trait]
+impl<T> ChatModel for Box<T>
+where
+    T: ChatModel + ?Sized,
+{
+    fn provider(&self) -> &str {
+        self.as_ref().provider()
+    }
+
+    fn model(&self) -> &str {
+        self.as_ref().model()
+    }
+
+    async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError> {
+        self.as_ref().invoke_json(request).await
+    }
+}
+
 #[derive(Clone)]
 pub struct OpenAiCompatibleChatModel {
     api_key: String,
@@ -80,6 +98,110 @@ pub struct OpenAiCompatibleChatModel {
     base_url: String,
     schema_name: String,
     client: reqwest::Client,
+}
+
+#[derive(Clone)]
+pub struct AnthropicChatModel {
+    api_key: String,
+    model: String,
+    base_url: String,
+    anthropic_version: String,
+    max_tokens: u32,
+    client: reqwest::Client,
+}
+
+impl AnthropicChatModel {
+    #[must_use]
+    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.into(),
+            base_url: "https://api.anthropic.com/v1".to_owned(),
+            anthropic_version: "2023-06-01".to_owned(),
+            max_tokens: 4096,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn from_env(model: impl Into<String>) -> Result<Self, LlmError> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| LlmError::Provider("ANTHROPIC_API_KEY is not set".to_owned()))?;
+        Ok(Self::new(api_key, model))
+    }
+
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into().trim_end_matches('/').to_owned();
+        self
+    }
+
+    #[must_use]
+    pub fn with_anthropic_version(mut self, anthropic_version: impl Into<String>) -> Self {
+        self.anthropic_version = anthropic_version.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    fn messages_url(&self) -> String {
+        format!("{}/messages", self.base_url)
+    }
+}
+
+#[async_trait]
+impl ChatModel for AnthropicChatModel {
+    fn provider(&self) -> &str {
+        "anthropic"
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError> {
+        let payload = anthropic_messages_payload(&self.model, self.max_tokens, request);
+        let response = self
+            .client
+            .post(self.messages_url())
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", &self.anthropic_version)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|error| LlmError::Provider(error.to_string()))?;
+        let status = response.status();
+        let raw_response = response
+            .json::<Value>()
+            .await
+            .map_err(|error| LlmError::Provider(error.to_string()))?;
+
+        if !status.is_success() {
+            let message = raw_response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map_or_else(|| raw_response.to_string(), ToOwned::to_owned);
+            return if status == StatusCode::TOO_MANY_REQUESTS {
+                Err(LlmError::RateLimited(message))
+            } else {
+                Err(LlmError::Provider(format!("HTTP {status}: {message}")))
+            };
+        }
+
+        let content = parse_anthropic_message(&raw_response)?;
+        Ok(ChatCompletion {
+            model: raw_response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.model)
+                .to_owned(),
+            content,
+            raw_response: Some(raw_response),
+        })
+    }
 }
 
 impl OpenAiCompatibleChatModel {
@@ -254,6 +376,117 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
     }
 }
 
+fn anthropic_messages_payload(model: &str, max_tokens: u32, request: ChatRequest) -> Value {
+    let mut system_parts = Vec::new();
+    let mut messages = Vec::new();
+
+    for message in request.messages {
+        if message.role == MessageRole::System {
+            system_parts.extend(message.content.into_iter().filter_map(text_content_part));
+        } else {
+            messages.push(anthropic_message(message));
+        }
+    }
+
+    let mut payload = json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    });
+
+    if !system_parts.is_empty() {
+        payload["system"] = Value::String(system_parts.join("\n\n"));
+    }
+
+    if let Some(schema) = request.output_schema {
+        payload["output_config"] = json!({
+            "format": {
+                "type": "json_schema",
+                "schema": schema,
+            }
+        });
+    }
+
+    payload
+}
+
+fn anthropic_message(message: ChatMessage) -> Value {
+    let role = match message.role {
+        MessageRole::Assistant => "assistant",
+        MessageRole::User | MessageRole::Tool | MessageRole::System => "user",
+    };
+    json!({
+        "role": role,
+        "content": anthropic_content(message.content),
+    })
+}
+
+fn anthropic_content(parts: Vec<ContentPart>) -> Value {
+    Value::Array(parts.into_iter().map(anthropic_content_part).collect())
+}
+
+fn anthropic_content_part(part: ContentPart) -> Value {
+    match part {
+        ContentPart::Text { text } => json!({
+            "type": "text",
+            "text": text,
+        }),
+        ContentPart::ImageUrl { image_url } => match data_url_image_source(&image_url) {
+            Some((media_type, data)) => json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                }
+            }),
+            None => json!({
+                "type": "text",
+                "text": format!("[image_url: {image_url}]"),
+            }),
+        },
+    }
+}
+
+fn text_content_part(part: ContentPart) -> Option<String> {
+    match part {
+        ContentPart::Text { text } => Some(text),
+        ContentPart::ImageUrl { image_url } => Some(format!("[image_url: {image_url}]")),
+    }
+}
+
+fn data_url_image_source(image_url: &str) -> Option<(String, String)> {
+    let rest = image_url.strip_prefix("data:")?;
+    let (media_type, data) = rest.split_once(";base64,")?;
+    if !media_type.starts_with("image/") || data.is_empty() {
+        return None;
+    }
+    Some((media_type.to_owned(), data.to_owned()))
+}
+
+fn parse_anthropic_message(raw_response: &Value) -> Result<Value, LlmError> {
+    match raw_response.get("stop_reason").and_then(Value::as_str) {
+        Some("refusal") => return Err(LlmError::Provider("model refused request".to_owned())),
+        Some("max_tokens") => {
+            return Err(LlmError::Provider(
+                "Anthropic response reached max_tokens before completing JSON".to_owned(),
+            ));
+        }
+        _ => {}
+    }
+
+    let text = raw_response
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .and_then(|part| part.get("text").and_then(Value::as_str))
+        .ok_or_else(|| LlmError::Provider("missing Anthropic text content".to_owned()))?;
+
+    serde_json::from_str(text).map_err(|error| LlmError::InvalidStructuredOutput(error.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +557,72 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_payload_uses_structured_outputs_format() {
+        let payload = anthropic_messages_payload(
+            "claude-test",
+            2048,
+            ChatRequest {
+                messages: vec![
+                    ChatMessage::text(MessageRole::System, "Return JSON only"),
+                    ChatMessage::text(MessageRole::User, "Extract the result"),
+                ],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"],
+                    "additionalProperties": false
+                })),
+            },
+        );
+
+        assert_eq!(payload["model"], "claude-test");
+        assert_eq!(payload["max_tokens"], 2048);
+        assert_eq!(payload["system"], "Return JSON only");
+        assert_eq!(payload["messages"][0]["role"], "user");
+        assert_eq!(payload["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(payload["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(
+            payload["output_config"]["format"]["schema"]["properties"]["ok"]["type"],
+            "boolean"
+        );
+    }
+
+    #[test]
+    fn anthropic_payload_preserves_data_url_images() {
+        let payload = anthropic_messages_payload(
+            "claude-test",
+            1024,
+            ChatRequest {
+                messages: vec![ChatMessage {
+                    role: MessageRole::User,
+                    content: vec![
+                        ContentPart::Text {
+                            text: "what changed?".to_owned(),
+                        },
+                        ContentPart::ImageUrl {
+                            image_url: "data:image/png;base64,abc".to_owned(),
+                        },
+                    ],
+                }],
+                output_schema: None,
+            },
+        );
+
+        assert_eq!(payload["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(payload["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(
+            payload["messages"][0]["content"][1]["source"]["media_type"],
+            "image/png"
+        );
+        assert_eq!(
+            payload["messages"][0]["content"][1]["source"]["data"],
+            "abc"
+        );
+    }
+
+    #[test]
     fn parses_stringified_json_chat_completion() {
         let raw = json!({
             "model": "gpt-test",
@@ -340,5 +639,44 @@ mod tests {
         let parsed = parse_openai_chat_completion(&raw).expect("parse completion");
 
         assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_anthropic_json_text_message() {
+        let raw = json!({
+            "model": "claude-test",
+            "stop_reason": "end_turn",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "{\"ok\":true}"
+                }
+            ]
+        });
+
+        let parsed = parse_anthropic_message(&raw).expect("parse completion");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn anthropic_parser_rejects_refusal_and_truncation() {
+        let refusal = json!({
+            "stop_reason": "refusal",
+            "content": [{ "type": "text", "text": "no" }]
+        });
+        let truncated = json!({
+            "stop_reason": "max_tokens",
+            "content": [{ "type": "text", "text": "{\"ok\"" }]
+        });
+
+        assert!(matches!(
+            parse_anthropic_message(&refusal),
+            Err(LlmError::Provider(message)) if message.contains("refused")
+        ));
+        assert!(matches!(
+            parse_anthropic_message(&truncated),
+            Err(LlmError::Provider(message)) if message.contains("max_tokens")
+        ));
     }
 }

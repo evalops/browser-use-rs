@@ -19,8 +19,12 @@ browser-use-rs click <url> <index>
 browser-use-rs type <url> <index> <text>
 browser-use-rs scroll <url> [--pages 1.0] [--down]
 browser-use-rs actions <url> <actions.json> [--screenshot]
-browser-use-rs agent <url> <task> --api-key <key> --model <model> \
-  [--base-url https://api.openai.com/v1] [--max-steps 10]
+browser-use-rs agent <url> <task> --provider openai-compatible \
+  [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
+  [--max-steps 10]
+browser-use-rs agent <url> <task> --provider anthropic \
+  [--api-key <key>] [--model <model>] [--base-url https://api.anthropic.com/v1] \
+  [--max-steps 10]
 browser-use-rs session start <id> <url> [--screenshot]
 browser-use-rs session state <id> [--screenshot]
 browser-use-rs session actions <id> <actions.json> [--screenshot]
@@ -53,9 +57,13 @@ single launched browser session, and prints:
 }
 ```
 
-Agent runs use the same one-shot browser lifecycle and accept
-`OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_BASE_URL` from the environment.
-They print the typed `AgentHistory` JSON after the bounded run completes.
+Agent runs use the same one-shot browser lifecycle and print typed
+`AgentHistory` JSON after the bounded run completes. The default provider is
+`openai-compatible` and reads `OPENAI_API_KEY`, `OPENAI_MODEL`, and optional
+`OPENAI_BASE_URL` from the environment. `--provider anthropic` reads
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, optional `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS`. CLI `--api-key`, `--model`,
+and `--base-url` override the provider-specific environment values.
 
 `session` commands persist a local Chrome session across CLI invocations. The
 session registry defaults to `~/.browser-use-rs/sessions` and can be overridden
@@ -75,6 +83,7 @@ the same in-process Chrome session.
 - DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
 - Indexed actions currently target same-document interactive elements; iframe
   and shadow-root support belong to the DOM parity track.
-- Agent runs currently use the OpenAI-compatible Chat Completions adapter.
+- Agent runs currently support OpenAI-compatible Chat Completions and Anthropic
+  Messages structured-output adapters.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; they do not yet persist sessions across server restarts.

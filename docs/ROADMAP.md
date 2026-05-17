@@ -33,14 +33,15 @@ Implemented:
   CLI invocations.
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, and max-failure handling.
-- OpenAI-compatible Chat Completions provider with structured-output request
-  payloads.
-- One-shot CLI agent command backed by the provider abstraction.
+- OpenAI-compatible Chat Completions and Anthropic Messages providers with
+  structured-output request payloads.
+- One-shot CLI agent command backed by explicit provider selection.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
-  actions, and agent runs.
+  actions, and provider-selectable agent runs.
 
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Add a network daemon API and MCP session persistence across server restarts.
-3. Expand agent planning, loop detection, and provider parity.
+3. Expand agent planning, replay/conformance fixtures, and provider parity
+   beyond OpenAI-compatible and Anthropic.
