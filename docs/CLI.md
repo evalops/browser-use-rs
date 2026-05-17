@@ -72,21 +72,23 @@ with `BROWSER_USE_RS_STATE_DIR`. Session IDs may contain ASCII letters, digits,
 
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
-`browser_use_state`, `browser_use_actions`, and `browser_use_agent`. MCP tool
-inputs accept an optional `session_id`; calls with the same `session_id` reuse
-the same in-process Chrome session. If `session_id` matches a persistent CLI
-session record, `mcp-stdio` reconnects to that Chrome session even after the
-stdio server process restarts.
+`browser_use_state`, `browser_use_actions`, `browser_use_agent`, and
+`browser_use_session`. MCP browser and agent tool inputs accept an optional
+`session_id`; calls with the same `session_id` reuse the same in-process Chrome
+session. `browser_use_session` can start, stop, and list persistent session
+records. If `session_id` matches a persistent session record, `mcp-stdio`
+reconnects to that Chrome session even after the stdio server process restarts.
 
 ## Current Limits
 
 - MCP can reconnect to persistent sessions created by `browser-use-rs session
-  start`; sessions first created inside `mcp-stdio` are still in-process only.
+  start` or the `browser_use_session` tool; browser/action calls that create a
+  session implicitly are still in-process only.
 - DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
 - Indexed actions currently target same-document interactive elements; iframe
   and shadow-root support belong to the DOM parity track.
 - Agent runs currently support OpenAI-compatible Chat Completions and Anthropic
   Messages structured-output adapters.
 - MCP tools are real over stdio and can reuse in-process sessions by
-  `session_id`; only CLI-created session records currently survive server
-  restarts.
+  `session_id`; persistent sessions must be created explicitly with the CLI
+  session command or `browser_use_session`.

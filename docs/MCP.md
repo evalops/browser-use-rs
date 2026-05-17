@@ -18,6 +18,7 @@ Current tool contracts:
   `BrowserAction` values, and return action results plus final state.
 - `browser_use_agent`: launch a browser, run a bounded agent task, and return
   typed agent history.
+- `browser_use_session`: start, stop, and list persistent browser sessions.
 
 Provider secrets are intentionally not part of MCP tool input schemas. A server
 implementation reads provider credentials from its process environment or host
@@ -28,14 +29,15 @@ configuration. `browser_use_agent` accepts an optional `provider` input:
 tool `model` argument or `ANTHROPIC_MODEL`; `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are optional.
 
-All tools support an optional `session_id` argument. When omitted, the tool call
-uses a fresh one-shot browser. When present, the stdio server reuses an
-in-process Chrome session for subsequent calls with the same `session_id`.
-If `session_id` matches a persistent session created by `browser-use-rs session
-start`, the stdio server reconnects to that Chrome session after server
-restarts. Provide `url` on the first call for an in-process session, and omit it
-later to inspect or act on the current page without reloading. Persistent CLI
-sessions can be stopped with `browser-use-rs session stop <id>`.
+Browser and agent tools support an optional `session_id` argument. When omitted,
+the tool call uses a fresh one-shot browser. When present, the stdio server
+reuses an in-process Chrome session for subsequent calls with the same
+`session_id`. Use `browser_use_session` with `operation` set to `start` to
+create a persistent session record that survives stdio server restarts, `list`
+to inspect records, and `stop` to close and remove one.
+Persistent sessions created by the CLI are the same record format and can be
+stopped through MCP, and MCP-created persistent sessions can be stopped with
+`browser-use-rs session stop <id>`.
 
 To inspect the manifest from the CLI:
 

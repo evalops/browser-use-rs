@@ -8,6 +8,7 @@ rust-version.workspace = true
 authors.workspace = true
 
 [dependencies]
+browser-use-cdp = { path = "../browser-use-cdp" }
 browser-use-core = { path = "../browser-use-core" }
 browser-use-dom = { path = "../browser-use-dom" }
 browser-use-tools = { path = "../browser-use-tools" }

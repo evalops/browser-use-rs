@@ -1,5 +1,8 @@
 //! MCP bridge contracts for browser-use-rs.
 
+use std::path::PathBuf;
+
+use browser_use_cdp::DevToolsEndpoint;
 use browser_use_core::{ActionResult, AgentHistory};
 use browser_use_dom::BrowserStateSummary;
 use browser_use_tools::BrowserAction;
@@ -11,6 +14,7 @@ pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 pub const STATE_TOOL_NAME: &str = "browser_use_state";
 pub const ACTIONS_TOOL_NAME: &str = "browser_use_actions";
 pub const AGENT_TOOL_NAME: &str = "browser_use_agent";
+pub const SESSION_TOOL_NAME: &str = "browser_use_session";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpToolContract {
@@ -84,6 +88,36 @@ pub enum AgentProvider {
     Anthropic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SessionOperation {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "list")]
+    List,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionToolInput {
+    pub operation: SessionOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default = "default_true")]
+    pub screenshot: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionRecord {
+    pub id: String,
+    pub endpoint: DevToolsEndpoint,
+    pub user_data_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StateToolOutput {
     pub state: BrowserStateSummary,
@@ -98,6 +132,16 @@ pub struct ActionsToolOutput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentToolOutput {
     pub history: AgentHistory,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionToolOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<SessionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<BrowserStateSummary>,
 }
 
 fn default_true() -> bool {
@@ -123,6 +167,10 @@ pub fn tool_manifest() -> Vec<McpToolContract> {
             AGENT_TOOL_NAME,
             "Launch a browser, run a bounded browser-use agent task, and return agent history.",
         ),
+        tool_contract::<SessionToolInput>(
+            SESSION_TOOL_NAME,
+            "Start, stop, or list persistent browser-use sessions.",
+        ),
     ]
 }
 
@@ -145,7 +193,7 @@ pub fn initialize_result() -> Value {
             "title": "browser-use-rs",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use browser_use_state for page state, browser_use_actions for deterministic browser actions, and browser_use_agent for bounded agent runs."
+        "instructions": "Use browser_use_state for page state, browser_use_actions for deterministic browser actions, browser_use_agent for bounded agent runs, and browser_use_session for persistent session lifecycle."
     })
 }
 
@@ -225,7 +273,12 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![STATE_TOOL_NAME, ACTIONS_TOOL_NAME, AGENT_TOOL_NAME]
+            vec![
+                STATE_TOOL_NAME,
+                ACTIONS_TOOL_NAME,
+                AGENT_TOOL_NAME,
+                SESSION_TOOL_NAME,
+            ]
         );
     }
 
@@ -253,6 +306,21 @@ mod tests {
         assert!(schema_text.contains("anthropic"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
+    }
+
+    #[test]
+    fn session_tool_schema_exposes_lifecycle_operations() {
+        let manifest = tool_manifest();
+        let session_tool = manifest
+            .iter()
+            .find(|tool| tool.name == SESSION_TOOL_NAME)
+            .expect("session tool");
+        let schema_text = serde_json::to_string(&session_tool.input_schema).expect("schema text");
+
+        assert!(schema_text.contains("operation"));
+        assert!(schema_text.contains("start"));
+        assert!(schema_text.contains("stop"));
+        assert!(schema_text.contains("list"));
     }
 
     #[test]

@@ -32,6 +32,7 @@ Implemented:
 - Local persistent CLI session records for start/state/actions/stop/list across
   CLI invocations.
 - MCP stdio reconnection to persistent CLI session records by `session_id`.
+- MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, and max-failure handling.
 - OpenAI-compatible Chat Completions and Anthropic Messages providers with
@@ -43,7 +44,6 @@ Implemented:
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Add a network daemon API and MCP-native persistent session start/stop/list
-   tools.
+2. Add a network daemon API on top of the persistent session registry.
 3. Expand agent planning, replay/conformance fixtures, and provider parity
    beyond OpenAI-compatible and Anthropic.

@@ -10,7 +10,6 @@ use browser_use_core::BrowserActionExecutor;
 use browser_use_llm::{AnthropicChatModel, ChatModel, OpenAiCompatibleChatModel};
 use clap::Parser;
 use schemars::schema_for;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
@@ -143,14 +142,7 @@ enum SessionCommand {
     List,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct StoredSession {
-    id: String,
-    endpoint: browser_use_cdp::DevToolsEndpoint,
-    user_data_dir: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    process_id: Option<u32>,
-}
+type StoredSession = browser_use_mcp::SessionRecord;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -272,6 +264,54 @@ async fn print_state(session: &CdpBrowserSession, include_screenshot: bool) -> a
     Ok(())
 }
 
+async fn start_persistent_session(
+    id: &str,
+    url: &str,
+    screenshot: bool,
+) -> anyhow::Result<(
+    StoredSession,
+    CdpBrowserSession,
+    browser_use_dom::BrowserStateSummary,
+)> {
+    validate_session_id(id)?;
+    let path = session_record_path(id)?;
+    if path.exists() {
+        anyhow::bail!("session already exists: {id}");
+    }
+    let user_data_dir = session_user_data_dir(id)?;
+    std::fs::create_dir_all(&user_data_dir)?;
+    let profile = BrowserProfile {
+        user_data_dir: Some(user_data_dir.clone()),
+        ..BrowserProfile::default()
+    };
+    let launched = profile.launch_local().await?;
+    let endpoint = launched.endpoint().clone();
+    let process_id = launched.process_id();
+    let session = CdpBrowserSession::connect(endpoint.clone()).await?;
+    session.navigate(url, false).await?;
+    sleep(Duration::from_millis(150)).await;
+    let state = session.state(screenshot).await?;
+    let record = StoredSession {
+        id: id.to_owned(),
+        endpoint,
+        user_data_dir,
+        process_id,
+    };
+    write_session_record(&record)?;
+    let _ = launched.detach();
+    Ok((record, session, state))
+}
+
+async fn stop_persistent_session(id: &str) -> anyhow::Result<StoredSession> {
+    let record = read_session_record(id)?;
+    if let Ok(session) = CdpBrowserSession::connect(record.endpoint.clone()).await {
+        let _ = session.close_browser().await;
+    }
+    wait_for_process_exit(record.process_id, Duration::from_secs(2)).await;
+    remove_session_dir(id)?;
+    Ok(record)
+}
+
 async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
     match command {
         SessionCommand::Start {
@@ -279,35 +319,11 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
             url,
             screenshot,
         } => {
-            validate_session_id(&id)?;
-            let path = session_record_path(&id)?;
-            if path.exists() {
-                anyhow::bail!("session already exists: {id}");
-            }
-            let user_data_dir = session_user_data_dir(&id)?;
-            std::fs::create_dir_all(&user_data_dir)?;
-            let profile = BrowserProfile {
-                user_data_dir: Some(user_data_dir.clone()),
-                ..BrowserProfile::default()
-            };
-            let launched = profile.launch_local().await?;
-            let endpoint = launched.endpoint().clone();
-            let process_id = launched.process_id();
-            let session = CdpBrowserSession::connect(endpoint.clone()).await?;
-            session.navigate(&url, false).await?;
-            sleep(Duration::from_millis(150)).await;
-            let state = session.state(screenshot).await?;
-            write_session_record(&StoredSession {
-                id: id.clone(),
-                endpoint,
-                user_data_dir,
-                process_id,
-            })?;
-            let _ = launched.detach();
+            let (record, _session, state) = start_persistent_session(&id, &url, screenshot).await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "session": read_session_record(&id)?,
+                    "session": record,
                     "state": state
                 }))?
             );
@@ -339,12 +355,7 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
             );
         }
         SessionCommand::Stop { id } => {
-            let record = read_session_record(&id)?;
-            if let Ok(session) = CdpBrowserSession::connect(record.endpoint.clone()).await {
-                let _ = session.close_browser().await;
-            }
-            wait_for_process_exit(record.process_id, Duration::from_secs(2)).await;
-            remove_session_dir(&id)?;
+            let record = stop_persistent_session(&id).await?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
         SessionCommand::List => {
@@ -587,6 +598,7 @@ async fn handle_mcp_tool_call(id: Value, params: Option<Value>, runtime: &mut Mc
         browser_use_mcp::STATE_TOOL_NAME
             | browser_use_mcp::ACTIONS_TOOL_NAME
             | browser_use_mcp::AGENT_TOOL_NAME
+            | browser_use_mcp::SESSION_TOOL_NAME
     ) {
         return browser_use_mcp::json_rpc_error(
             Some(id),
@@ -655,8 +667,47 @@ async fn execute_mcp_tool(
                 output,
             )?))
         }
+        browser_use_mcp::SESSION_TOOL_NAME => {
+            let input: browser_use_mcp::SessionToolInput = serde_json::from_value(arguments)?;
+            let output = match input.operation {
+                browser_use_mcp::SessionOperation::Start => {
+                    let session_id = require_mcp_session_id(input.session_id)?;
+                    let url = require_mcp_url(input.url)?;
+                    let (record, session, state) =
+                        start_persistent_session(&session_id, &url, input.screenshot).await?;
+                    runtime.sessions.insert(session_id, Arc::new(session));
+                    browser_use_mcp::SessionToolOutput {
+                        session: Some(record),
+                        sessions: Vec::new(),
+                        state: Some(state),
+                    }
+                }
+                browser_use_mcp::SessionOperation::Stop => {
+                    let session_id = require_mcp_session_id(input.session_id)?;
+                    runtime.sessions.remove(&session_id);
+                    let record = stop_persistent_session(&session_id).await?;
+                    browser_use_mcp::SessionToolOutput {
+                        session: Some(record),
+                        sessions: Vec::new(),
+                        state: None,
+                    }
+                }
+                browser_use_mcp::SessionOperation::List => browser_use_mcp::SessionToolOutput {
+                    session: None,
+                    sessions: list_session_records()?,
+                    state: None,
+                },
+            };
+            Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
+                output,
+            )?))
+        }
         _ => unreachable!("tool name was validated before execution"),
     }
+}
+
+fn require_mcp_session_id(session_id: Option<String>) -> anyhow::Result<String> {
+    session_id.ok_or_else(|| anyhow::anyhow!("session_id is required for this operation"))
 }
 
 fn require_mcp_url(url: Option<String>) -> anyhow::Result<String> {

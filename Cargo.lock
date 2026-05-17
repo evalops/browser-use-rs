@@ -199,6 +199,7 @@ dependencies = [
 name = "browser-use-mcp"
 version = "0.1.0"
 dependencies = [
+ "browser-use-cdp",
  "browser-use-core",
  "browser-use-dom",
  "browser-use-tools",
