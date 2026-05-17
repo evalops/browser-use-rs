@@ -152,11 +152,7 @@ impl SerializedDomState {
         let mut lines = Vec::new();
 
         for element in elements {
-            let text = render_element_text(&element);
-            lines.push(format!(
-                "[{}] <{}> {}",
-                element.index, element.tag_name, text
-            ));
+            lines.push(render_element_line(&element));
             selector_map.insert(element.index, element);
         }
 
@@ -178,6 +174,22 @@ impl SerializedDomState {
 }
 
 #[must_use]
+pub fn render_element_line(element: &DomElementRef) -> String {
+    let attributes = render_element_attributes(element);
+    let tag = if attributes.is_empty() {
+        format!("<{}>", element.tag_name)
+    } else {
+        format!("<{} {attributes}>", element.tag_name)
+    };
+    let text = render_element_text(element);
+    if text.is_empty() {
+        format!("[{}] {tag}", element.index)
+    } else {
+        format!("[{}] {tag} {text}", element.index)
+    }
+}
+
+#[must_use]
 pub fn render_element_text(element: &DomElementRef) -> String {
     match (element.name.as_deref(), element.text.as_deref()) {
         (Some(name), Some(value)) if !value.is_empty() && name != value => {
@@ -187,6 +199,141 @@ pub fn render_element_text(element: &DomElementRef) -> String {
         (_, Some(value)) => value.to_owned(),
         _ => String::new(),
     }
+}
+
+const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
+    "title",
+    "type",
+    "checked",
+    "id",
+    "name",
+    "role",
+    "value",
+    "placeholder",
+    "data-date-format",
+    "alt",
+    "aria-label",
+    "aria-expanded",
+    "data-state",
+    "aria-checked",
+    "aria-valuemin",
+    "aria-valuemax",
+    "aria-valuenow",
+    "aria-placeholder",
+    "pattern",
+    "min",
+    "max",
+    "minlength",
+    "maxlength",
+    "step",
+    "accept",
+    "multiple",
+    "inputmode",
+    "autocomplete",
+    "aria-autocomplete",
+    "list",
+    "data-mask",
+    "data-inputmask",
+    "data-datepicker",
+    "format",
+    "expected_format",
+    "contenteditable",
+    "pseudo",
+    "selected",
+    "expanded",
+    "pressed",
+    "disabled",
+    "invalid",
+    "valuemin",
+    "valuemax",
+    "valuenow",
+    "keyshortcuts",
+    "haspopup",
+    "multiselectable",
+    "required",
+    "valuetext",
+    "level",
+    "busy",
+    "live",
+    "ax_name",
+];
+
+#[must_use]
+pub fn render_element_attributes(element: &DomElementRef) -> String {
+    let is_password_field = element.tag_name.eq_ignore_ascii_case("input")
+        && element
+            .attributes
+            .get("type")
+            .is_some_and(|value| value.eq_ignore_ascii_case("password"));
+    let text = render_element_text(element);
+
+    DEFAULT_RENDER_ATTRIBUTES
+        .iter()
+        .filter_map(|attribute| {
+            let value = render_attribute_value(element, attribute)?;
+            if value.is_empty() {
+                return None;
+            }
+            if is_password_field && matches!(*attribute, "value" | "valuetext") {
+                return None;
+            }
+            if *attribute == "type" && value.eq_ignore_ascii_case(&element.tag_name) {
+                return None;
+            }
+            if *attribute == "invalid" && value.eq_ignore_ascii_case("false") {
+                return None;
+            }
+            if matches!(
+                *attribute,
+                "required" | "checked" | "selected" | "expanded" | "pressed" | "disabled"
+            ) && matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
+            {
+                return None;
+            }
+            if matches!(*attribute, "aria-label" | "placeholder" | "title")
+                && !text.is_empty()
+                && value.eq_ignore_ascii_case(text.trim())
+            {
+                return None;
+            }
+            Some(format!("{attribute}={}", cap_attribute_value(&value)))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_attribute_value(element: &DomElementRef, attribute: &str) -> Option<String> {
+    element
+        .attributes
+        .get(attribute)
+        .or_else(|| aliased_render_attribute(element, attribute))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> Option<&'a String> {
+    let alias = match attribute {
+        "checked" => "aria-checked",
+        "disabled" => "aria-disabled",
+        "expanded" => "aria-expanded",
+        "haspopup" => "aria-haspopup",
+        "invalid" => "aria-invalid",
+        "pressed" => "aria-pressed",
+        "required" => "aria-required",
+        "selected" => "aria-selected",
+        _ => return None,
+    };
+    element.attributes.get(alias)
+}
+
+fn cap_attribute_value(value: &str) -> String {
+    const MAX_ATTRIBUTE_CHARS: usize = 100;
+    if value.chars().count() <= MAX_ATTRIBUTE_CHARS {
+        return value.to_owned();
+    }
+    let mut capped = value.chars().take(MAX_ATTRIBUTE_CHARS).collect::<String>();
+    capped.push_str("...");
+    capped
 }
 
 fn is_false(value: &bool) -> bool {
@@ -299,5 +446,61 @@ mod tests {
         assert_eq!(state.llm_representation(), "[1] <input> Name EvalOps");
         assert_eq!(state.element_count(), 1);
         assert_eq!(state.selector_map[&1].bounds.expect("bounds").width, 120);
+    }
+
+    #[test]
+    fn serialized_state_renders_included_attributes_without_password_values() {
+        let visible = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Email".to_owned()),
+            text: Some("user@example.com".to_owned()),
+            attributes: BTreeMap::from([
+                ("aria-required".to_owned(), "true".to_owned()),
+                ("id".to_owned(), "email".to_owned()),
+                ("placeholder".to_owned(), "name@example.com".to_owned()),
+                ("type".to_owned(), "email".to_owned()),
+                ("value".to_owned(), "user@example.com".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let password = DomElementRef {
+            index: 2,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Password".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("placeholder".to_owned(), "Password".to_owned()),
+                ("type".to_owned(), "password".to_owned()),
+                ("value".to_owned(), "secret".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let state = SerializedDomState::from_elements(vec![visible, password]);
+
+        assert!(state.llm_representation().contains(
+            "[1] <input type=email id=email value=user@example.com placeholder=name@example.com required=true> Email user@example.com"
+        ));
+        assert!(
+            state
+                .llm_representation()
+                .contains("[2] <input type=password> Password")
+        );
+        assert!(!state.llm_representation().contains("secret"));
     }
 }
