@@ -1,0 +1,17 @@
+/target/
+/.idea/
+/.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local browser/runtime artifacts.
+/.browser-use-rs/
+/downloads/
+/screenshots/
+/traces/
+
+# Environment files may contain API keys.
+.env
+.env.*
+!.env.example

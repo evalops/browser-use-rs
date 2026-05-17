@@ -1,0 +1,12 @@
+browser-use-rs is an EvalOps project inspired by and intended to be behaviorally
+compatible with browser-use:
+
+  https://github.com/browser-use/browser-use
+
+The initial conformance target is upstream commit:
+
+  933e28c599ddd74c15a48568f159da95547e40dd
+
+browser-use is distributed under the MIT License. This repository is not
+affiliated with or endorsed by the browser-use maintainers unless such a
+relationship is documented here in the future.
