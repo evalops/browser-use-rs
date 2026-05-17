@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
@@ -9,6 +10,7 @@ use browser_use_core::BrowserActionExecutor;
 use browser_use_llm::OpenAiCompatibleChatModel;
 use clap::Parser;
 use schemars::schema_for;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
@@ -33,6 +35,11 @@ enum Command {
     McpTools,
     /// Run a stdio MCP server exposing browser-use tools.
     McpStdio,
+    /// Create, reuse, and stop local Chrome sessions across CLI invocations.
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     /// Launch Chrome, navigate to a URL, print state JSON, then exit.
     Open { url: String },
     /// Launch Chrome, navigate to a URL, and print browser state JSON.
@@ -94,6 +101,43 @@ enum SchemaContract {
     BrowserState,
 }
 
+#[derive(Debug, clap::Subcommand)]
+enum SessionCommand {
+    /// Launch a persistent Chrome session and navigate it to a URL.
+    Start {
+        id: String,
+        url: String,
+        #[arg(long, default_value_t = false)]
+        screenshot: bool,
+    },
+    /// Print state for an existing persistent session.
+    State {
+        id: String,
+        #[arg(long, default_value_t = false)]
+        screenshot: bool,
+    },
+    /// Run a JSON action list against an existing persistent session.
+    Actions {
+        id: String,
+        actions: PathBuf,
+        #[arg(long, default_value_t = true)]
+        screenshot: bool,
+    },
+    /// Stop an existing persistent session.
+    Stop { id: String },
+    /// List recorded persistent sessions.
+    List,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredSession {
+    id: String,
+    endpoint: browser_use_cdp::DevToolsEndpoint,
+    user_data_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    process_id: Option<u32>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -118,6 +162,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::McpStdio) => {
             run_mcp_stdio().await?;
+        }
+        Some(Command::Session { command }) => {
+            run_session_command(command).await?;
         }
         Some(Command::Open { url }) => {
             let session = launch_and_navigate(&url).await?;
@@ -208,6 +255,199 @@ async fn print_state(session: &CdpBrowserSession, include_screenshot: bool) -> a
     let state = session.state(include_screenshot).await?;
     println!("{}", serde_json::to_string_pretty(&state)?);
     Ok(())
+}
+
+async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
+    match command {
+        SessionCommand::Start {
+            id,
+            url,
+            screenshot,
+        } => {
+            validate_session_id(&id)?;
+            let path = session_record_path(&id)?;
+            if path.exists() {
+                anyhow::bail!("session already exists: {id}");
+            }
+            let user_data_dir = session_user_data_dir(&id)?;
+            std::fs::create_dir_all(&user_data_dir)?;
+            let profile = BrowserProfile {
+                user_data_dir: Some(user_data_dir.clone()),
+                ..BrowserProfile::default()
+            };
+            let launched = profile.launch_local().await?;
+            let endpoint = launched.endpoint().clone();
+            let process_id = launched.process_id();
+            let session = CdpBrowserSession::connect(endpoint.clone()).await?;
+            session.navigate(&url, false).await?;
+            sleep(Duration::from_millis(150)).await;
+            let state = session.state(screenshot).await?;
+            write_session_record(&StoredSession {
+                id: id.clone(),
+                endpoint,
+                user_data_dir,
+                process_id,
+            })?;
+            let _ = launched.detach();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "session": read_session_record(&id)?,
+                    "state": state
+                }))?
+            );
+        }
+        SessionCommand::State { id, screenshot } => {
+            let record = read_session_record(&id)?;
+            let session = CdpBrowserSession::connect(record.endpoint).await?;
+            print_state(&session, screenshot).await?;
+        }
+        SessionCommand::Actions {
+            id,
+            actions,
+            screenshot,
+        } => {
+            let record = read_session_record(&id)?;
+            let session = CdpBrowserSession::connect(record.endpoint.clone()).await?;
+            let actions = std::fs::read_to_string(&actions)?;
+            let actions: Vec<browser_use_tools::BrowserAction> = serde_json::from_str(&actions)?;
+            let mut executor = BrowserActionExecutor::new(session);
+            let results = executor.execute_sequence(&actions).await;
+            let state = executor.session().state(screenshot).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "session": record,
+                    "results": results,
+                    "state": state,
+                }))?
+            );
+        }
+        SessionCommand::Stop { id } => {
+            let record = read_session_record(&id)?;
+            if let Ok(session) = CdpBrowserSession::connect(record.endpoint.clone()).await {
+                let _ = session.close_browser().await;
+            }
+            wait_for_process_exit(record.process_id, Duration::from_secs(2)).await;
+            remove_session_dir(&id)?;
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        }
+        SessionCommand::List => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&list_session_records()?)?
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_session_id(id: &str) -> anyhow::Result<()> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        anyhow::bail!("session id must contain only ASCII letters, digits, '-' or '_'");
+    }
+    Ok(())
+}
+
+fn state_dir() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("BROWSER_USE_RS_STATE_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    Ok(PathBuf::from(home).join(".browser-use-rs"))
+}
+
+fn sessions_dir() -> anyhow::Result<PathBuf> {
+    Ok(state_dir()?.join("sessions"))
+}
+
+fn session_dir(id: &str) -> anyhow::Result<PathBuf> {
+    validate_session_id(id)?;
+    Ok(sessions_dir()?.join(id))
+}
+
+fn session_user_data_dir(id: &str) -> anyhow::Result<PathBuf> {
+    Ok(session_dir(id)?.join("profile"))
+}
+
+fn session_record_path(id: &str) -> anyhow::Result<PathBuf> {
+    Ok(session_dir(id)?.join("session.json"))
+}
+
+fn write_session_record(record: &StoredSession) -> anyhow::Result<()> {
+    let path = session_record_path(&record.id)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("session path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    std::fs::write(path, serde_json::to_vec_pretty(record)?)?;
+    Ok(())
+}
+
+fn read_session_record(id: &str) -> anyhow::Result<StoredSession> {
+    let path = session_record_path(id)?;
+    let contents = std::fs::read_to_string(&path)?;
+    Ok(serde_json::from_str(&contents)?)
+}
+
+fn remove_session_dir(id: &str) -> anyhow::Result<()> {
+    let path = session_dir(id)?;
+    if path.exists() {
+        std::fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn list_session_records() -> anyhow::Result<Vec<StoredSession>> {
+    let dir = sessions_dir()?;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut records = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if let Ok(record) = read_session_record(&id) {
+            records.push(record);
+        }
+    }
+    records.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(records)
+}
+
+async fn wait_for_process_exit(process_id: Option<u32>, timeout: Duration) {
+    let Some(process_id) = process_id else {
+        return;
+    };
+    let deadline = Instant::now() + timeout;
+    while process_is_running(process_id) && Instant::now() < deadline {
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(unix)]
+fn process_is_running(process_id: u32) -> bool {
+    StdCommand::new("kill")
+        .arg("-0")
+        .arg(process_id.to_string())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn process_is_running(_process_id: u32) -> bool {
+    false
 }
 
 async fn run_mcp_stdio() -> anyhow::Result<()> {

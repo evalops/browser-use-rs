@@ -135,6 +135,7 @@ dependencies = [
  "browser-use-tools",
  "clap",
  "schemars",
+ "serde",
  "serde_json",
  "tokio",
 ]

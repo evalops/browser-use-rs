@@ -21,7 +21,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   steps, max failures, LLM timeout, repeated-action loop detection, previous
   result context, and typed history/final result.
 - OpenAI-compatible Chat Completions provider with structured-output requests.
-- CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, and `mcp-stdio`.
+- CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and
+  local persistent `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including in-process
   session reuse by `session_id`.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
@@ -33,6 +34,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Accessibility-tree parity is partial; the DOM serializer currently uses a
   pragmatic compact representation rather than full browser-use AX snapshots.
 - MCP sessions are in-process only and are lost when the stdio server exits.
-- CLI daemon sessions are not implemented yet.
+- CLI sessions are local registry records and are not yet a network daemon API.
 - Provider parity beyond OpenAI-compatible Chat Completions is not implemented.
 - Package publishing is limited to the GitHub release artifact.

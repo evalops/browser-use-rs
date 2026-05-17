@@ -21,6 +21,11 @@ browser-use-rs scroll <url> [--pages 1.0] [--down]
 browser-use-rs actions <url> <actions.json> [--screenshot]
 browser-use-rs agent <url> <task> --api-key <key> --model <model> \
   [--base-url https://api.openai.com/v1] [--max-steps 10]
+browser-use-rs session start <id> <url> [--screenshot]
+browser-use-rs session state <id> [--screenshot]
+browser-use-rs session actions <id> <actions.json> [--screenshot]
+browser-use-rs session stop <id>
+browser-use-rs session list
 ```
 
 ## Local Smokes
@@ -52,6 +57,11 @@ Agent runs use the same one-shot browser lifecycle and accept
 `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_BASE_URL` from the environment.
 They print the typed `AgentHistory` JSON after the bounded run completes.
 
+`session` commands persist a local Chrome session across CLI invocations. The
+session registry defaults to `~/.browser-use-rs/sessions` and can be overridden
+with `BROWSER_USE_RS_STATE_DIR`. Session IDs may contain ASCII letters, digits,
+`-`, and `_`.
+
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 `browser_use_state`, `browser_use_actions`, and `browser_use_agent`. MCP tool
@@ -60,7 +70,8 @@ the same in-process Chrome session.
 
 ## Current Limits
 
-- Commands are not persistent sessions yet.
+- CLI sessions are local process/session records; they are not shared with the
+  MCP stdio in-process session registry.
 - DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
 - Indexed actions currently target same-document interactive elements; iframe
   and shadow-root support belong to the DOM parity track.

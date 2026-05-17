@@ -1,6 +1,7 @@
 //! Chrome DevTools Protocol browser-session layer.
 
 use std::collections::BTreeMap;
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -547,6 +548,12 @@ impl LaunchedBrowser {
     pub fn process_id(&self) -> Option<u32> {
         self.child.id()
     }
+
+    #[must_use]
+    pub fn detach(self) -> DevToolsEndpoint {
+        let this = ManuallyDrop::new(self);
+        this.endpoint.clone()
+    }
 }
 
 impl Drop for LaunchedBrowser {
@@ -702,6 +709,13 @@ impl CdpBrowserSession {
             page: Mutex::new(page),
             _launched_browser: Some(launched_browser),
         })
+    }
+
+    pub async fn close_browser(&self) -> Result<(), BrowserError> {
+        self.connection
+            .command("Browser.close", json!({}), None)
+            .await
+            .map(|_| ())
     }
 
     async fn current_page(&self) -> AttachedPage {
