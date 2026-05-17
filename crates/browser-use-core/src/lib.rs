@@ -40,6 +40,8 @@ pub struct AgentSettings {
     pub loop_detection_window: usize,
     #[serde(default = "default_loop_detection_enabled")]
     pub loop_detection_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_history_items: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
 }
@@ -54,6 +56,7 @@ impl Default for AgentSettings {
             step_timeout_seconds: default_step_timeout_seconds(),
             loop_detection_window: default_loop_detection_window(),
             loop_detection_enabled: default_loop_detection_enabled(),
+            max_history_items: None,
             include_attributes: Vec::new(),
         }
     }
@@ -1773,7 +1776,7 @@ pub fn build_step_request(
     }
     let state_json = serde_json::to_string_pretty(&state_for_text)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
-    let previous_results = render_previous_results(history);
+    let previous_results = render_previous_results(history, settings.max_history_items);
     let page_stats = render_page_stats(state);
     let loop_awareness = render_loop_awareness(history, state, settings)
         .map(|message| format!("\n\nLoop awareness:\n{message}"))
@@ -1859,8 +1862,15 @@ fn schema_for_agent_output() -> Value {
     serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
 }
 
-fn render_previous_results(history: &AgentHistory) -> String {
-    let recent_items: Vec<&AgentHistoryItem> = history.items.iter().rev().take(5).rev().collect();
+fn render_previous_results(history: &AgentHistory, max_history_items: Option<usize>) -> String {
+    let max_history_items = max_history_items.unwrap_or(5);
+    let recent_items: Vec<&AgentHistoryItem> = history
+        .items
+        .iter()
+        .rev()
+        .take(max_history_items)
+        .rev()
+        .collect();
     let latest_recent_index = recent_items.len().saturating_sub(1);
     let rendered: Vec<String> = recent_items
         .into_iter()
@@ -2087,6 +2097,7 @@ mod tests {
         assert_eq!(settings.step_timeout_seconds, 180);
         assert_eq!(settings.loop_detection_window, 20);
         assert!(settings.loop_detection_enabled);
+        assert_eq!(settings.max_history_items, None);
         assert!(settings.include_attributes.is_empty());
     }
 
@@ -3947,7 +3958,7 @@ mod tests {
             ],
         };
 
-        let rendered = render_previous_results(&history);
+        let rendered = render_previous_results(&history, None);
 
         assert!(!rendered.contains("very large extracted payload"));
         assert!(rendered.contains("Large extraction saved to file"));
@@ -3974,10 +3985,31 @@ mod tests {
             }],
         };
 
-        let rendered = render_previous_results(&history);
+        let rendered = render_previous_results(&history, None);
 
         assert!(rendered.contains("fresh extracted payload"));
         assert!(!rendered.contains("Extraction saved to file"));
+    }
+
+    #[test]
+    fn previous_results_can_limit_history_items_from_settings() {
+        let history = AgentHistory {
+            items: ["first", "second", "third"]
+                .into_iter()
+                .map(|text| AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::extracted(text)],
+                    state: blank_state(),
+                    metadata: None,
+                })
+                .collect(),
+        };
+
+        let rendered = render_previous_results(&history, Some(2));
+
+        assert!(!rendered.contains("first"));
+        assert!(rendered.contains("second"));
+        assert!(rendered.contains("third"));
     }
 
     #[test]
