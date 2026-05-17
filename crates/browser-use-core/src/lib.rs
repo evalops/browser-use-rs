@@ -827,6 +827,7 @@ pub fn build_step_request(
     let state_json = serde_json::to_string_pretty(state)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history);
+    let page_stats = render_page_stats(state);
     Ok(ChatRequest {
         messages: vec![
             ChatMessage::text(
@@ -842,12 +843,48 @@ pub fn build_step_request(
             ChatMessage::text(
                 MessageRole::User,
                 format!(
-                    "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nBrowser state:\n{state_json}"
+                    "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}\n\nBrowser state:\n{state_json}"
                 ),
             ),
         ],
         output_schema: Some(schema_for_agent_output()),
     })
+}
+
+fn render_page_stats(state: &BrowserStateSummary) -> String {
+    let indexed_elements = state.dom_state.selector_map.values();
+    let total_indexed = state.dom_state.selector_map.len();
+    let interactive = indexed_elements
+        .clone()
+        .filter(|element| element.is_interactive)
+        .count();
+    let links = indexed_elements
+        .clone()
+        .filter(|element| element.tag_name == "a")
+        .count();
+    let iframes = indexed_elements
+        .clone()
+        .filter(|element| matches!(element.tag_name.as_str(), "iframe" | "frame"))
+        .count();
+    let scroll_containers = indexed_elements
+        .clone()
+        .filter(|element| element.is_scrollable)
+        .count();
+    let text_chars = state.dom_state.text.chars().count();
+
+    let mut stats = format!(
+        "<page_stats>{links} links, {interactive} interactive, {iframes} iframes, {scroll_containers} scroll containers, {total_indexed} indexed elements, {text_chars} text chars"
+    );
+
+    if let Some(page_info) = state.page_info {
+        stats.push_str(&format!(
+            ", {}px above, {}px below",
+            page_info.pixels_above, page_info.pixels_below
+        ));
+    }
+
+    stats.push_str("</page_stats>");
+    stats
 }
 
 fn schema_for_agent_output() -> Value {
@@ -1886,6 +1923,39 @@ mod tests {
 
     #[test]
     fn step_request_includes_previous_results() {
+        let mut state = blank_state();
+        state.dom_state = SerializedDomState::from_elements(vec![
+            browser_use_dom::DomElementRef {
+                index: 1,
+                target_id: "target".to_owned(),
+                backend_node_id: 1,
+                node_id: None,
+                tag_name: "a".to_owned(),
+                role: Some("link".to_owned()),
+                name: Some("Docs".to_owned()),
+                text: Some("Docs".to_owned()),
+                attributes: BTreeMap::from([("href".to_owned(), "/docs".to_owned())]),
+                bounds: None,
+                is_visible: true,
+                is_interactive: true,
+                is_scrollable: false,
+            },
+            browser_use_dom::DomElementRef {
+                index: 2,
+                target_id: "target".to_owned(),
+                backend_node_id: 2,
+                node_id: None,
+                tag_name: "div".to_owned(),
+                role: None,
+                name: Some("Results".to_owned()),
+                text: None,
+                attributes: BTreeMap::new(),
+                bounds: None,
+                is_visible: true,
+                is_interactive: true,
+                is_scrollable: true,
+            },
+        ]);
         let history = AgentHistory {
             items: vec![AgentHistoryItem {
                 model_output: None,
@@ -1894,17 +1964,15 @@ mod tests {
             }],
         };
 
-        let request = build_step_request(
-            "keep going",
-            &blank_state(),
-            &history,
-            &AgentSettings::default(),
-        )
-        .expect("step request");
+        let request = build_step_request("keep going", &state, &history, &AgentSettings::default())
+            .expect("step request");
         let request_text = serde_json::to_string(&request.messages).expect("messages json");
 
         assert!(request_text.contains("Previous action results"));
         assert!(request_text.contains("Clicked element 1"));
+        assert!(request_text.contains("Page stats"));
+        assert!(request_text.contains("1 links, 2 interactive"));
+        assert!(request_text.contains("1 scroll containers"));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
     }
 
