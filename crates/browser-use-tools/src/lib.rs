@@ -139,6 +139,11 @@ fn default_scroll_pages() -> f64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FindTextAction {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WaitAction {
     #[serde(default = "default_wait_seconds")]
     pub seconds: i64,
@@ -220,6 +225,7 @@ pub enum BrowserAction {
     SwitchTab(SwitchTabAction),
     CloseTab(CloseTabAction),
     Scroll(ScrollAction),
+    FindText(FindTextAction),
     Wait(WaitAction),
     SendKeys(SendKeysAction),
     UploadFile(UploadFileAction),
@@ -245,6 +251,7 @@ impl BrowserAction {
             Self::SwitchTab(_) => "switch_tab",
             Self::CloseTab(_) => "close_tab",
             Self::Scroll(_) => "scroll",
+            Self::FindText(_) => "find_text",
             Self::Wait(_) => "wait",
             Self::SendKeys(_) => "send_keys",
             Self::UploadFile(_) => "upload_file",
@@ -324,5 +331,21 @@ mod tests {
             BrowserAction::GoBack(NoParamsAction { description: None })
         );
         assert!(action.terminates_sequence());
+    }
+
+    #[test]
+    fn find_text_action_uses_text_param() {
+        let action: BrowserAction =
+            serde_json::from_value(serde_json::json!({ "find_text": { "text": "Needle" } }))
+                .expect("find_text action");
+
+        assert_eq!(action.name(), "find_text");
+        assert_eq!(
+            action,
+            BrowserAction::FindText(FindTextAction {
+                text: "Needle".to_owned()
+            })
+        );
+        assert!(!action.terminates_sequence());
     }
 }

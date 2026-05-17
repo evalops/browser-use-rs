@@ -185,6 +185,7 @@ mod tests {
             "click",
             "input",
             "scroll",
+            "find_text",
             "wait",
             "screenshot",
             "send_keys",
@@ -430,6 +431,10 @@ mod tests {
             _pages: f64,
         ) -> Result<(), BrowserError> {
             Err(unsupported_action("scroll"))
+        }
+
+        async fn find_text(&self, _text: &str) -> Result<bool, BrowserError> {
+            Err(unsupported_action("find_text"))
         }
 
         async fn dropdown_options(&self, _index: u32) -> Result<Vec<String>, BrowserError> {

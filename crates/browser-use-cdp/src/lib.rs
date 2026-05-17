@@ -304,6 +304,34 @@ fn element_action_js(index: u32, action: &str) -> String {
     element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
+fn scroll_to_text_js(text: &str) -> Result<String, BrowserError> {
+    let text =
+        serde_json::to_string(text).map_err(|error| BrowserError::Transport(error.to_string()))?;
+    Ok(format!(
+        r#"(() => {{
+  const needle = {text};
+  const root = document.body || document.documentElement;
+  if (!root || !needle) return false;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {{
+    acceptNode(node) {{
+      if (!node.textContent || !node.textContent.includes(needle)) return NodeFilter.FILTER_REJECT;
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      const style = window.getComputedStyle(parent);
+      const rect = parent.getBoundingClientRect();
+      if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+      if (rect.width === 0 && rect.height === 0) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }}
+  }});
+  const node = walker.nextNode();
+  if (!node || !node.parentElement) return false;
+  node.parentElement.scrollIntoView({{ behavior: 'instant', block: 'center', inline: 'nearest' }});
+  return true;
+}})()"#
+    ))
+}
+
 #[derive(Debug, Error)]
 pub enum BrowserError {
     #[error("browser is not connected")]
@@ -1318,6 +1346,13 @@ impl BrowserSession for CdpBrowserSession {
         .await
     }
 
+    async fn find_text(&self, text: &str) -> Result<bool, BrowserError> {
+        self.evaluate_json(&scroll_to_text_js(text)?)
+            .await?
+            .as_bool()
+            .ok_or_else(|| BrowserError::MissingResponseData("scroll-to-text result".to_owned()))
+    }
+
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
         let value = self
             .evaluate_json(&element_eval_js(
@@ -1640,6 +1675,8 @@ pub trait BrowserSession: Send + Sync {
 
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError>;
 
+    async fn find_text(&self, text: &str) -> Result<bool, BrowserError>;
+
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError>;
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
@@ -1708,6 +1745,10 @@ where
 
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError> {
         self.as_ref().scroll(index, down, pages).await
+    }
+
+    async fn find_text(&self, text: &str) -> Result<bool, BrowserError> {
+        self.as_ref().find_text(text).await
     }
 
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
@@ -1883,6 +1924,14 @@ mod tests {
         .expect_err("missing previous entry");
 
         assert!(matches!(error, BrowserError::ActionFailed(_)));
+    }
+
+    #[test]
+    fn scroll_to_text_script_json_escapes_text() {
+        let script = scroll_to_text_js(r#"Needle "quoted""#).expect("scroll script");
+
+        assert!(script.contains(r#"Needle \"quoted\""#));
+        assert!(script.contains("scrollIntoView"));
     }
 
     #[test]

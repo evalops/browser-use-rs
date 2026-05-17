@@ -382,6 +382,30 @@ where
                 .await?;
             Ok(ActionResult::extracted("Scrolled page"))
         }
+        BrowserAction::FindText(params) => {
+            if session.find_text(&params.text).await? {
+                Ok(ActionResult::extracted(format!(
+                    "Scrolled to text: {}",
+                    params.text
+                )))
+            } else {
+                Ok(ActionResult {
+                    extracted_content: Some(format!(
+                        "Text '{}' not found or not visible on page",
+                        params.text
+                    )),
+                    error: None,
+                    long_term_memory: Some(format!(
+                        "Tried scrolling to text '{}' but it was not found",
+                        params.text
+                    )),
+                    include_extracted_content_only_once: false,
+                    include_in_memory: false,
+                    is_done: false,
+                    success: None,
+                })
+            }
+        }
         BrowserAction::Wait(params) => {
             let actual_seconds = params.seconds.saturating_sub(1).clamp(0, 30) as u64;
             sleep(Duration::from_secs(actual_seconds)).await;
@@ -1037,9 +1061,9 @@ mod tests {
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
         ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
-        GetDropdownOptionsAction, InputTextAction, NavigateAction, NoParamsAction, SaveAsPdfAction,
-        SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
-        UploadFileAction, WaitAction,
+        FindTextAction, GetDropdownOptionsAction, InputTextAction, NavigateAction, NoParamsAction,
+        SaveAsPdfAction, SearchPageAction, SelectDropdownOptionAction, SendKeysAction,
+        SwitchTabAction, UploadFileAction, WaitAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1309,6 +1333,14 @@ mod tests {
             Ok(())
         }
 
+        async fn find_text(&self, text: &str) -> Result<bool, BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("find_text:{text}"));
+            Ok(true)
+        }
+
         async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
             self.events
                 .lock()
@@ -1482,6 +1514,25 @@ mod tests {
         assert_eq!(result.error, None);
         assert_eq!(result.extracted_content.as_deref(), Some("Navigated back"));
         assert_eq!(executor.session().events(), vec!["go_back"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_find_text_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::FindText(FindTextAction {
+                text: "Needle".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("Scrolled to text: Needle")
+        );
+        assert_eq!(executor.session().events(), vec!["find_text:Needle"]);
     }
 
     #[tokio::test]
