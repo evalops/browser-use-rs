@@ -15,7 +15,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   basic accessible names from labels and ARIA references, plus common ARIA
   widget roles.
 - Built-in actions for search, navigate, tab switch/close, click, coordinate
-  click, input, page or indexed element scroll, screenshot, dropdown
+  click, input, page or indexed element scroll, wait, screenshot, dropdown
   options/selection, send keys, file upload, PDF capture, extraction, page
   search, element lookup, and done.
 - Browser-aware action sequencing that stops on errors, done, explicit

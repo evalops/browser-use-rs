@@ -24,7 +24,7 @@ includes:
   tags and contents, accessible labels, bounds, hidden-element filtering, and
   scrollable element metadata, plus common ARIA widget roles.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
-  `scroll`, `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`,
+  `scroll`, `wait`, `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`,
   `extract`, `search_page`, `find_elements`, tab actions, dropdown actions,
   and `done`.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,

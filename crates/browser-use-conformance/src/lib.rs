@@ -185,6 +185,7 @@ mod tests {
             "click",
             "input",
             "scroll",
+            "wait",
             "screenshot",
             "send_keys",
             "upload_file",

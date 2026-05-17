@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 use async_trait::async_trait;
@@ -377,6 +377,14 @@ where
                 .scroll(params.index, params.down, params.pages)
                 .await?;
             Ok(ActionResult::extracted("Scrolled page"))
+        }
+        BrowserAction::Wait(params) => {
+            let actual_seconds = params.seconds.saturating_sub(1).clamp(0, 30) as u64;
+            sleep(Duration::from_secs(actual_seconds)).await;
+            Ok(ActionResult::extracted(format!(
+                "Waited for {} seconds",
+                params.seconds
+            )))
         }
         BrowserAction::Screenshot(_) => {
             let screenshot = session.screenshot().await?;
@@ -1027,7 +1035,7 @@ mod tests {
         ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
         GetDropdownOptionsAction, InputTextAction, NavigateAction, SaveAsPdfAction,
         SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
-        UploadFileAction,
+        UploadFileAction, WaitAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1495,6 +1503,23 @@ mod tests {
 
         assert_eq!(result.error, None);
         assert_eq!(executor.session().events(), vec!["send_keys:EvalOps"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_wait_without_session_event() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Wait(WaitAction { seconds: 0 }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("Waited for 0 seconds")
+        );
+        assert_eq!(executor.session().events(), Vec::<String>::new());
     }
 
     #[tokio::test]

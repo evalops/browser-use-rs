@@ -139,6 +139,16 @@ fn default_scroll_pages() -> f64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WaitAction {
+    #[serde(default = "default_wait_seconds")]
+    pub seconds: i64,
+}
+
+fn default_wait_seconds() -> i64 {
+    3
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SendKeysAction {
     pub keys: String,
 }
@@ -209,6 +219,7 @@ pub enum BrowserAction {
     SwitchTab(SwitchTabAction),
     CloseTab(CloseTabAction),
     Scroll(ScrollAction),
+    Wait(WaitAction),
     SendKeys(SendKeysAction),
     UploadFile(UploadFileAction),
     Screenshot(ScreenshotAction),
@@ -232,6 +243,7 @@ impl BrowserAction {
             Self::SwitchTab(_) => "switch_tab",
             Self::CloseTab(_) => "close_tab",
             Self::Scroll(_) => "scroll",
+            Self::Wait(_) => "wait",
             Self::SendKeys(_) => "send_keys",
             Self::UploadFile(_) => "upload_file",
             Self::Screenshot(_) => "screenshot",
@@ -286,5 +298,15 @@ mod tests {
         });
 
         assert!(action.terminates_sequence());
+    }
+
+    #[test]
+    fn wait_action_defaults_to_three_seconds() {
+        let action: BrowserAction =
+            serde_json::from_value(serde_json::json!({ "wait": {} })).expect("wait action");
+
+        assert_eq!(action.name(), "wait");
+        assert_eq!(action, BrowserAction::Wait(WaitAction { seconds: 3 }));
+        assert!(!action.terminates_sequence());
     }
 }
