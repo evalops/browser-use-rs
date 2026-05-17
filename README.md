@@ -25,8 +25,8 @@ includes:
   tags and contents, accessible labels, image-alt control names, selected
   dropdown values, bounds, automation-friendly data/ARIA/value attributes,
   hidden-element filtering, and scrollable element metadata, plus common ARIA
-  widget roles, pagination affordances, and configurable prompt-visible
-  attributes.
+  widget roles, search affordance signals, pagination affordances, and
+  configurable prompt-visible attributes.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file

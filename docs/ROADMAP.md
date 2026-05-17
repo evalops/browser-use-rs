@@ -64,9 +64,9 @@ Implemented:
   tags and contents, indexes common ARIA widget roles and disclosure elements,
   carries image alt text into image-only control names, renders selected
   dropdown values, preserves automation-friendly data/ARIA/value attributes,
-  renders native input format hints, detects pagination affordances, supports
-  caller-selected prompt attributes, and excludes hidden or disabled interactive
-  elements from the selector map.
+  renders native input format hints, detects search affordance signals and
+  pagination affordances, supports caller-selected prompt attributes, and
+  excludes hidden or disabled interactive elements from the selector map.
 
 Next:
 

@@ -72,6 +72,16 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     }
     return false;
   };
+  const hasSearchIndicator = (el) => {
+    const indicators = ['search', 'magnify', 'glass', 'lookup', 'find', 'query', 'search-icon', 'search-btn', 'search-button', 'searchbox'];
+    const classText = String(el.getAttribute('class') || '').toLowerCase();
+    const idText = String(el.getAttribute('id') || '').toLowerCase();
+    if (indicators.some((indicator) => classText.includes(indicator) || idText.includes(indicator))) return true;
+    for (const attr of Array.from(el.attributes || [])) {
+      if (attr.name.startsWith('data-') && indicators.some((indicator) => String(attr.value || '').toLowerCase().includes(indicator))) return true;
+    }
+    return false;
+  };
   const isDisabledOrHidden = (el) => {
     return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
@@ -89,6 +99,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     }
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    if (hasSearchIndicator(el)) return true;
     return el.matches(selector);
   };
   const isScrollable = (el) => {
@@ -272,6 +283,16 @@ fn element_eval_js(index: u32, body: &str) -> String {
     }}
     return false;
   }};
+  const hasSearchIndicator = (el) => {{
+    const indicators = ['search', 'magnify', 'glass', 'lookup', 'find', 'query', 'search-icon', 'search-btn', 'search-button', 'searchbox'];
+    const classText = String(el.getAttribute('class') || '').toLowerCase();
+    const idText = String(el.getAttribute('id') || '').toLowerCase();
+    if (indicators.some((indicator) => classText.includes(indicator) || idText.includes(indicator))) return true;
+    for (const attr of Array.from(el.attributes || [])) {{
+      if (attr.name.startsWith('data-') && indicators.some((indicator) => String(attr.value || '').toLowerCase().includes(indicator))) return true;
+    }}
+    return false;
+  }};
   const isDisabledOrHidden = (el) => {{
     return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
@@ -289,6 +310,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     }}
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    if (hasSearchIndicator(el)) return true;
     return el.matches(selector);
   }};
   const elements = [];
@@ -2695,6 +2717,17 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_detects_search_affordances() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("hasSearchIndicator"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("search-icon"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attr.name.startsWith('data-')"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("hasSearchIndicator"));
+        assert!(action_script.contains("search-button"));
+    }
+
+    #[test]
     fn renders_runtime_evaluate_values() {
         assert_eq!(
             render_runtime_evaluate_result(&json!({
@@ -3093,6 +3126,44 @@ mod tests {
             .await
             .expect("details open");
         assert_eq!(details_open.as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_search_affordance_signals() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>search smoke</title></head><body><div id='site-search' class='search-icon' style='width:24px;height:24px'>Find</div><div data-action='open-search' style='width:24px;height:24px'>Lookup</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let search = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "site-search")
+            })
+            .expect("search affordance indexed");
+        assert_eq!(search.tag_name, "div");
+        assert_eq!(search.name.as_deref(), Some("Find"));
+
+        session
+            .click(search.index)
+            .await
+            .expect("click search affordance by index");
     }
 
     #[tokio::test]
