@@ -433,7 +433,15 @@ where
         })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
-        let result = execute_action_sequence(&mut self.executor, &model_output.action).await;
+        let result = if model_output.action.len() > self.settings.max_actions_per_step {
+            vec![ActionResult::error(format!(
+                "model returned {} actions, exceeding max_actions_per_step {}",
+                model_output.action.len(),
+                self.settings.max_actions_per_step
+            ))]
+        } else {
+            execute_action_sequence(&mut self.executor, &model_output.action).await
+        };
 
         self.history.items.push(AgentHistoryItem {
             model_output: Some(model_output),
@@ -884,6 +892,47 @@ mod tests {
         let error = agent.step().await.expect_err("LLM timeout");
 
         assert!(matches!(error, AgentRunError::LlmTimedOut { seconds: 0 }));
+    }
+
+    #[tokio::test]
+    async fn agent_step_rejects_too_many_actions_before_side_effects() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                },
+                {
+                    "click": {
+                        "index": 2
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_actions_per_step: 1,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "click only once",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let item = agent.step().await.expect("agent step");
+
+        assert_eq!(item.result.len(), 1);
+        assert!(
+            item.result[0]
+                .error
+                .as_deref()
+                .expect("error")
+                .contains("max_actions_per_step")
+        );
+        assert!(agent.executor.session().events().is_empty());
     }
 
     #[tokio::test]
