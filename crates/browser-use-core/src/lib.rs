@@ -559,6 +559,8 @@ pub enum AgentRunError {
     StepLimitReached { max_steps: usize },
     #[error("agent stopped after {failures} consecutive failures")]
     MaxFailuresExceeded { failures: u32 },
+    #[error("agent repeated the same action sequence for {window} steps")]
+    LoopDetected { window: usize },
 }
 
 pub struct Agent<M, S> {
@@ -613,6 +615,14 @@ where
 
             if is_done {
                 return Ok(&self.history);
+            }
+
+            if self.settings.loop_detection_enabled
+                && repeated_action_loop(&self.history, self.settings.loop_detection_window)
+            {
+                return Err(AgentRunError::LoopDetected {
+                    window: self.settings.loop_detection_window,
+                });
             }
 
             if has_error {
@@ -681,7 +691,9 @@ pub fn build_step_request(
                 MessageRole::System,
                 format!(
                     "You are controlling a browser. Return a JSON object matching AgentOutput. \
-                     Use at most {} actions in this step.",
+	                     Use at most {} actions in this step. Avoid repeating the same action \
+	                     sequence; if the browser is not changing, choose a different strategy \
+	                     or finish with done.",
                     settings.max_actions_per_step
                 ),
             ),
@@ -728,6 +740,33 @@ fn render_previous_results(history: &AgentHistory) -> String {
     } else {
         rendered.join("\n")
     }
+}
+
+fn repeated_action_loop(history: &AgentHistory, window: usize) -> bool {
+    if window < 2 || history.items.len() < window {
+        return false;
+    }
+
+    let signatures: Option<Vec<String>> = history
+        .items
+        .iter()
+        .rev()
+        .take(window)
+        .map(|item| {
+            item.model_output
+                .as_ref()
+                .and_then(|output| serde_json::to_string(&output.action).ok())
+        })
+        .collect();
+
+    let Some(signatures) = signatures else {
+        return false;
+    };
+    let Some(first) = signatures.first() else {
+        return false;
+    };
+
+    signatures.iter().all(|signature| signature == first)
 }
 
 /// Execute actions with the same high-level guard shape as browser-use:
@@ -784,6 +823,8 @@ mod tests {
         assert_eq!(settings.max_actions_per_step, 5);
         assert_eq!(settings.llm_timeout_seconds, 60);
         assert_eq!(settings.step_timeout_seconds, 180);
+        assert_eq!(settings.loop_detection_window, 20);
+        assert!(settings.loop_detection_enabled);
     }
 
     #[test]
@@ -1523,6 +1564,68 @@ mod tests {
         assert_eq!(agent.history().items.len(), 1);
     }
 
+    #[tokio::test]
+    async fn agent_run_detects_repeated_action_loop() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            loop_detection_window: 2,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "do not loop",
+            settings,
+            QueueModel::new(vec![output.clone(), output]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(5).await.expect_err("loop detected");
+
+        assert!(matches!(error, AgentRunError::LoopDetected { window: 2 }));
+        assert_eq!(agent.history().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn agent_loop_detection_can_be_disabled() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            loop_detection_window: 2,
+            loop_detection_enabled: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "loop if allowed",
+            settings,
+            QueueModel::new(vec![output.clone(), output]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(2).await.expect_err("step limit");
+
+        assert!(matches!(
+            error,
+            AgentRunError::StepLimitReached { max_steps: 2 }
+        ));
+        assert_eq!(agent.history().items.len(), 2);
+    }
+
     #[test]
     fn step_request_includes_previous_results() {
         let history = AgentHistory {
@@ -1544,6 +1647,7 @@ mod tests {
 
         assert!(request_text.contains("Previous action results"));
         assert!(request_text.contains("Clicked element 1"));
+        assert!(request_text.contains("Avoid repeating the same action sequence"));
     }
 
     #[test]
