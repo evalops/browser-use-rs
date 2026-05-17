@@ -449,20 +449,42 @@ where
                 params.seconds
             )))
         }
-        BrowserAction::Screenshot(_) => {
-            let screenshot = session.screenshot().await?;
-            Ok(ActionResult {
-                extracted_content: Some(format!(
-                    "Captured screenshot ({} base64 chars)",
-                    screenshot.base64_png.len()
-                )),
-                error: None,
-                long_term_memory: None,
-                include_extracted_content_only_once: true,
-                include_in_memory: false,
-                is_done: false,
-                success: None,
-            })
+        BrowserAction::Screenshot(params) => {
+            if let Some(file_name) = params.file_name.as_deref() {
+                let screenshot = session.screenshot().await?;
+                let output_path = screenshot_output_path(file_name);
+                if let Some(parent) = output_path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+                }
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&screenshot.base64_png)
+                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+                std::fs::write(&output_path, bytes)
+                    .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+                let file_name = output_path.display().to_string();
+                Ok(ActionResult {
+                    extracted_content: Some(format!("Screenshot saved to {file_name}")),
+                    error: None,
+                    long_term_memory: Some(format!("Screenshot saved to {file_name}")),
+                    include_extracted_content_only_once: true,
+                    include_in_memory: true,
+                    is_done: false,
+                    success: None,
+                })
+            } else {
+                Ok(ActionResult {
+                    extracted_content: Some("Requested screenshot for next observation".to_owned()),
+                    error: None,
+                    long_term_memory: None,
+                    include_extracted_content_only_once: false,
+                    include_in_memory: false,
+                    is_done: false,
+                    success: None,
+                })
+            }
         }
         BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
         BrowserAction::Extract(params) => {
@@ -697,6 +719,35 @@ fn next_available_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
         }
     }
     unreachable!("unbounded PDF filename counter should always return")
+}
+
+fn screenshot_output_path(file_name: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(if file_name.trim().is_empty() {
+        "screenshot".to_owned()
+    } else {
+        file_name.to_owned()
+    });
+    ensure_png_extension(path)
+}
+
+fn ensure_png_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
+    let has_png_extension = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|file_name| file_name.to_ascii_lowercase().ends_with(".png"));
+    if has_png_extension {
+        return path;
+    }
+
+    let Some(file_name) = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+    else {
+        return std::path::PathBuf::from("screenshot.png");
+    };
+    path.set_file_name(format!("{file_name}.png"));
+    path
 }
 
 fn write_file_action(
@@ -1359,8 +1410,8 @@ mod tests {
         ClickElementAction, CloseTabAction, DoneAction, EvaluateAction, ExtractAction,
         FindElementsAction, FindTextAction, GetDropdownOptionsAction, InputTextAction,
         NavigateAction, NoParamsAction, ReadFileAction, ReplaceFileAction, SaveAsPdfAction,
-        ScrollAction, SearchPageAction, SelectDropdownOptionAction, SendKeysAction,
-        SwitchTabAction, UploadFileAction, WaitAction, WriteFileAction,
+        ScreenshotAction, ScrollAction, SearchPageAction, SelectDropdownOptionAction,
+        SendKeysAction, SwitchTabAction, UploadFileAction, WaitAction, WriteFileAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1731,7 +1782,7 @@ mod tests {
                 .expect("events lock")
                 .push("screenshot".to_owned());
             Ok(Screenshot {
-                base64_png: "abc".to_owned(),
+                base64_png: base64::engine::general_purpose::STANDARD.encode("PNGDATA"),
             })
         }
 
@@ -2111,6 +2162,69 @@ mod tests {
             Some("Waited for 0 seconds")
         );
         assert_eq!(executor.session().events(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_requests_next_screenshot_observation() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Screenshot(ScreenshotAction {
+                file_name: None,
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("Requested screenshot for next observation")
+        );
+        assert_eq!(executor.session().events(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_saves_screenshot_when_file_name_is_present() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let requested_output_path = temp_dir.path().join("shot");
+        let output_path = temp_dir.path().join("shot.png");
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Screenshot(ScreenshotAction {
+                file_name: Some(requested_output_path.display().to_string()),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert!(
+            result
+                .extracted_content
+                .expect("screenshot content")
+                .contains(&output_path.display().to_string())
+        );
+        assert_eq!(
+            std::fs::read(&output_path).expect("screenshot file"),
+            b"PNGDATA"
+        );
+        assert_eq!(executor.session().events(), vec!["screenshot"]);
+    }
+
+    #[test]
+    fn screenshot_output_path_appends_png_extension() {
+        assert_eq!(
+            screenshot_output_path("/tmp/shot"),
+            std::path::PathBuf::from("/tmp/shot.png")
+        );
+        assert_eq!(
+            screenshot_output_path("/tmp/shot.PNG"),
+            std::path::PathBuf::from("/tmp/shot.PNG")
+        );
+        assert_eq!(
+            screenshot_output_path(""),
+            std::path::PathBuf::from("screenshot.png")
+        );
     }
 
     #[tokio::test]

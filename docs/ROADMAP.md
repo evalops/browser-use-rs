@@ -26,6 +26,8 @@ Implemented:
 - Built-in browser action parity for wait/sleep steps with the upstream default
   and bounded delay behavior, browser-history back navigation, and text-target
   scrolling, plus browser JavaScript evaluation.
+- Screenshot action behavior for next-observation screenshot requests and
+  optional local `.png` file writes.
 - PDF save action behavior for local files, including default page-title names,
   `.pdf` extension normalization, and duplicate filename avoidance.
 - Built-in text-file read/write/replace action parity for local agent artifacts.

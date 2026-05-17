@@ -22,6 +22,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
   file upload, local text-file read/write/replace, PDF capture, extraction,
   page search, element lookup, and done.
+- `screenshot` requests screenshot inclusion in the next observation by default
+  and writes a local `.png` file when `file_name` is supplied.
 - `save_as_pdf` writes a local PDF file, appends `.pdf` when missing, derives a
   safe page-title filename when omitted, and avoids overwriting existing files.
 - Browser-aware action sequencing that stops on errors, done, explicit
