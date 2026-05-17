@@ -1,0 +1,90 @@
+{
+  "text": "[1] <button> Submit request Ignored visual label\n[2] <input> Email address user@example.com\n[3] <select> Plan Enterprise\n[4] <div> Results panel",
+  "selector_map": {
+    "1": {
+      "index": 1,
+      "target_id": "fixture-target",
+      "backend_node_id": 101,
+      "node_id": 201,
+      "tag_name": "button",
+      "role": "button",
+      "name": "Submit request",
+      "text": "Ignored visual label",
+      "attributes": {
+        "aria-labelledby": "submit-name",
+        "id": "submit"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 18,
+        "width": 140,
+        "height": 32
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "2": {
+      "index": 2,
+      "target_id": "fixture-target",
+      "backend_node_id": 102,
+      "node_id": 202,
+      "tag_name": "input",
+      "name": "Email address",
+      "text": "user@example.com",
+      "attributes": {
+        "id": "email",
+        "placeholder": "name@example.com",
+        "type": "email"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 64,
+        "width": 260,
+        "height": 36
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "3": {
+      "index": 3,
+      "target_id": "fixture-target",
+      "backend_node_id": 103,
+      "node_id": 203,
+      "tag_name": "select",
+      "name": "Plan",
+      "text": "Enterprise",
+      "attributes": {
+        "name": "plan"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 112,
+        "width": 180,
+        "height": 34
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "4": {
+      "index": 4,
+      "target_id": "fixture-target",
+      "backend_node_id": 104,
+      "node_id": 204,
+      "tag_name": "div",
+      "name": "Results panel",
+      "attributes": {
+        "id": "results",
+        "tabindex": "0"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 160,
+        "width": 320,
+        "height": 120
+      },
+      "is_visible": true,
+      "is_interactive": true,
+      "is_scrollable": true
+    }
+  }
+}
