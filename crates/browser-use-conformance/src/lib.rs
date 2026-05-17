@@ -139,10 +139,20 @@ pub fn mixed_interactive_state() -> SerializedDomState {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use browser_use_core::{ActionExecutor, ActionResult, execute_action_sequence};
+    use browser_use_cdp::{BrowserError, BrowserSession, FoundElement, Pdf, Screenshot};
+    use browser_use_core::{
+        ActionExecutor, ActionResult, Agent, AgentSettings, ChatCompletion, ChatModel, ChatRequest,
+        LlmError, execute_action_sequence,
+    };
+    use browser_use_dom::BrowserStateSummary;
     use browser_use_tools::BrowserAction;
     use schemars::schema_for;
-    use serde_json::Value;
+    use serde_json::{Value, json};
+    use std::{
+        collections::VecDeque,
+        path::Path,
+        sync::{Arc, Mutex},
+    };
 
     #[test]
     fn simple_interactive_state_matches_golden_fixture() {
@@ -225,5 +235,247 @@ mod tests {
         let actual = serde_json::to_value(results).expect("serialize results");
 
         assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn simple_agent_run_matches_golden_history_fixture() {
+        let clicked = Arc::new(Mutex::new(Vec::new()));
+        let (llm, requests) = ScriptedChatModel::new(vec![
+            json!({
+                "current_state": {
+                    "thinking": "Click the Run button",
+                    "evaluation_previous_goal": "No previous goal",
+                    "memory": "Need to trigger the form",
+                    "next_goal": "Click Run"
+                },
+                "action": [
+                    {
+                        "click": {
+                            "index": 1
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "The requested click succeeded",
+                    "evaluation_previous_goal": "Clicked element 1",
+                    "memory": "Run was clicked",
+                    "next_goal": "Finish"
+                },
+                "action": [
+                    {
+                        "done": {
+                            "text": "Clicked Run",
+                            "success": true
+                        }
+                    }
+                ]
+            }),
+        ]);
+        let session = FixtureSession {
+            state: fixture_browser_state(),
+            clicked: Arc::clone(&clicked),
+        };
+        let settings = AgentSettings {
+            max_actions_per_step: 1,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings("Click the Run button", settings, llm, session);
+
+        let actual = {
+            let history = agent.run(2).await.expect("agent run");
+            assert!(history.is_done());
+            assert_eq!(history.final_result(), Some("Clicked Run"));
+            assert_eq!(history.is_successful(), Some(true));
+            serde_json::to_value(history).expect("serialize history")
+        };
+
+        assert_eq!(*clicked.lock().expect("clicked lock"), vec![1]);
+        let expected: Value =
+            serde_json::from_str(include_str!("../fixtures/simple_agent_history.json"))
+                .expect("agent history fixture");
+        assert_eq!(actual, expected);
+
+        let requests = requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].output_schema.is_some());
+        let request_text = serde_json::to_string(&requests[1]).expect("request text");
+        assert!(request_text.contains("Previous action results"));
+        assert!(request_text.contains("Clicked element 1"));
+    }
+
+    fn fixture_browser_state() -> BrowserStateSummary {
+        BrowserStateSummary {
+            dom_state: simple_interactive_state(),
+            url: "https://example.test/form".to_owned(),
+            title: "Fixture".to_owned(),
+            tabs: Vec::new(),
+            screenshot: None,
+            page_info: None,
+            pixels_above: 0,
+            pixels_below: 0,
+            browser_errors: Vec::new(),
+            is_pdf_viewer: false,
+            recent_events: None,
+            pending_network_requests: Vec::new(),
+            pagination_buttons: Vec::new(),
+            closed_popup_messages: Vec::new(),
+        }
+    }
+
+    #[derive(Clone)]
+    struct ScriptedChatModel {
+        outputs: Arc<Mutex<VecDeque<Value>>>,
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+    }
+
+    impl ScriptedChatModel {
+        fn new(outputs: Vec<Value>) -> (Self, Arc<Mutex<Vec<ChatRequest>>>) {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    outputs: Arc::new(Mutex::new(outputs.into())),
+                    requests: Arc::clone(&requests),
+                },
+                requests,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl ChatModel for ScriptedChatModel {
+        fn provider(&self) -> &str {
+            "fixture"
+        }
+
+        fn model(&self) -> &str {
+            "fixture-script"
+        }
+
+        async fn invoke_json(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatCompletion<Value>, LlmError> {
+            self.requests.lock().expect("requests lock").push(request);
+            let content = self
+                .outputs
+                .lock()
+                .expect("outputs lock")
+                .pop_front()
+                .ok_or_else(|| LlmError::Provider("script exhausted".to_owned()))?;
+            Ok(ChatCompletion {
+                model: self.model().to_owned(),
+                content,
+                raw_response: None,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixtureSession {
+        state: BrowserStateSummary,
+        clicked: Arc<Mutex<Vec<u32>>>,
+    }
+
+    #[async_trait]
+    impl BrowserSession for FixtureSession {
+        async fn state(
+            &self,
+            _include_screenshot: bool,
+        ) -> Result<BrowserStateSummary, BrowserError> {
+            Ok(self.state.clone())
+        }
+
+        async fn navigate(&self, _url: &str, _new_tab: bool) -> Result<(), BrowserError> {
+            Err(unsupported_action("navigate"))
+        }
+
+        async fn switch_tab(&self, _target_id: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("switch_tab"))
+        }
+
+        async fn close_tab(&self, _target_id: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("close_tab"))
+        }
+
+        async fn click(&self, index: u32) -> Result<(), BrowserError> {
+            self.clicked.lock().expect("clicked lock").push(index);
+            Ok(())
+        }
+
+        async fn click_coordinates(&self, _x: i32, _y: i32) -> Result<(), BrowserError> {
+            Err(unsupported_action("click_coordinates"))
+        }
+
+        async fn input_text(
+            &self,
+            _index: u32,
+            _text: &str,
+            _clear: bool,
+        ) -> Result<(), BrowserError> {
+            Err(unsupported_action("input_text"))
+        }
+
+        async fn scroll(
+            &self,
+            _index: Option<u32>,
+            _down: bool,
+            _pages: f64,
+        ) -> Result<(), BrowserError> {
+            Err(unsupported_action("scroll"))
+        }
+
+        async fn dropdown_options(&self, _index: u32) -> Result<Vec<String>, BrowserError> {
+            Err(unsupported_action("dropdown_options"))
+        }
+
+        async fn select_dropdown_option(
+            &self,
+            _index: u32,
+            _text: &str,
+        ) -> Result<(), BrowserError> {
+            Err(unsupported_action("select_dropdown_option"))
+        }
+
+        async fn page_text(&self) -> Result<String, BrowserError> {
+            Err(unsupported_action("page_text"))
+        }
+
+        async fn find_elements(
+            &self,
+            _selector: &str,
+            _attributes: &[String],
+            _max_results: usize,
+            _include_text: bool,
+        ) -> Result<Vec<FoundElement>, BrowserError> {
+            Err(unsupported_action("find_elements"))
+        }
+
+        async fn send_keys(&self, _keys: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("send_keys"))
+        }
+
+        async fn upload_file(&self, _index: u32, _path: &Path) -> Result<(), BrowserError> {
+            Err(unsupported_action("upload_file"))
+        }
+
+        async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+            Err(unsupported_action("screenshot"))
+        }
+
+        async fn save_pdf(
+            &self,
+            _print_background: bool,
+            _landscape: bool,
+            _scale: f64,
+            _paper_format: &str,
+        ) -> Result<Pdf, BrowserError> {
+            Err(unsupported_action("save_pdf"))
+        }
+    }
+
+    fn unsupported_action(action: &str) -> BrowserError {
+        BrowserError::ActionFailed(format!("fixture session does not support {action}"))
     }
 }

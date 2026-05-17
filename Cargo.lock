@@ -145,6 +145,7 @@ name = "browser-use-conformance"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "browser-use-cdp",
  "browser-use-core",
  "browser-use-dom",
  "browser-use-tools",

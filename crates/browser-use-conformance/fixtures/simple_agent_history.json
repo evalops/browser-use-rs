@@ -1,0 +1,136 @@
+{
+  "items": [
+    {
+      "model_output": {
+        "current_state": {
+          "thinking": "Click the Run button",
+          "evaluation_previous_goal": "No previous goal",
+          "memory": "Need to trigger the form",
+          "next_goal": "Click Run"
+        },
+        "action": [
+          {
+            "click": {
+              "index": 1
+            }
+          }
+        ]
+      },
+      "result": [
+        {
+          "extracted_content": "Clicked element 1",
+          "long_term_memory": "Clicked element 1",
+          "include_extracted_content_only_once": false,
+          "include_in_memory": false,
+          "is_done": false
+        }
+      ],
+      "state": {
+        "dom_state": {
+          "text": "[1] <button> Run\n[2] <input> Name EvalOps",
+          "selector_map": {
+            "1": {
+              "index": 1,
+              "target_id": "fixture-target",
+              "backend_node_id": 0,
+              "tag_name": "button",
+              "name": "Run",
+              "text": "Run",
+              "attributes": {},
+              "is_visible": true,
+              "is_interactive": true
+            },
+            "2": {
+              "index": 2,
+              "target_id": "fixture-target",
+              "backend_node_id": 0,
+              "tag_name": "input",
+              "name": "Name",
+              "text": "EvalOps",
+              "attributes": {},
+              "is_visible": true,
+              "is_interactive": true
+            }
+          }
+        },
+        "url": "https://example.test/form",
+        "title": "Fixture",
+        "tabs": [],
+        "pixels_above": 0,
+        "pixels_below": 0,
+        "browser_errors": [],
+        "is_pdf_viewer": false,
+        "pending_network_requests": [],
+        "pagination_buttons": [],
+        "closed_popup_messages": []
+      }
+    },
+    {
+      "model_output": {
+        "current_state": {
+          "thinking": "The requested click succeeded",
+          "evaluation_previous_goal": "Clicked element 1",
+          "memory": "Run was clicked",
+          "next_goal": "Finish"
+        },
+        "action": [
+          {
+            "done": {
+              "text": "Clicked Run",
+              "success": true,
+              "files_to_display": []
+            }
+          }
+        ]
+      },
+      "result": [
+        {
+          "extracted_content": "Clicked Run",
+          "include_extracted_content_only_once": false,
+          "include_in_memory": true,
+          "is_done": true,
+          "success": true
+        }
+      ],
+      "state": {
+        "dom_state": {
+          "text": "[1] <button> Run\n[2] <input> Name EvalOps",
+          "selector_map": {
+            "1": {
+              "index": 1,
+              "target_id": "fixture-target",
+              "backend_node_id": 0,
+              "tag_name": "button",
+              "name": "Run",
+              "text": "Run",
+              "attributes": {},
+              "is_visible": true,
+              "is_interactive": true
+            },
+            "2": {
+              "index": 2,
+              "target_id": "fixture-target",
+              "backend_node_id": 0,
+              "tag_name": "input",
+              "name": "Name",
+              "text": "EvalOps",
+              "attributes": {},
+              "is_visible": true,
+              "is_interactive": true
+            }
+          }
+        },
+        "url": "https://example.test/form",
+        "title": "Fixture",
+        "tabs": [],
+        "pixels_above": 0,
+        "pixels_below": 0,
+        "browser_errors": [],
+        "is_pdf_viewer": false,
+        "pending_network_requests": [],
+        "pagination_buttons": [],
+        "closed_popup_messages": []
+      }
+    }
+  ]
+}

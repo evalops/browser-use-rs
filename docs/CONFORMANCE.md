@@ -43,3 +43,6 @@ Upstream bumps must include:
 - `simple_action_sequence.json`: typed browser action sequence fixture.
 - `simple_action_results.json`: expected action-result fixture for the action
   sequence harness.
+- `simple_agent_history.json`: deterministic scripted-agent replay fixture
+  covering schema-guided model output, previous-result prompt context, browser
+  action execution, `done`, and serialized history.

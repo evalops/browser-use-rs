@@ -23,6 +23,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   steps, max failures, LLM timeout, repeated-action loop detection, previous
   result context, invalid model-output recovery, and typed
   history/final-result/success/error accessors.
+- Scripted agent replay conformance fixture for schema-guided model output,
+  previous-result prompt context, action execution, `done`, and serialized
+  history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini
   GenerateContent providers with structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and

@@ -42,6 +42,9 @@ Implemented:
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs.
 - Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
+- Conformance fixtures cover a scripted agent replay with schema-guided model
+  outputs, previous-result context, browser action execution, `done`, and
+  serialized history.
 - DOM serializer marks scrollable indexed elements and excludes hidden
   interactive elements from the selector map.
 
@@ -49,5 +52,5 @@ Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Harden the network daemon with HTTP, auth, and supervision options.
-3. Expand agent planning, replay/conformance fixtures, and provider parity
-   beyond OpenAI-compatible, Anthropic, and Gemini.
+3. Expand agent planning depth, replay coverage, and provider parity beyond
+   OpenAI-compatible, Anthropic, and Gemini.
