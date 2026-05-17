@@ -726,7 +726,11 @@ where
     }
 
     async fn step_inner(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
-        let state = self.executor.session().state(true).await?;
+        let state = self
+            .executor
+            .session()
+            .state(self.settings.use_vision)
+            .await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
@@ -742,7 +746,11 @@ where
     }
 
     async fn step_recovering_model_errors(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
-        let state = self.executor.session().state(true).await?;
+        let state = self
+            .executor
+            .session()
+            .state(self.settings.use_vision)
+            .await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
@@ -1131,6 +1139,7 @@ mod tests {
     struct MockSession {
         events: Mutex<Vec<String>>,
         states: Mutex<VecDeque<BrowserStateSummary>>,
+        state_screenshot_requests: Mutex<Vec<bool>>,
     }
 
     impl MockSession {
@@ -1138,6 +1147,7 @@ mod tests {
             Self {
                 events: Mutex::new(Vec::new()),
                 states: Mutex::new(VecDeque::new()),
+                state_screenshot_requests: Mutex::new(Vec::new()),
             }
         }
 
@@ -1145,11 +1155,19 @@ mod tests {
             Self {
                 events: Mutex::new(Vec::new()),
                 states: Mutex::new(VecDeque::from(states)),
+                state_screenshot_requests: Mutex::new(Vec::new()),
             }
         }
 
         fn events(&self) -> Vec<String> {
             self.events.lock().expect("events lock").clone()
+        }
+
+        fn state_screenshot_requests(&self) -> Vec<bool> {
+            self.state_screenshot_requests
+                .lock()
+                .expect("state requests lock")
+                .clone()
         }
     }
 
@@ -1157,8 +1175,12 @@ mod tests {
     impl BrowserSession for MockSession {
         async fn state(
             &self,
-            _include_screenshot: bool,
+            include_screenshot: bool,
         ) -> Result<BrowserStateSummary, BrowserError> {
+            self.state_screenshot_requests
+                .lock()
+                .expect("state requests lock")
+                .push(include_screenshot);
             if let Some(state) = self.states.lock().expect("states lock").pop_front() {
                 return Ok(state);
             }
@@ -1690,6 +1712,38 @@ mod tests {
 
         assert!(matches!(error, AgentRunError::StepTimedOut { seconds: 0 }));
         assert!(agent.history().items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_step_respects_use_vision_setting() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_vision: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "finish without screenshot",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        agent.step().await.expect("agent step");
+
+        let state_requests = agent.executor.session().state_screenshot_requests();
+        assert_eq!(state_requests.first(), Some(&false));
+        assert!(state_requests.iter().all(|include| !include));
     }
 
     #[tokio::test]
