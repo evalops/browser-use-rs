@@ -36,13 +36,23 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     '[onclick]',
     '[tabindex]:not([tabindex="-1"])'
   ].join(',');
-  const all = Array.from(document.querySelectorAll(selector));
-  const visible = all.filter((el) => {
+  const isVisible = (el) => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-  });
-  return visible.slice(0, 400).map((el, offset) => {
+  };
+  const elements = [];
+  const visitNode = (node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.matches(selector) && isVisible(node)) elements.push(node);
+    if (node.shadowRoot) visitChildren(node.shadowRoot);
+    visitChildren(node);
+  };
+  const visitChildren = (root) => {
+    for (const child of Array.from(root.children || [])) visitNode(child);
+  };
+  visitChildren(document);
+  return elements.slice(0, 400).map((el, offset) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
     for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'role', 'title']) {
@@ -123,11 +133,22 @@ fn element_eval_js(index: u32, body: &str) -> String {
     '[onclick]',
     '[tabindex]:not([tabindex="-1"])'
   ].join(',');
-  const elements = Array.from(document.querySelectorAll(selector)).filter((el) => {{
+  const isVisible = (el) => {{
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-  }});
+  }};
+  const elements = [];
+  const visitNode = (node) => {{
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.matches(selector) && isVisible(node)) elements.push(node);
+    if (node.shadowRoot) visitChildren(node.shadowRoot);
+    visitChildren(node);
+  }};
+  const visitChildren = (root) => {{
+    for (const child of Array.from(root.children || [])) visitNode(child);
+  }};
+  visitChildren(document);
   const el = elements[{zero_based}];
   if (!el) throw new Error('No interactive element found for index {index}');
   el.scrollIntoView({{ block: 'center', inline: 'center' }});
@@ -1585,6 +1606,48 @@ mod tests {
                 .endpoint()
                 .websocket_url
                 .starts_with("ws://127.0.0.1:")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_can_index_open_shadow_dom_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>shadow smoke</title></head><body><div id='host'></div><script>const root=document.getElementById('host').attachShadow({mode:'open'});const button=document.createElement('button');button.textContent='Shadow click';button.onclick=()=>{document.title='shadow clicked'};const input=document.createElement('input');input.placeholder='Shadow name';root.append(button,input);</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let initial_state = session.state(false).await.expect("initial state");
+        assert_eq!(initial_state.dom_state.element_count(), 2);
+        assert!(
+            initial_state
+                .dom_state
+                .llm_representation()
+                .contains("Shadow click")
+        );
+
+        session.click(1).await.expect("shadow click");
+        session
+            .input_text(2, "EvalOps", true)
+            .await
+            .expect("shadow input");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("shadow state");
+        assert_eq!(state.title, "shadow clicked");
+        assert!(
+            state.dom_state.llm_representation().contains("EvalOps"),
+            "DOM state did not include shadow input value: {}",
+            state.dom_state.llm_representation()
         );
     }
 
