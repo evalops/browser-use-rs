@@ -170,7 +170,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-checked', 'aria-controls', 'aria-current', 'aria-expanded', 'aria-haspopup', 'aria-invalid', 'aria-owns', 'aria-pressed', 'aria-required', 'aria-selected', 'role', 'title', 'contenteditable', 'data-testid', 'data-test', 'data-qa', 'data-value']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-value', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
@@ -2710,13 +2710,24 @@ mod tests {
     fn interactive_snapshot_preserves_automation_attributes() {
         for attribute in [
             "aria-controls",
+            "aria-disabled",
             "aria-haspopup",
+            "aria-live",
             "aria-owns",
+            "aria-placeholder",
             "aria-required",
+            "aria-valuemax",
+            "data-cy",
+            "data-selenium",
             "data-testid",
             "data-test",
             "data-qa",
             "data-value",
+            "for",
+            "itemscope",
+            "itemprop",
+            "lang",
+            "readonly",
         ] {
             assert!(
                 INTERACTIVE_ELEMENTS_JS.contains(attribute),
