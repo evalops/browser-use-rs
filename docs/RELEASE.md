@@ -22,8 +22,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, max actions per step, max
   steps, max failures, step and LLM timeouts, repeated-action loop detection,
-  previous result context, vision-aware screenshot capture, compact page-stat
-  prompt context, invalid model-output recovery, and typed
+  previous result context, vision-aware screenshot capture and image prompt
+  parts, compact page-stat prompt context, invalid model-output recovery, and typed
   history/final-result/success/error accessors.
 - Scripted agent replay conformance fixture for schema-guided model output,
   previous-result prompt context, action execution, `done`, and serialized

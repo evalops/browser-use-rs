@@ -15,8 +15,8 @@ use url::form_urlencoded;
 
 pub use browser_use_dom::BrowserStateSummary;
 pub use browser_use_llm::{
-    AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, GeminiChatModel,
-    LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
+    AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ContentPart,
+    GeminiChatModel, LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
 };
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
@@ -832,10 +832,24 @@ pub fn build_step_request(
     history: &AgentHistory,
     settings: &AgentSettings,
 ) -> Result<ChatRequest, AgentRunError> {
-    let state_json = serde_json::to_string_pretty(state)
+    let mut state_for_text = state.clone();
+    state_for_text.screenshot = None;
+    let state_json = serde_json::to_string_pretty(&state_for_text)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history);
     let page_stats = render_page_stats(state);
+    let mut user_content = vec![ContentPart::Text {
+        text: format!(
+            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}\n\nBrowser state:\n{state_json}"
+        ),
+    }];
+    if settings.use_vision
+        && let Some(screenshot) = state.screenshot.as_deref()
+    {
+        user_content.push(ContentPart::ImageUrl {
+            image_url: screenshot_data_url(screenshot),
+        });
+    }
     Ok(ChatRequest {
         messages: vec![
             ChatMessage::text(
@@ -848,15 +862,21 @@ pub fn build_step_request(
                     settings.max_actions_per_step
                 ),
             ),
-            ChatMessage::text(
-                MessageRole::User,
-                format!(
-                    "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}\n\nBrowser state:\n{state_json}"
-                ),
-            ),
+            ChatMessage {
+                role: MessageRole::User,
+                content: user_content,
+            },
         ],
         output_schema: Some(schema_for_agent_output()),
     })
+}
+
+fn screenshot_data_url(screenshot: &str) -> String {
+    if screenshot.starts_with("data:image/") {
+        screenshot.to_owned()
+    } else {
+        format!("data:image/png;base64,{screenshot}")
+    }
 }
 
 fn render_page_stats(state: &BrowserStateSummary) -> String {
@@ -2028,6 +2048,59 @@ mod tests {
         assert!(request_text.contains("1 links, 2 interactive"));
         assert!(request_text.contains("1 scroll containers"));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
+    }
+
+    #[test]
+    fn step_request_attaches_screenshot_as_image_part() {
+        let mut state = blank_state();
+        state.screenshot = Some("abc123".to_owned());
+
+        let request = build_step_request(
+            "inspect screenshot",
+            &state,
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+
+        assert!(matches!(
+            &user_message.content[1],
+            ContentPart::ImageUrl { image_url } if image_url == "data:image/png;base64,abc123"
+        ));
+        let text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+        assert!(text.contains("Browser state"));
+        assert!(!text.contains("abc123"));
+    }
+
+    #[test]
+    fn step_request_omits_screenshot_when_vision_disabled() {
+        let mut state = blank_state();
+        state.screenshot = Some("abc123".to_owned());
+        let settings = AgentSettings {
+            use_vision: false,
+            ..AgentSettings::default()
+        };
+
+        let request =
+            build_step_request("no screenshot", &state, &AgentHistory::default(), &settings)
+                .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+
+        assert_eq!(user_message.content.len(), 1);
+        let request_text = serde_json::to_string(user_message).expect("message json");
+        assert!(!request_text.contains("abc123"));
     }
 
     #[test]
