@@ -43,6 +43,11 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   };
+  const isScrollable = (el) => {
+    const style = window.getComputedStyle(el);
+    const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
+    return /(auto|scroll|overlay)/.test(overflow) && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
+  };
   const referencedText = (el, attribute) => {
     const ids = (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean);
     return ids.map((id) => {
@@ -102,7 +107,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
         height: Math.round(rect.height)
       },
       is_visible: true,
-      is_interactive: true
+      is_interactive: true,
+      is_scrollable: isScrollable(el)
     };
   });
 })()
@@ -854,6 +860,10 @@ fn dom_element_from_value(target_id: &str, value: &Value) -> Result<DomElementRe
             .get("is_interactive")
             .and_then(Value::as_bool)
             .unwrap_or(true),
+        is_scrollable: value
+            .get("is_scrollable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -1173,13 +1183,19 @@ impl BrowserSession for CdpBrowserSession {
             .await
     }
 
-    async fn scroll(
-        &self,
-        _index: Option<u32>,
-        down: bool,
-        pages: f64,
-    ) -> Result<(), BrowserError> {
+    async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError> {
         let direction = if down { 1.0 } else { -1.0 };
+        if let Some(index) = index {
+            return self
+                .evaluate_effect(element_action_js(
+                    index,
+                    &format!(
+                        "el.scrollBy(0, (el.clientHeight || window.innerHeight) * {});",
+                        pages * direction
+                    ),
+                ))
+                .await;
+        }
         self.evaluate_effect(format!(
             "window.scrollBy(0, window.innerHeight * {}); true;",
             pages * direction
@@ -1859,6 +1875,46 @@ mod tests {
             .get(&2)
             .expect("labelled button");
         assert_eq!(button.name.as_deref(), Some("Submit request"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_scrolls_indexed_scrollable_element() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>scrollable smoke</title></head><body><button style='display:none'>Hidden</button><div id='pane' tabindex='0' style='height:60px;width:200px;overflow:auto;border:1px solid black'><div style='height:400px'>Top<br><button>Deep button</button></div></div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(150)).await;
+
+        let state = session.state(false).await.expect("state");
+        assert!(!state.dom_state.llm_representation().contains("Hidden"));
+        let pane = state
+            .dom_state
+            .selector_map
+            .get(&1)
+            .expect("scrollable pane");
+        assert!(
+            pane.is_scrollable,
+            "pane was not marked scrollable: {pane:?}"
+        );
+
+        session
+            .scroll(Some(1), true, 1.0)
+            .await
+            .expect("scroll pane");
+        let scroll_top = session
+            .evaluate_json("document.getElementById('pane').scrollTop")
+            .await
+            .expect("scrollTop");
+        assert!(scroll_top.as_f64().unwrap_or_default() > 0.0);
     }
 
     #[tokio::test]

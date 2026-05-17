@@ -26,7 +26,7 @@ Implemented:
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, tab switching/closing, URL/title state,
   screenshots, PDF capture, file uploads, coordinate clicks, scroll, and compact
-  DOM-indexed browser actions.
+  DOM-indexed browser actions, including indexed element scrolling.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across
@@ -41,6 +41,8 @@ Implemented:
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs.
 - Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
+- DOM serializer marks scrollable indexed elements and excludes hidden
+  interactive elements from the selector map.
 
 Next:
 

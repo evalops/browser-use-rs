@@ -117,6 +117,8 @@ pub struct DomElementRef {
     pub is_visible: bool,
     #[serde(default)]
     pub is_interactive: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_scrollable: bool,
 }
 
 /// Serialized DOM state in the form the agent consumes.
@@ -170,6 +172,10 @@ pub fn render_element_text(element: &DomElementRef) -> String {
         (_, Some(value)) => value.to_owned(),
         _ => String::new(),
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Browser state summary compatible with the browser-use agent step contract.
@@ -253,6 +259,7 @@ mod tests {
             }),
             is_visible: true,
             is_interactive: true,
+            is_scrollable: false,
         };
 
         let state = SerializedDomState::from_elements(vec![element]);

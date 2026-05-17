@@ -11,10 +11,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Local Chrome/Chromium launch and CDP attach.
 - Browser state with URL, title, tabs, screenshots, page metrics, compact DOM
   state, element bounds, open shadow-root indexing, same-origin iframe indexing,
-  and basic accessible names from labels and ARIA references.
+  scrollable element metadata, hidden-element filtering, and basic accessible
+  names from labels and ARIA references.
 - Built-in actions for search, navigate, tab switch/close, click, coordinate
-  click, input, scroll, screenshot, dropdown options/selection, send keys, file
-  upload, PDF capture, extraction, page search, element lookup, and done.
+  click, input, page or indexed element scroll, screenshot, dropdown
+  options/selection, send keys, file upload, PDF capture, extraction, page
+  search, element lookup, and done.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, max actions per step, max

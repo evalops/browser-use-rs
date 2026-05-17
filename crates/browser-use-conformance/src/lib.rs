@@ -19,6 +19,7 @@ pub fn simple_interactive_state() -> SerializedDomState {
             bounds: None,
             is_visible: true,
             is_interactive: true,
+            is_scrollable: false,
         },
         DomElementRef {
             index: 2,
@@ -33,6 +34,7 @@ pub fn simple_interactive_state() -> SerializedDomState {
             bounds: None,
             is_visible: true,
             is_interactive: true,
+            is_scrollable: false,
         },
     ])
 }
