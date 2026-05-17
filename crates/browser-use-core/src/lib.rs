@@ -625,6 +625,8 @@ pub enum AgentRunError {
     InvalidOutput(String),
     #[error("LLM call timed out after {seconds} seconds")]
     LlmTimedOut { seconds: u64 },
+    #[error("agent step timed out after {seconds} seconds")]
+    StepTimedOut { seconds: u64 },
     #[error("agent reached max steps ({max_steps}) without completing")]
     StepLimitReached { max_steps: usize },
     #[error("agent stopped after {failures} consecutive failures")]
@@ -676,7 +678,13 @@ where
 
         for _ in 0..max_steps {
             let (is_done, has_error) = {
-                let item = self.step_recovering_model_errors().await?;
+                let seconds = self.settings.step_timeout_seconds;
+                let item = timeout(
+                    Duration::from_secs(seconds),
+                    self.step_recovering_model_errors(),
+                )
+                .await
+                .map_err(|_| AgentRunError::StepTimedOut { seconds })??;
                 (
                     item.result.iter().any(|result| result.is_done),
                     item.result.iter().any(|result| result.error.is_some()),
@@ -711,6 +719,13 @@ where
     }
 
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        let seconds = self.settings.step_timeout_seconds;
+        timeout(Duration::from_secs(seconds), self.step_inner())
+            .await
+            .map_err(|_| AgentRunError::StepTimedOut { seconds })?
+    }
+
+    async fn step_inner(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         let state = self.executor.session().state(true).await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = timeout(
@@ -1623,6 +1638,21 @@ mod tests {
         let error = agent.step().await.expect_err("LLM timeout");
 
         assert!(matches!(error, AgentRunError::LlmTimedOut { seconds: 0 }));
+    }
+
+    #[tokio::test]
+    async fn agent_step_enforces_step_timeout() {
+        let settings = AgentSettings {
+            step_timeout_seconds: 0,
+            ..AgentSettings::default()
+        };
+        let mut agent =
+            Agent::with_settings("step timeout", settings, SlowModel, MockSession::new());
+
+        let error = agent.step().await.expect_err("step timeout");
+
+        assert!(matches!(error, AgentRunError::StepTimedOut { seconds: 0 }));
+        assert!(agent.history().items.is_empty());
     }
 
     #[tokio::test]

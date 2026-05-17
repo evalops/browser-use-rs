@@ -28,8 +28,8 @@ includes:
   `extract`, `search_page`, `find_elements`, tab actions, dropdown actions,
   and `done`.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
-  max-failure handling, page-change guards, loop detection, final-result
-  helpers, and history.
+  step/LLM timeouts, max-failure handling, page-change guards, loop detection,
+  final-result helpers, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini
   GenerateContent providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
