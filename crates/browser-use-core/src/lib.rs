@@ -226,6 +226,52 @@ impl<S> BrowserActionExecutor<S> {
     }
 }
 
+impl<S> BrowserActionExecutor<S>
+where
+    S: BrowserSession + Send + Sync,
+{
+    pub async fn execute_sequence(&mut self, actions: &[BrowserAction]) -> Vec<ActionResult> {
+        let mut results = Vec::new();
+
+        for (index, action) in actions.iter().enumerate() {
+            if index > 0 && matches!(action, BrowserAction::Done(_)) {
+                break;
+            }
+
+            let before = match self.session.state(false).await {
+                Ok(state) => state,
+                Err(error) => {
+                    results.push(ActionResult::error(error.to_string()));
+                    break;
+                }
+            };
+            let result = self.execute(action).await;
+            let should_stop =
+                result.is_done || result.error.is_some() || action.terminates_sequence();
+            let page_changed = if should_stop {
+                false
+            } else {
+                match self.session.state(false).await {
+                    Ok(after) => after.url != before.url,
+                    Err(error) => {
+                        results.push(result);
+                        results.push(ActionResult::error(error.to_string()));
+                        break;
+                    }
+                }
+            };
+
+            results.push(result);
+
+            if should_stop || page_changed {
+                break;
+            }
+        }
+
+        results
+    }
+}
+
 #[async_trait]
 impl<S> ActionExecutor for BrowserActionExecutor<S>
 where
@@ -660,7 +706,7 @@ where
                 self.settings.max_actions_per_step
             ))]
         } else {
-            execute_action_sequence(&mut self.executor, &model_output.action).await
+            self.executor.execute_sequence(&model_output.action).await
         };
 
         self.history.items.push(AgentHistoryItem {
@@ -805,8 +851,9 @@ mod tests {
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
         ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
-        GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction, SearchPageAction,
-        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction, UploadFileAction,
+        GetDropdownOptionsAction, InputTextAction, NavigateAction, SaveAsPdfAction,
+        SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
+        UploadFileAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -924,12 +971,21 @@ mod tests {
 
     struct MockSession {
         events: Mutex<Vec<String>>,
+        states: Mutex<VecDeque<BrowserStateSummary>>,
     }
 
     impl MockSession {
         fn new() -> Self {
             Self {
                 events: Mutex::new(Vec::new()),
+                states: Mutex::new(VecDeque::new()),
+            }
+        }
+
+        fn with_states(states: Vec<BrowserStateSummary>) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                states: Mutex::new(VecDeque::from(states)),
             }
         }
 
@@ -944,6 +1000,9 @@ mod tests {
             &self,
             _include_screenshot: bool,
         ) -> Result<BrowserStateSummary, BrowserError> {
+            if let Some(state) = self.states.lock().expect("states lock").pop_front() {
+                return Ok(state);
+            }
             Ok(BrowserStateSummary {
                 dom_state: SerializedDomState::default(),
                 ..blank_state()
@@ -1123,6 +1182,34 @@ mod tests {
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
         );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_stops_sequence_when_url_changes() {
+        let mut first_state = blank_state();
+        first_state.url = "https://example.com/one".to_owned();
+        let mut second_state = blank_state();
+        second_state.url = "https://example.com/two".to_owned();
+        let session = MockSession::with_states(vec![first_state, second_state]);
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let results = executor
+            .execute_sequence(&[
+                BrowserAction::Click(ClickElementAction {
+                    index: Some(1),
+                    coordinate_x: None,
+                    coordinate_y: None,
+                }),
+                BrowserAction::Input(InputTextAction {
+                    index: 2,
+                    text: "should not type".to_owned(),
+                    clear: true,
+                }),
+            ])
+            .await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(executor.session().events(), vec!["click:1"]);
     }
 
     #[tokio::test]

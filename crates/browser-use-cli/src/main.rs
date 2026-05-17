@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
-use browser_use_core::{BrowserActionExecutor, execute_action_sequence};
+use browser_use_core::BrowserActionExecutor;
 use browser_use_llm::OpenAiCompatibleChatModel;
 use clap::Parser;
 use schemars::schema_for;
@@ -164,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
             let actions = std::fs::read_to_string(&actions)?;
             let actions: Vec<browser_use_tools::BrowserAction> = serde_json::from_str(&actions)?;
             let mut executor = BrowserActionExecutor::new(session);
-            let results = execute_action_sequence(&mut executor, &actions).await;
+            let results = executor.execute_sequence(&actions).await;
             let state = executor.session().state(screenshot).await?;
             println!(
                 "{}",
@@ -362,7 +362,7 @@ async fn execute_mcp_tool(
                 Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
             };
             let mut executor = BrowserActionExecutor::new(session);
-            let results = execute_action_sequence(&mut executor, &input.actions).await;
+            let results = executor.execute_sequence(&input.actions).await;
             let state = executor.session().state(input.screenshot).await?;
             let output = browser_use_mcp::ActionsToolOutput { results, state };
             Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
