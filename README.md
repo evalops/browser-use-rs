@@ -23,8 +23,9 @@ includes:
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, accessible labels, image-alt control names, selected
-  dropdown values, bounds, hidden-element filtering, and scrollable element
-  metadata, plus common ARIA widget roles and pagination affordances.
+  dropdown values, bounds, automation-friendly data/ARIA/value attributes,
+  hidden-element filtering, and scrollable element metadata, plus common ARIA
+  widget roles and pagination affordances.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file

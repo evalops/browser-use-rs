@@ -53,6 +53,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             text: Some("Ignored visual label".to_owned()),
             attributes: BTreeMap::from([
                 ("aria-labelledby".to_owned(), "submit-name".to_owned()),
+                ("data-testid".to_owned(), "submit-request".to_owned()),
                 ("id".to_owned(), "submit".to_owned()),
             ]),
             bounds: Some(ElementBounds {
@@ -75,6 +76,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             name: Some("Email address".to_owned()),
             text: Some("user@example.com".to_owned()),
             attributes: BTreeMap::from([
+                ("aria-required".to_owned(), "true".to_owned()),
                 ("id".to_owned(), "email".to_owned()),
                 ("placeholder".to_owned(), "name@example.com".to_owned()),
                 ("type".to_owned(), "email".to_owned()),

@@ -12,6 +12,7 @@
       "text": "Ignored visual label",
       "attributes": {
         "aria-labelledby": "submit-name",
+        "data-testid": "submit-request",
         "id": "submit"
       },
       "bounds": {
@@ -32,6 +33,7 @@
       "name": "Email address",
       "text": "user@example.com",
       "attributes": {
+        "aria-required": "true",
         "id": "email",
         "placeholder": "name@example.com",
         "type": "email"

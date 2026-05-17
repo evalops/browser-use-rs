@@ -153,12 +153,17 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-checked', 'aria-expanded', 'aria-pressed', 'aria-selected', 'role', 'title', 'contenteditable']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-checked', 'aria-controls', 'aria-current', 'aria-expanded', 'aria-haspopup', 'aria-invalid', 'aria-owns', 'aria-pressed', 'aria-required', 'aria-selected', 'role', 'title', 'contenteditable', 'data-testid', 'data-test', 'data-qa', 'data-value']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
     const altText = descendantAltText(el);
     const controlText = controlValueText(el);
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (controlText && type !== 'password') attrs.value = controlText;
+    if ((tag === 'input' || tag === 'option') && 'checked' in el) attrs.checked = String(el.checked);
+    if (tag === 'option' && 'selected' in el) attrs.selected = String(el.selected);
     const text = (controlText || el.innerText || altText || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
     return {
@@ -2644,6 +2649,28 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("controlValueText"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("selectedOptions"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("controlText || el.innerText"));
+    }
+
+    #[test]
+    fn interactive_snapshot_preserves_automation_attributes() {
+        for attribute in [
+            "aria-controls",
+            "aria-haspopup",
+            "aria-owns",
+            "aria-required",
+            "data-testid",
+            "data-test",
+            "data-qa",
+            "data-value",
+        ] {
+            assert!(
+                INTERACTIVE_ELEMENTS_JS.contains(attribute),
+                "missing attribute {attribute}"
+            );
+        }
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.value = controlText"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.checked = String(el.checked)"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.selected = String(el.selected)"));
     }
 
     #[test]
