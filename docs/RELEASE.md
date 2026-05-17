@@ -23,8 +23,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   steps, max failures, LLM timeout, repeated-action loop detection, previous
   result context, invalid model-output recovery, and typed
   history/final-result/success/error accessors.
-- OpenAI-compatible Chat Completions and Anthropic Messages providers with
-  structured-output requests.
+- OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini
+  GenerateContent providers with structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and
   local persistent `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including in-process
@@ -47,6 +47,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   background service that owns their lifecycle.
 - The daemon is local TCP JSON-RPC only; HTTP, auth, and production supervision
   are not implemented.
-- Provider parity beyond OpenAI-compatible Chat Completions and Anthropic
-  Messages is not implemented.
+- Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
+  and Gemini GenerateContent is not implemented.
 - Package publishing is limited to the GitHub release artifact.

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::BrowserActionExecutor;
-use browser_use_llm::{AnthropicChatModel, ChatModel, OpenAiCompatibleChatModel};
+use browser_use_llm::{AnthropicChatModel, ChatModel, GeminiChatModel, OpenAiCompatibleChatModel};
 use clap::Parser;
 use schemars::schema_for;
 use serde_json::Value;
@@ -102,6 +102,8 @@ enum LlmProvider {
     #[value(name = "openai-compatible", alias = "openai")]
     OpenAiCompatible,
     Anthropic,
+    #[value(alias = "google")]
+    Gemini,
 }
 
 impl LlmProvider {
@@ -109,6 +111,7 @@ impl LlmProvider {
         match provider.unwrap_or(browser_use_mcp::AgentProvider::OpenAiCompatible) {
             browser_use_mcp::AgentProvider::OpenAiCompatible => Self::OpenAiCompatible,
             browser_use_mcp::AgentProvider::Anthropic => Self::Anthropic,
+            browser_use_mcp::AgentProvider::Gemini => Self::Gemini,
         }
     }
 }
@@ -802,6 +805,20 @@ fn configured_chat_model(
                 llm = llm.with_max_tokens(max_tokens.parse()?);
             }
             Ok(Box::new(llm))
+        }
+        LlmProvider::Gemini => {
+            let api_key = api_key
+                .or_else(|| nonempty_env("GEMINI_API_KEY"))
+                .ok_or_else(|| anyhow::anyhow!("GEMINI_API_KEY or --api-key is required"))?;
+            let model = model
+                .or_else(|| nonempty_env("GEMINI_MODEL"))
+                .ok_or_else(|| anyhow::anyhow!("GEMINI_MODEL or --model is required"))?;
+            let base_url = base_url
+                .or_else(|| nonempty_env("GEMINI_BASE_URL"))
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_owned());
+            Ok(Box::new(
+                GeminiChatModel::new(api_key, model).with_base_url(base_url),
+            ))
         }
     }
 }

@@ -110,6 +110,97 @@ pub struct AnthropicChatModel {
     client: reqwest::Client,
 }
 
+#[derive(Clone)]
+pub struct GeminiChatModel {
+    api_key: String,
+    model: String,
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl GeminiChatModel {
+    #[must_use]
+    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.into(),
+            base_url: "https://generativelanguage.googleapis.com/v1beta".to_owned(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn from_env(model: impl Into<String>) -> Result<Self, LlmError> {
+        let api_key = std::env::var("GEMINI_API_KEY")
+            .map_err(|_| LlmError::Provider("GEMINI_API_KEY is not set".to_owned()))?;
+        Ok(Self::new(api_key, model))
+    }
+
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into().trim_end_matches('/').to_owned();
+        self
+    }
+
+    fn generate_content_url(&self) -> String {
+        if self.model.starts_with("models/") {
+            format!("{}/{}:generateContent", self.base_url, self.model)
+        } else {
+            format!("{}/models/{}:generateContent", self.base_url, self.model)
+        }
+    }
+}
+
+#[async_trait]
+impl ChatModel for GeminiChatModel {
+    fn provider(&self) -> &str {
+        "gemini"
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError> {
+        let payload = gemini_generate_content_payload(request);
+        let response = self
+            .client
+            .post(self.generate_content_url())
+            .header("x-goog-api-key", &self.api_key)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|error| LlmError::Provider(error.to_string()))?;
+        let status = response.status();
+        let raw_response = response
+            .json::<Value>()
+            .await
+            .map_err(|error| LlmError::Provider(error.to_string()))?;
+
+        if !status.is_success() {
+            let message = raw_response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map_or_else(|| raw_response.to_string(), ToOwned::to_owned);
+            return if status == StatusCode::TOO_MANY_REQUESTS {
+                Err(LlmError::RateLimited(message))
+            } else {
+                Err(LlmError::Provider(format!("HTTP {status}: {message}")))
+            };
+        }
+
+        let content = parse_gemini_generate_content(&raw_response)?;
+        Ok(ChatCompletion {
+            model: raw_response
+                .get("modelVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.model)
+                .to_owned(),
+            content,
+            raw_response: Some(raw_response),
+        })
+    }
+}
+
 impl AnthropicChatModel {
     #[must_use]
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
@@ -351,6 +442,76 @@ fn openai_content(parts: Vec<ContentPart>) -> Value {
     )
 }
 
+fn gemini_generate_content_payload(request: ChatRequest) -> Value {
+    let mut system_parts = Vec::new();
+    let mut contents = Vec::new();
+
+    for message in request.messages {
+        if message.role == MessageRole::System {
+            system_parts.extend(message.content.into_iter().filter_map(text_content_part));
+        } else {
+            contents.push(gemini_content(message));
+        }
+    }
+
+    let mut payload = json!({
+        "contents": contents,
+    });
+
+    if !system_parts.is_empty() {
+        payload["systemInstruction"] = json!({
+            "parts": [
+                {
+                    "text": system_parts.join("\n\n")
+                }
+            ]
+        });
+    }
+
+    if let Some(schema) = request.output_schema {
+        payload["generationConfig"] = json!({
+            "responseFormat": {
+                "text": {
+                    "mimeType": "application/json",
+                    "schema": schema,
+                }
+            }
+        });
+    }
+
+    payload
+}
+
+fn gemini_content(message: ChatMessage) -> Value {
+    let role = match message.role {
+        MessageRole::Assistant => "model",
+        MessageRole::User | MessageRole::Tool | MessageRole::System => "user",
+    };
+    json!({
+        "role": role,
+        "parts": message.content.into_iter().map(gemini_part).collect::<Vec<_>>(),
+    })
+}
+
+fn gemini_part(part: ContentPart) -> Value {
+    match part {
+        ContentPart::Text { text } => json!({
+            "text": text,
+        }),
+        ContentPart::ImageUrl { image_url } => match data_url_image_source(&image_url) {
+            Some((media_type, data)) => json!({
+                "inlineData": {
+                    "mimeType": media_type,
+                    "data": data,
+                }
+            }),
+            None => json!({
+                "text": format!("[image_url: {image_url}]"),
+            }),
+        },
+    }
+}
+
 fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError> {
     let message = raw_response
         .pointer("/choices/0/message")
@@ -374,6 +535,28 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
             "chat completion content was not JSON-compatible".to_owned(),
         )),
     }
+}
+
+fn parse_gemini_generate_content(raw_response: &Value) -> Result<Value, LlmError> {
+    if let Some(finish_reason) = raw_response
+        .pointer("/candidates/0/finishReason")
+        .and_then(Value::as_str)
+        .filter(|reason| matches!(*reason, "SAFETY" | "RECITATION" | "PROHIBITED_CONTENT"))
+    {
+        return Err(LlmError::Provider(format!(
+            "Gemini response stopped with {finish_reason}"
+        )));
+    }
+
+    let text = raw_response
+        .pointer("/candidates/0/content/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|part| part.get("text").and_then(Value::as_str))
+        .ok_or_else(|| LlmError::Provider("missing Gemini text content".to_owned()))?;
+
+    serde_json::from_str(text).map_err(|error| LlmError::InvalidStructuredOutput(error.to_string()))
 }
 
 fn anthropic_messages_payload(model: &str, max_tokens: u32, request: ChatRequest) -> Value {
@@ -623,6 +806,69 @@ mod tests {
     }
 
     #[test]
+    fn gemini_payload_uses_structured_outputs_format() {
+        let payload = gemini_generate_content_payload(ChatRequest {
+            messages: vec![
+                ChatMessage::text(MessageRole::System, "Return JSON only"),
+                ChatMessage::text(MessageRole::User, "Extract the result"),
+            ],
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "ok": { "type": "boolean" }
+                },
+                "required": ["ok"]
+            })),
+        });
+
+        assert_eq!(
+            payload["systemInstruction"]["parts"][0]["text"],
+            "Return JSON only"
+        );
+        assert_eq!(payload["contents"][0]["role"], "user");
+        assert_eq!(
+            payload["contents"][0]["parts"][0]["text"],
+            "Extract the result"
+        );
+        assert_eq!(
+            payload["generationConfig"]["responseFormat"]["text"]["mimeType"],
+            "application/json"
+        );
+        assert_eq!(
+            payload["generationConfig"]["responseFormat"]["text"]["schema"]["properties"]["ok"]["type"],
+            "boolean"
+        );
+    }
+
+    #[test]
+    fn gemini_payload_preserves_data_url_images() {
+        let payload = gemini_generate_content_payload(ChatRequest {
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: vec![
+                    ContentPart::Text {
+                        text: "what changed?".to_owned(),
+                    },
+                    ContentPart::ImageUrl {
+                        image_url: "data:image/png;base64,abc".to_owned(),
+                    },
+                ],
+            }],
+            output_schema: None,
+        });
+
+        assert_eq!(payload["contents"][0]["parts"][0]["text"], "what changed?");
+        assert_eq!(
+            payload["contents"][0]["parts"][1]["inlineData"]["mimeType"],
+            "image/png"
+        );
+        assert_eq!(
+            payload["contents"][0]["parts"][1]["inlineData"]["data"],
+            "abc"
+        );
+    }
+
+    #[test]
     fn parses_stringified_json_chat_completion() {
         let raw = json!({
             "model": "gpt-test",
@@ -657,6 +903,52 @@ mod tests {
         let parsed = parse_anthropic_message(&raw).expect("parse completion");
 
         assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_gemini_json_text_message() {
+        let raw = json!({
+            "modelVersion": "gemini-test",
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "{\"ok\":true}"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let parsed = parse_gemini_generate_content(&raw).expect("parse completion");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn gemini_parser_rejects_safety_stops() {
+        let raw = json!({
+            "candidates": [
+                {
+                    "finishReason": "SAFETY",
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "{\"ok\":true}"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        assert!(matches!(
+            parse_gemini_generate_content(&raw),
+            Err(LlmError::Provider(message)) if message.contains("SAFETY")
+        ));
     }
 
     #[test]

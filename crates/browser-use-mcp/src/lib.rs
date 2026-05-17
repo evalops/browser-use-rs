@@ -86,6 +86,8 @@ pub enum AgentProvider {
     OpenAiCompatible,
     #[serde(rename = "anthropic")]
     Anthropic,
+    #[serde(rename = "gemini", alias = "google")]
+    Gemini,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -304,6 +306,7 @@ mod tests {
         assert!(schema_text.contains("provider"));
         assert!(schema_text.contains("openai-compatible"));
         assert!(schema_text.contains("anthropic"));
+        assert!(schema_text.contains("gemini"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
     }
