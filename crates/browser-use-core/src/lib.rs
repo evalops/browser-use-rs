@@ -262,19 +262,24 @@ where
                 break;
             }
 
-            let before = match self.session.state(false).await {
-                Ok(state) => state,
-                Err(error) => {
-                    results.push(ActionResult::error(error.to_string()));
-                    break;
+            let needs_page_change_guard = !action.terminates_sequence();
+            let before = if needs_page_change_guard {
+                match self.session.state(false).await {
+                    Ok(state) => Some(state),
+                    Err(error) => {
+                        results.push(ActionResult::error(error.to_string()));
+                        break;
+                    }
                 }
+            } else {
+                None
             };
             let result = self.execute(action).await;
             let should_stop =
                 result.is_done || result.error.is_some() || action.terminates_sequence();
             let page_changed = if should_stop {
                 false
-            } else {
+            } else if let Some(before) = before {
                 match self.session.state(false).await {
                     Ok(after) => after.url != before.url,
                     Err(error) => {
@@ -283,6 +288,8 @@ where
                         break;
                     }
                 }
+            } else {
+                false
             };
 
             results.push(result);
@@ -1247,6 +1254,7 @@ mod tests {
         events: Mutex<Vec<String>>,
         states: Mutex<VecDeque<BrowserStateSummary>>,
         state_screenshot_requests: Mutex<Vec<bool>>,
+        state_error: Mutex<Option<String>>,
     }
 
     impl MockSession {
@@ -1255,6 +1263,7 @@ mod tests {
                 events: Mutex::new(Vec::new()),
                 states: Mutex::new(VecDeque::new()),
                 state_screenshot_requests: Mutex::new(Vec::new()),
+                state_error: Mutex::new(None),
             }
         }
 
@@ -1263,6 +1272,16 @@ mod tests {
                 events: Mutex::new(Vec::new()),
                 states: Mutex::new(VecDeque::from(states)),
                 state_screenshot_requests: Mutex::new(Vec::new()),
+                state_error: Mutex::new(None),
+            }
+        }
+
+        fn with_state_error(error: impl Into<String>) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                states: Mutex::new(VecDeque::new()),
+                state_screenshot_requests: Mutex::new(Vec::new()),
+                state_error: Mutex::new(Some(error.into())),
             }
         }
 
@@ -1288,6 +1307,9 @@ mod tests {
                 .lock()
                 .expect("state requests lock")
                 .push(include_screenshot);
+            if let Some(error) = self.state_error.lock().expect("state error lock").clone() {
+                return Err(BrowserError::StateUnavailable(error));
+            }
             if let Some(state) = self.states.lock().expect("states lock").pop_front() {
                 return Ok(state);
             }
@@ -1494,6 +1516,27 @@ mod tests {
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
         );
+    }
+
+    #[tokio::test]
+    async fn terminating_sequence_action_does_not_need_pre_state() {
+        let session = MockSession::with_state_error("state unavailable");
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let results = executor
+            .execute_sequence(&[BrowserAction::Navigate(NavigateAction {
+                url: "https://example.com".to_owned(),
+                new_tab: false,
+            })])
+            .await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].error, None);
+        assert_eq!(
+            executor.session().events(),
+            vec!["navigate:https://example.com:false"]
+        );
+        assert!(executor.session().state_screenshot_requests().is_empty());
     }
 
     #[tokio::test]
