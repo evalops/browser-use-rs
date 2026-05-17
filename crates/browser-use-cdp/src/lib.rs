@@ -82,6 +82,10 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const isInteractive = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'html' || tag === 'body') return false;
+    if (tag === 'iframe' || tag === 'frame') {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 100 && rect.height > 100;
+    }
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
     return el.matches(selector);
@@ -253,6 +257,10 @@ fn element_eval_js(index: u32, body: &str) -> String {
   const isInteractive = (el) => {{
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'html' || tag === 'body') return false;
+    if (tag === 'iframe' || tag === 'frame') {{
+      const rect = el.getBoundingClientRect();
+      return rect.width > 100 && rect.height > 100;
+    }}
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
     return el.matches(selector);
@@ -1909,17 +1917,41 @@ mod tests {
         sleep(Duration::from_millis(200)).await;
 
         let initial_state = session.state(false).await.expect("initial state");
-        assert_eq!(initial_state.dom_state.element_count(), 2);
+        assert_eq!(initial_state.dom_state.element_count(), 3);
         assert!(
             initial_state
                 .dom_state
                 .llm_representation()
                 .contains("Frame click")
         );
+        let iframe = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.tag_name == "iframe")
+            .expect("iframe element");
+        assert_eq!(iframe.index, 1);
+        let frame_button_index = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.name.as_deref() == Some("Frame click"))
+            .expect("iframe button")
+            .index;
+        let frame_input_index = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.name.as_deref() == Some("Frame name"))
+            .expect("iframe input")
+            .index;
 
-        session.click(1).await.expect("iframe click");
         session
-            .input_text(2, "EvalOps", true)
+            .click(frame_button_index)
+            .await
+            .expect("iframe click");
+        session
+            .input_text(frame_input_index, "EvalOps", true)
             .await
             .expect("iframe input");
         sleep(Duration::from_millis(100)).await;

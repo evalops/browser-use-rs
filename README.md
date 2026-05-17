@@ -20,9 +20,9 @@ includes:
 - CDP-backed Chrome/Chromium launch/connect, tabs, navigation, screenshots,
   PDF capture, uploads, indexed actions, and page state.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
-  numbered element/action model, including open shadow DOM, same-origin
-  iframes, accessible labels, bounds, hidden-element filtering, and scrollable
-  element metadata, plus common ARIA widget roles.
+  numbered element/action model, including open shadow DOM, same-origin iframe
+  tags and contents, accessible labels, bounds, hidden-element filtering, and
+  scrollable element metadata, plus common ARIA widget roles.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`,
   `extract`, `search_page`, `find_elements`, tab actions, dropdown actions,

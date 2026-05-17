@@ -45,9 +45,9 @@ Implemented:
 - Conformance fixtures cover a scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`, and
   serialized history.
-- DOM serializer marks scrollable indexed elements, indexes common ARIA widget
-  roles and disclosure elements, and excludes hidden or disabled interactive
-  elements from the selector map.
+- DOM serializer marks scrollable indexed elements, indexes same-origin iframe
+  tags and contents, indexes common ARIA widget roles and disclosure elements,
+  and excludes hidden or disabled interactive elements from the selector map.
 
 Next:
 
