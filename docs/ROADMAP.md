@@ -26,7 +26,8 @@ Implemented:
 - CDP WebSocket session for navigation, tab switching/closing, URL/title state,
   screenshots, PDF capture, file uploads, coordinate clicks, scroll, and compact
   DOM-indexed browser actions.
-- One-shot CLI commands and a stdio MCP server backed by the CDP session.
+- One-shot CLI commands and a stdio MCP server backed by the CDP session,
+  including in-process MCP session reuse by `session_id`.
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, and max-failure handling.
 - OpenAI-compatible Chat Completions provider with structured-output request
@@ -38,5 +39,5 @@ Implemented:
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Add persistent CLI/MCP sessions.
+2. Add durable CLI daemon sessions and MCP session persistence across restarts.
 3. Expand agent planning, loop detection, and provider parity.

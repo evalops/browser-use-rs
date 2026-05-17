@@ -54,7 +54,9 @@ They print the typed `AgentHistory` JSON after the bounded run completes.
 
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
-`browser_use_state`, `browser_use_actions`, and `browser_use_agent`.
+`browser_use_state`, `browser_use_actions`, and `browser_use_agent`. MCP tool
+inputs accept an optional `session_id`; calls with the same `session_id` reuse
+the same in-process Chrome session.
 
 ## Current Limits
 
@@ -63,5 +65,5 @@ supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 - Indexed actions currently target same-document interactive elements; iframe
   and shadow-root support belong to the DOM parity track.
 - Agent runs currently use the OpenAI-compatible Chat Completions adapter.
-- MCP tools are real over stdio, but each call still launches a fresh browser
-  session.
+- MCP tools are real over stdio and can reuse in-process sessions by
+  `session_id`; they do not yet persist sessions across server restarts.

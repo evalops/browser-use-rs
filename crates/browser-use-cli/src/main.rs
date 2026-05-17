@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
@@ -212,12 +214,13 @@ async fn run_mcp_stdio() -> anyhow::Result<()> {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     let mut stdout = io::stdout();
+    let mut runtime = McpRuntime::default();
 
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(response) = handle_mcp_message(&line).await {
+        if let Some(response) = handle_mcp_message(&line, &mut runtime).await {
             let mut encoded = serde_json::to_vec(&response)?;
             encoded.push(b'\n');
             stdout.write_all(&encoded).await?;
@@ -228,7 +231,35 @@ async fn run_mcp_stdio() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_mcp_message(raw: &str) -> Option<Value> {
+#[derive(Default)]
+struct McpRuntime {
+    sessions: HashMap<String, Arc<CdpBrowserSession>>,
+}
+
+impl McpRuntime {
+    async fn session(
+        &mut self,
+        session_id: &str,
+        url: Option<String>,
+    ) -> anyhow::Result<Arc<CdpBrowserSession>> {
+        if let Some(session) = self.sessions.get(session_id).cloned() {
+            if let Some(url) = url {
+                session.navigate(&url, false).await?;
+                sleep(Duration::from_millis(150)).await;
+            }
+            return Ok(session);
+        }
+
+        let url = url
+            .ok_or_else(|| anyhow::anyhow!("url is required to create MCP session {session_id}"))?;
+        let session = Arc::new(launch_and_navigate(&url).await?);
+        self.sessions
+            .insert(session_id.to_owned(), Arc::clone(&session));
+        Ok(session)
+    }
+}
+
+async fn handle_mcp_message(raw: &str, runtime: &mut McpRuntime) -> Option<Value> {
     let request = match serde_json::from_str::<browser_use_mcp::JsonRpcRequest>(raw) {
         Ok(request) => request,
         Err(error) => {
@@ -260,7 +291,7 @@ async fn handle_mcp_message(raw: &str) -> Option<Value> {
             id,
             browser_use_mcp::tools_list_result(),
         )),
-        "tools/call" => Some(handle_mcp_tool_call(id, request.params).await),
+        "tools/call" => Some(handle_mcp_tool_call(id, request.params, runtime).await),
         method => Some(browser_use_mcp::json_rpc_error(
             Some(id),
             -32601,
@@ -269,7 +300,7 @@ async fn handle_mcp_message(raw: &str) -> Option<Value> {
     }
 }
 
-async fn handle_mcp_tool_call(id: Value, params: Option<Value>) -> Value {
+async fn handle_mcp_tool_call(id: Value, params: Option<Value>, runtime: &mut McpRuntime) -> Value {
     let params = match serde_json::from_value::<browser_use_mcp::CallToolParams>(
         params.unwrap_or(Value::Null),
     ) {
@@ -296,18 +327,28 @@ async fn handle_mcp_tool_call(id: Value, params: Option<Value>) -> Value {
         );
     }
 
-    let result = execute_mcp_tool(&params.name, params.arguments)
+    let result = execute_mcp_tool(&params.name, params.arguments, runtime)
         .await
         .unwrap_or_else(|error| browser_use_mcp::tool_error_result(error.to_string()));
     browser_use_mcp::json_rpc_success(id, result)
 }
 
-async fn execute_mcp_tool(name: &str, arguments: Value) -> anyhow::Result<Value> {
+async fn execute_mcp_tool(
+    name: &str,
+    arguments: Value,
+    runtime: &mut McpRuntime,
+) -> anyhow::Result<Value> {
     match name {
         browser_use_mcp::STATE_TOOL_NAME => {
             let input: browser_use_mcp::StateToolInput = serde_json::from_value(arguments)?;
-            let session = launch_and_navigate(&input.url).await?;
-            let state = session.state(input.screenshot).await?;
+            let state = if let Some(session_id) = input.session_id {
+                let session = runtime.session(&session_id, input.url).await?;
+                session.state(input.screenshot).await?
+            } else {
+                let url = require_mcp_url(input.url)?;
+                let session = launch_and_navigate(&url).await?;
+                session.state(input.screenshot).await?
+            };
             let output = browser_use_mcp::StateToolOutput { state };
             Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
                 output,
@@ -315,7 +356,11 @@ async fn execute_mcp_tool(name: &str, arguments: Value) -> anyhow::Result<Value>
         }
         browser_use_mcp::ACTIONS_TOOL_NAME => {
             let input: browser_use_mcp::ActionsToolInput = serde_json::from_value(arguments)?;
-            let session = launch_and_navigate(&input.url).await?;
+            let session = if let Some(session_id) = input.session_id {
+                runtime.session(&session_id, input.url).await?
+            } else {
+                Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
+            };
             let mut executor = BrowserActionExecutor::new(session);
             let results = execute_action_sequence(&mut executor, &input.actions).await;
             let state = executor.session().state(input.screenshot).await?;
@@ -335,7 +380,11 @@ async fn execute_mcp_tool(name: &str, arguments: Value) -> anyhow::Result<Value>
                 .base_url
                 .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
-            let session = launch_and_navigate(&input.url).await?;
+            let session = if let Some(session_id) = input.session_id {
+                runtime.session(&session_id, input.url).await?
+            } else {
+                Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
+            };
             let llm = OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url);
             let mut agent = browser_use_core::Agent::new(input.task, llm, session);
             let history = agent.run(input.max_steps).await?;
@@ -348,4 +397,8 @@ async fn execute_mcp_tool(name: &str, arguments: Value) -> anyhow::Result<Value>
         }
         _ => unreachable!("tool name was validated before execution"),
     }
+}
+
+fn require_mcp_url(url: Option<String>) -> anyhow::Result<String> {
+    url.ok_or_else(|| anyhow::anyhow!("url is required when session_id is not provided"))
 }

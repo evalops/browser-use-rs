@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -1481,6 +1482,92 @@ pub trait BrowserSession: Send + Sync {
         scale: f64,
         paper_format: &str,
     ) -> Result<Pdf, BrowserError>;
+}
+
+#[async_trait]
+impl<T> BrowserSession for Arc<T>
+where
+    T: BrowserSession + ?Sized,
+{
+    async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
+        self.as_ref().state(include_screenshot).await
+    }
+
+    async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
+        self.as_ref().navigate(url, new_tab).await
+    }
+
+    async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+        self.as_ref().switch_tab(target_id).await
+    }
+
+    async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+        self.as_ref().close_tab(target_id).await
+    }
+
+    async fn click(&self, index: u32) -> Result<(), BrowserError> {
+        self.as_ref().click(index).await
+    }
+
+    async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
+        self.as_ref().click_coordinates(x, y).await
+    }
+
+    async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError> {
+        self.as_ref().input_text(index, text, clear).await
+    }
+
+    async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError> {
+        self.as_ref().scroll(index, down, pages).await
+    }
+
+    async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
+        self.as_ref().dropdown_options(index).await
+    }
+
+    async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
+        self.as_ref().select_dropdown_option(index, text).await
+    }
+
+    async fn page_text(&self) -> Result<String, BrowserError> {
+        self.as_ref().page_text().await
+    }
+
+    async fn find_elements(
+        &self,
+        selector: &str,
+        attributes: &[String],
+        max_results: usize,
+        include_text: bool,
+    ) -> Result<Vec<FoundElement>, BrowserError> {
+        self.as_ref()
+            .find_elements(selector, attributes, max_results, include_text)
+            .await
+    }
+
+    async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
+        self.as_ref().send_keys(keys).await
+    }
+
+    async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError> {
+        self.as_ref().upload_file(index, path).await
+    }
+
+    async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+        self.as_ref().screenshot().await
+    }
+
+    async fn save_pdf(
+        &self,
+        print_background: bool,
+        landscape: bool,
+        scale: f64,
+        paper_format: &str,
+    ) -> Result<Pdf, BrowserError> {
+        self.as_ref()
+            .save_pdf(print_background, landscape, scale, paper_format)
+            .await
+    }
 }
 
 #[cfg(test)]

@@ -24,6 +24,12 @@ implementation reads provider credentials from its process environment or host
 configuration. `browser_use_agent` requires `OPENAI_API_KEY` plus either a tool
 `model` argument or `OPENAI_MODEL`; `OPENAI_BASE_URL` is optional.
 
+All tools support an optional `session_id` argument. When omitted, the tool call
+uses a fresh one-shot browser. When present, the stdio server reuses an
+in-process Chrome session for subsequent calls with the same `session_id`.
+Provide `url` on the first call for a session, and omit it later to inspect or
+act on the current page without reloading.
+
 To inspect the manifest from the CLI:
 
 ```sh
