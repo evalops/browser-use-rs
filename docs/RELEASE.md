@@ -21,7 +21,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, max actions per step, max
   steps, max failures, LLM timeout, repeated-action loop detection, previous
-  result context, and typed history/final result.
+  result context, and typed history/final-result/success/error accessors.
 - OpenAI-compatible Chat Completions and Anthropic Messages providers with
   structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and

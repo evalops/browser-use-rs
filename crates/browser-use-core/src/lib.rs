@@ -197,12 +197,35 @@ pub struct AgentHistory {
 impl AgentHistory {
     #[must_use]
     pub fn final_result(&self) -> Option<&str> {
+        self.final_done_result()
+            .and_then(|result| result.extracted_content.as_deref())
+    }
+
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.final_done_result().is_some()
+    }
+
+    #[must_use]
+    pub fn is_successful(&self) -> Option<bool> {
+        self.final_done_result().and_then(|result| result.success)
+    }
+
+    #[must_use]
+    pub fn errors(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .flat_map(|item| item.result.iter())
+            .filter_map(|result| result.error.as_deref())
+            .collect()
+    }
+
+    fn final_done_result(&self) -> Option<&ActionResult> {
         self.items
             .iter()
             .rev()
             .flat_map(|item| item.result.iter().rev())
             .find(|result| result.is_done)
-            .and_then(|result| result.extracted_content.as_deref())
     }
 }
 
@@ -886,6 +909,32 @@ mod tests {
         };
 
         assert_eq!(history.final_result(), Some("finished"));
+        assert!(history.is_done());
+        assert_eq!(history.is_successful(), Some(true));
+        assert!(history.errors().is_empty());
+    }
+
+    #[test]
+    fn history_collects_errors_and_failed_done_status() {
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::error("first failure")],
+                    state: blank_state(),
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::done("could not finish", false)],
+                    state: blank_state(),
+                },
+            ],
+        };
+
+        assert_eq!(history.final_result(), Some("could not finish"));
+        assert!(history.is_done());
+        assert_eq!(history.is_successful(), Some(false));
+        assert_eq!(history.errors(), vec!["first failure"]);
     }
 
     fn blank_state() -> BrowserStateSummary {

@@ -34,7 +34,7 @@ Implemented:
 - MCP stdio reconnection to persistent CLI session records by `session_id`.
 - MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
-  max-step, and max-failure handling.
+  max-step, max-failure handling, final-result, success, and error helpers.
 - OpenAI-compatible Chat Completions and Anthropic Messages providers with
   structured-output request payloads.
 - One-shot CLI agent command backed by explicit provider selection.
