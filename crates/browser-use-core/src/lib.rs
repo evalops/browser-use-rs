@@ -676,7 +676,7 @@ where
 
         for _ in 0..max_steps {
             let (is_done, has_error) = {
-                let item = self.step().await?;
+                let item = self.step_recovering_model_errors().await?;
                 (
                     item.result.iter().any(|result| result.is_done),
                     item.result.iter().any(|result| result.error.is_some()),
@@ -723,6 +723,46 @@ where
         })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+        self.record_model_output(state, model_output).await
+    }
+
+    async fn step_recovering_model_errors(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        let state = self.executor.session().state(true).await?;
+        let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
+        let completion = match timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        {
+            Ok(Ok(completion)) => completion,
+            Ok(Err(error)) => {
+                return self.record_model_error(state, format!("LLM provider error: {error}"));
+            }
+            Err(_) => {
+                return self.record_model_error(
+                    state,
+                    format!(
+                        "LLM call timed out after {} seconds",
+                        self.settings.llm_timeout_seconds
+                    ),
+                );
+            }
+        };
+        let model_output: AgentOutput = match serde_json::from_value(completion.content) {
+            Ok(model_output) => model_output,
+            Err(error) => {
+                return self.record_model_error(state, format!("invalid agent output: {error}"));
+            }
+        };
+        self.record_model_output(state, model_output).await
+    }
+
+    async fn record_model_output(
+        &mut self,
+        state: BrowserStateSummary,
+        model_output: AgentOutput,
+    ) -> Result<&AgentHistoryItem, AgentRunError> {
         let result = if model_output.action.len() > self.settings.max_actions_per_step {
             vec![ActionResult::error(format!(
                 "model returned {} actions, exceeding max_actions_per_step {}",
@@ -736,6 +776,23 @@ where
         self.history.items.push(AgentHistoryItem {
             model_output: Some(model_output),
             result,
+            state,
+        });
+
+        self.history
+            .items
+            .last()
+            .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
+    }
+
+    fn record_model_error(
+        &mut self,
+        state: BrowserStateSummary,
+        error: String,
+    ) -> Result<&AgentHistoryItem, AgentRunError> {
+        self.history.items.push(AgentHistoryItem {
+            model_output: None,
+            result: vec![ActionResult::error(error)],
             state,
         });
 
@@ -1633,6 +1690,47 @@ mod tests {
 
         assert_eq!(history.items.len(), 1);
         assert_eq!(history.final_result(), Some("complete"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_recovers_from_invalid_model_output() {
+        let invalid_output = serde_json::json!({
+            "not_agent_output": true
+        });
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "recovered",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_failures: 2,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "recover",
+            settings,
+            QueueModel::new(vec![invalid_output, done_output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(3).await.expect("agent run");
+
+        assert_eq!(history.items.len(), 2);
+        assert_eq!(history.final_result(), Some("recovered"));
+        assert_eq!(history.is_successful(), Some(true));
+        assert_eq!(history.errors().len(), 1);
+        assert!(
+            history.errors()[0].contains("invalid agent output"),
+            "unexpected error: {}",
+            history.errors()[0]
+        );
     }
 
     #[tokio::test]
