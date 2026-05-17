@@ -119,6 +119,26 @@ pub struct SerializedDomState {
 
 impl SerializedDomState {
     #[must_use]
+    pub fn from_elements(elements: Vec<DomElementRef>) -> Self {
+        let mut selector_map = BTreeMap::new();
+        let mut lines = Vec::new();
+
+        for element in elements {
+            let text = render_element_text(&element);
+            lines.push(format!(
+                "[{}] <{}> {}",
+                element.index, element.tag_name, text
+            ));
+            selector_map.insert(element.index, element);
+        }
+
+        Self {
+            text: lines.join("\n"),
+            selector_map,
+        }
+    }
+
+    #[must_use]
     pub fn element_count(&self) -> usize {
         self.selector_map.len()
     }
@@ -126,6 +146,18 @@ impl SerializedDomState {
     #[must_use]
     pub fn llm_representation(&self) -> &str {
         self.text.as_str()
+    }
+}
+
+#[must_use]
+pub fn render_element_text(element: &DomElementRef) -> String {
+    match (element.name.as_deref(), element.text.as_deref()) {
+        (Some(name), Some(value)) if !value.is_empty() && name != value => {
+            format!("{name} {value}")
+        }
+        (Some(name), _) => name.to_owned(),
+        (_, Some(value)) => value.to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -188,5 +220,27 @@ mod tests {
         let dom = SerializedDomState::default();
         assert_eq!(dom.element_count(), 0);
         assert_eq!(dom.llm_representation(), "");
+    }
+
+    #[test]
+    fn serialized_state_renders_label_and_current_value() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Name".to_owned()),
+            text: Some("EvalOps".to_owned()),
+            attributes: BTreeMap::new(),
+            is_visible: true,
+            is_interactive: true,
+        };
+
+        let state = SerializedDomState::from_elements(vec![element]);
+
+        assert_eq!(state.llm_representation(), "[1] <input> Name EvalOps");
+        assert_eq!(state.element_count(), 1);
     }
 }

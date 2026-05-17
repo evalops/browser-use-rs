@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use std::collections::BTreeMap;
-
 use browser_use_dom::{BrowserStateSummary, DomElementRef, SerializedDomState, TabInfo};
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
@@ -650,29 +648,7 @@ impl CdpBrowserSession {
             .map(|element| self.dom_element_from_value(element))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut selector_map = BTreeMap::new();
-        let mut lines = Vec::new();
-
-        for element in elements {
-            let text = match (element.name.as_deref(), element.text.as_deref()) {
-                (Some(name), Some(value)) if !value.is_empty() && name != value => {
-                    format!("{name} {value}")
-                }
-                (Some(name), _) => name.to_owned(),
-                (_, Some(value)) => value.to_owned(),
-                _ => String::new(),
-            };
-            lines.push(format!(
-                "[{}] <{}> {}",
-                element.index, element.tag_name, text
-            ));
-            selector_map.insert(element.index, element);
-        }
-
-        Ok(SerializedDomState {
-            text: lines.join("\n"),
-            selector_map,
-        })
+        Ok(SerializedDomState::from_elements(elements))
     }
 
     fn dom_element_from_value(&self, value: &Value) -> Result<DomElementRef, BrowserError> {
