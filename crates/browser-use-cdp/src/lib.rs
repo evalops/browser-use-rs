@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use browser_use_dom::{BrowserStateSummary, SerializedDomState, TabInfo};
+use std::collections::BTreeMap;
+
+use browser_use_dom::{BrowserStateSummary, DomElementRef, SerializedDomState, TabInfo};
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,6 +21,80 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+
+const INTERACTIVE_ELEMENTS_JS: &str = r#"
+(() => {
+  const selector = [
+    'a[href]',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    '[role="button"]',
+    '[role="link"]',
+    '[onclick]',
+    '[tabindex]:not([tabindex="-1"])'
+  ].join(',');
+  const all = Array.from(document.querySelectorAll(selector));
+  const visible = all.filter((el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  });
+  return visible.slice(0, 400).map((el, offset) => {
+    const attrs = {};
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'role', 'title']) {
+      const value = el.getAttribute(name);
+      if (value) attrs[name] = value;
+    }
+    const text = (el.innerText || el.value || '').trim().slice(0, 200);
+    const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || text || '').trim();
+    return {
+      index: offset + 1,
+      tag_name: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      name,
+      text,
+      attributes: attrs,
+      is_visible: true,
+      is_interactive: true
+    };
+  });
+})()
+"#;
+
+fn element_action_js(index: u32, action: &str) -> String {
+    format!(
+        r#"
+(() => {{
+  const selector = [
+    'a[href]',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    '[role="button"]',
+    '[role="link"]',
+    '[onclick]',
+    '[tabindex]:not([tabindex="-1"])'
+  ].join(',');
+  const elements = Array.from(document.querySelectorAll(selector)).filter((el) => {{
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }});
+  const el = elements[{zero_based}];
+  if (!el) throw new Error('No interactive element found for index {index}');
+  el.scrollIntoView({{ block: 'center', inline: 'center' }});
+  {action}
+  return true;
+}})()
+"#,
+        zero_based = index.saturating_sub(1),
+        index = index,
+        action = action
+    )
+}
 
 #[derive(Debug, Error)]
 pub enum BrowserError {
@@ -372,7 +448,16 @@ pub async fn wait_for_devtools_endpoint(
 
     loop {
         match tokio::fs::read_to_string(&active_port_path).await {
-            Ok(contents) => return DevToolsEndpoint::from_active_port_file("127.0.0.1", &contents),
+            Ok(contents) => match DevToolsEndpoint::from_active_port_file("127.0.0.1", &contents) {
+                Ok(endpoint) => return Ok(endpoint),
+                Err(error @ BrowserError::StateUnavailable(_)) => {
+                    if Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    sleep(Duration::from_millis(50)).await;
+                }
+                Err(error) => return Err(error),
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if Instant::now() >= deadline {
                     return Err(BrowserError::DevToolsEndpointTimedOut(active_port_path));
@@ -512,11 +597,24 @@ impl CdpBrowserSession {
             )
             .await?;
 
-        result
-            .get("result")
-            .and_then(|result| result.get("value"))
-            .cloned()
-            .ok_or_else(|| BrowserError::MissingResponseData("Runtime.evaluate value".to_owned()))
+        runtime_evaluate_value(result)
+    }
+
+    async fn evaluate_effect(&self, expression: String) -> Result<(), BrowserError> {
+        let result = self
+            .connection
+            .command(
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "awaitPromise": true,
+                    "returnByValue": true,
+                }),
+                Some(&self.page.session_id),
+            )
+            .await?;
+        let _ = runtime_evaluate_value(result)?;
+        Ok(())
     }
 
     async fn page_location(&self) -> Result<(String, String), BrowserError> {
@@ -540,6 +638,106 @@ impl CdpBrowserSession {
                 .to_owned(),
         ))
     }
+
+    async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
+        let value = self.evaluate_json(INTERACTIVE_ELEMENTS_JS).await?;
+        let elements = value
+            .as_array()
+            .ok_or_else(|| {
+                BrowserError::MissingResponseData("interactive element array".to_owned())
+            })?
+            .iter()
+            .map(|element| self.dom_element_from_value(element))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut selector_map = BTreeMap::new();
+        let mut lines = Vec::new();
+
+        for element in elements {
+            let text = match (element.name.as_deref(), element.text.as_deref()) {
+                (Some(name), Some(value)) if !value.is_empty() && name != value => {
+                    format!("{name} {value}")
+                }
+                (Some(name), _) => name.to_owned(),
+                (_, Some(value)) => value.to_owned(),
+                _ => String::new(),
+            };
+            lines.push(format!(
+                "[{}] <{}> {}",
+                element.index, element.tag_name, text
+            ));
+            selector_map.insert(element.index, element);
+        }
+
+        Ok(SerializedDomState {
+            text: lines.join("\n"),
+            selector_map,
+        })
+    }
+
+    fn dom_element_from_value(&self, value: &Value) -> Result<DomElementRef, BrowserError> {
+        let index = value
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or_else(|| BrowserError::MissingResponseData("element index".to_owned()))?;
+        let attributes = value
+            .get("attributes")
+            .and_then(Value::as_object)
+            .map(|attrs| {
+                attrs
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(DomElementRef {
+            index,
+            target_id: self.page.target_id.clone(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: value
+                .get("tag_name")
+                .and_then(Value::as_str)
+                .unwrap_or("element")
+                .to_owned(),
+            role: value.get("role").and_then(Value::as_str).map(str::to_owned),
+            name: value.get("name").and_then(Value::as_str).map(str::to_owned),
+            text: value.get("text").and_then(Value::as_str).map(str::to_owned),
+            attributes,
+            is_visible: value
+                .get("is_visible")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            is_interactive: value
+                .get("is_interactive")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        })
+    }
+}
+
+fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
+    if let Some(exception) = result.get("exceptionDetails") {
+        let message = exception
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("Runtime.evaluate exception")
+            .to_owned();
+        return Err(BrowserError::CommandFailed {
+            method: "Runtime.evaluate".to_owned(),
+            message,
+        });
+    }
+
+    result
+        .get("result")
+        .and_then(|result| result.get("value"))
+        .cloned()
+        .ok_or_else(|| BrowserError::MissingResponseData("Runtime.evaluate value".to_owned()))
 }
 
 async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPage, BrowserError> {
@@ -609,6 +807,7 @@ async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPag
 impl BrowserSession for CdpBrowserSession {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         let (url, title) = self.page_location().await?;
+        let dom_state = self.dom_state().await?;
         let screenshot = if include_screenshot {
             Some(self.screenshot().await?.base64_png)
         } else {
@@ -616,7 +815,7 @@ impl BrowserSession for CdpBrowserSession {
         };
 
         Ok(BrowserStateSummary {
-            dom_state: SerializedDomState::default(),
+            dom_state,
             url: url.clone(),
             title: title.clone(),
             tabs: vec![TabInfo {
@@ -651,10 +850,9 @@ impl BrowserSession for CdpBrowserSession {
         Ok(())
     }
 
-    async fn click(&self, _index: u32) -> Result<(), BrowserError> {
-        Err(BrowserError::ActionFailed(
-            "click by index requires DOM selector-map support".to_owned(),
-        ))
+    async fn click(&self, index: u32) -> Result<(), BrowserError> {
+        self.evaluate_effect(element_action_js(index, "el.click();"))
+            .await
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
@@ -676,10 +874,20 @@ impl BrowserSession for CdpBrowserSession {
         Ok(())
     }
 
-    async fn input_text(&self, _index: u32, _text: &str, _clear: bool) -> Result<(), BrowserError> {
-        Err(BrowserError::ActionFailed(
-            "text input by index requires DOM selector-map support".to_owned(),
-        ))
+    async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError> {
+        let text_json = serde_json::to_string(text)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let action = if clear {
+            format!(
+                "el.focus(); el.value = {text_json}; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }}));"
+            )
+        } else {
+            format!(
+                "el.focus(); el.value = (el.value || '') + {text_json}; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }}));"
+            )
+        };
+        self.evaluate_effect(element_action_js(index, &action))
+            .await
     }
 
     async fn scroll(
@@ -689,17 +897,11 @@ impl BrowserSession for CdpBrowserSession {
         pages: f64,
     ) -> Result<(), BrowserError> {
         let direction = if down { 1.0 } else { -1.0 };
-        self.connection
-            .command(
-                "Runtime.evaluate",
-                json!({
-                    "expression": format!("window.scrollBy(0, window.innerHeight * {});", pages * direction),
-                    "awaitPromise": true,
-                }),
-                Some(&self.page.session_id),
-            )
-            .await?;
-        Ok(())
+        self.evaluate_effect(format!(
+            "window.scrollBy(0, window.innerHeight * {}); true;",
+            pages * direction
+        ))
+        .await
     }
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
@@ -884,13 +1086,28 @@ mod tests {
 
         session
             .navigate(
-                "data:text/html,<html><head><title>browser-use-rs smoke</title></head><body><button>Click me</button><div style='height:2000px'>Scroll target</div></body></html>",
+                "data:text/html,<html><head><title>browser-use-rs smoke</title></head><body><button onclick=\"document.title='clicked'\">Click me</button><input placeholder='Name'><div style='height:2000px'>Scroll target</div></body></html>",
                 false,
             )
             .await
             .expect("navigate");
         sleep(Duration::from_millis(100)).await;
 
+        let initial_state = session.state(false).await.expect("initial state");
+        assert_eq!(initial_state.dom_state.element_count(), 2);
+        assert!(
+            initial_state
+                .dom_state
+                .llm_representation()
+                .contains("Click me")
+        );
+
+        session.click(1).await.expect("click by index");
+        sleep(Duration::from_millis(100)).await;
+        session
+            .input_text(2, "EvalOps", true)
+            .await
+            .expect("input text");
         session
             .click_coordinates(20, 20)
             .await
@@ -900,7 +1117,12 @@ mod tests {
         let state = session.state(true).await.expect("state");
 
         assert!(state.url.starts_with("data:text/html"));
-        assert_eq!(state.title, "browser-use-rs smoke");
+        assert_eq!(state.title, "clicked");
+        assert!(
+            state.dom_state.llm_representation().contains("EvalOps"),
+            "DOM state did not include typed input value: {}",
+            state.dom_state.llm_representation()
+        );
         assert!(state.screenshot.expect("screenshot").len() > 100);
     }
 }
