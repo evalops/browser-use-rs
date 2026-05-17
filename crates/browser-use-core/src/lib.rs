@@ -341,10 +341,15 @@ pub enum AgentRunError {
     Llm(#[from] LlmError),
     #[error("invalid agent output: {0}")]
     InvalidOutput(String),
+    #[error("agent reached max steps ({max_steps}) without completing")]
+    StepLimitReached { max_steps: usize },
+    #[error("agent stopped after {failures} consecutive failures")]
+    MaxFailuresExceeded { failures: u32 },
 }
 
 pub struct Agent<M, S> {
     task: String,
+    settings: AgentSettings,
     llm: M,
     executor: BrowserActionExecutor<S>,
     history: AgentHistory,
@@ -357,8 +362,19 @@ where
 {
     #[must_use]
     pub fn new(task: impl Into<String>, llm: M, session: S) -> Self {
+        Self::with_settings(task, AgentSettings::default(), llm, session)
+    }
+
+    #[must_use]
+    pub fn with_settings(
+        task: impl Into<String>,
+        settings: AgentSettings,
+        llm: M,
+        session: S,
+    ) -> Self {
         Self {
             task: task.into(),
+            settings,
             llm,
             executor: BrowserActionExecutor::new(session),
             history: AgentHistory::default(),
@@ -369,9 +385,40 @@ where
         &self.history
     }
 
+    pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
+        let mut consecutive_failures = 0;
+
+        for _ in 0..max_steps {
+            let (is_done, has_error) = {
+                let item = self.step().await?;
+                (
+                    item.result.iter().any(|result| result.is_done),
+                    item.result.iter().any(|result| result.error.is_some()),
+                )
+            };
+
+            if is_done {
+                return Ok(&self.history);
+            }
+
+            if has_error {
+                consecutive_failures += 1;
+                if consecutive_failures >= self.settings.max_failures {
+                    return Err(AgentRunError::MaxFailuresExceeded {
+                        failures: consecutive_failures,
+                    });
+                }
+            } else {
+                consecutive_failures = 0;
+            }
+        }
+
+        Err(AgentRunError::StepLimitReached { max_steps })
+    }
+
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         let state = self.executor.session().state(true).await?;
-        let request = build_step_request(&self.task, &state)?;
+        let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = self.llm.invoke_json(request).await?;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
@@ -393,18 +440,27 @@ where
 pub fn build_step_request(
     task: &str,
     state: &BrowserStateSummary,
+    history: &AgentHistory,
+    settings: &AgentSettings,
 ) -> Result<ChatRequest, AgentRunError> {
     let state_json = serde_json::to_string_pretty(state)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+    let previous_results = render_previous_results(history);
     Ok(ChatRequest {
         messages: vec![
             ChatMessage::text(
                 MessageRole::System,
-                "You are controlling a browser. Return a JSON object matching AgentOutput.",
+                format!(
+                    "You are controlling a browser. Return a JSON object matching AgentOutput. \
+                     Use at most {} actions in this step.",
+                    settings.max_actions_per_step
+                ),
             ),
             ChatMessage::text(
                 MessageRole::User,
-                format!("Task:\n{task}\n\nBrowser state:\n{state_json}"),
+                format!(
+                    "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nBrowser state:\n{state_json}"
+                ),
             ),
         ],
         output_schema: Some(schema_for_agent_output()),
@@ -413,6 +469,36 @@ pub fn build_step_request(
 
 fn schema_for_agent_output() -> Value {
     serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
+}
+
+fn render_previous_results(history: &AgentHistory) -> String {
+    let rendered: Vec<String> = history
+        .items
+        .iter()
+        .rev()
+        .take(5)
+        .rev()
+        .enumerate()
+        .flat_map(|(step_index, item)| {
+            item.result
+                .iter()
+                .enumerate()
+                .map(move |(result_index, result)| {
+                    let text = result
+                        .error
+                        .as_deref()
+                        .or(result.extracted_content.as_deref())
+                        .unwrap_or("no content");
+                    format!("{}.{} {}", step_index + 1, result_index + 1, text)
+                })
+        })
+        .collect();
+
+    if rendered.is_empty() {
+        "None".to_owned()
+    } else {
+        rendered.join("\n")
+    }
 }
 
 /// Execute actions with the same high-level guard shape as browser-use:
@@ -450,7 +536,7 @@ mod tests {
     use browser_use_cdp::Screenshot;
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{ClickElementAction, DoneAction, NavigateAction};
-    use std::sync::Mutex;
+    use std::{collections::VecDeque, sync::Mutex};
 
     #[test]
     fn target_commit_is_pinned() {
@@ -469,7 +555,19 @@ mod tests {
 
     #[test]
     fn history_returns_latest_done_result() {
-        let state = BrowserStateSummary {
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::done("finished", true)],
+                state: blank_state(),
+            }],
+        };
+
+        assert_eq!(history.final_result(), Some("finished"));
+    }
+
+    fn blank_state() -> BrowserStateSummary {
+        BrowserStateSummary {
             dom_state: Default::default(),
             url: "about:blank".to_owned(),
             title: "Blank".to_owned(),
@@ -484,16 +582,7 @@ mod tests {
             pending_network_requests: vec![],
             pagination_buttons: vec![],
             closed_popup_messages: vec![],
-        };
-        let history = AgentHistory {
-            items: vec![AgentHistoryItem {
-                model_output: None,
-                result: vec![ActionResult::done("finished", true)],
-                state,
-            }],
-        };
-
-        assert_eq!(history.final_result(), Some("finished"));
+        }
     }
 
     struct RecordingExecutor {
@@ -583,19 +672,7 @@ mod tests {
         ) -> Result<BrowserStateSummary, BrowserError> {
             Ok(BrowserStateSummary {
                 dom_state: SerializedDomState::default(),
-                url: "about:blank".to_owned(),
-                title: "Blank".to_owned(),
-                tabs: vec![],
-                screenshot: None,
-                page_info: None,
-                pixels_above: 0,
-                pixels_below: 0,
-                browser_errors: vec![],
-                is_pdf_viewer: false,
-                recent_events: None,
-                pending_network_requests: vec![],
-                pagination_buttons: vec![],
-                closed_popup_messages: vec![],
+                ..blank_state()
             })
         }
 
@@ -679,12 +756,22 @@ mod tests {
         );
     }
 
-    struct StaticModel {
-        output: Value,
+    struct QueueModel {
+        outputs: Mutex<VecDeque<Value>>,
+        requests: Mutex<Vec<ChatRequest>>,
+    }
+
+    impl QueueModel {
+        fn new(outputs: Vec<Value>) -> Self {
+            Self {
+                outputs: Mutex::new(outputs.into()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     #[async_trait]
-    impl ChatModel for StaticModel {
+    impl ChatModel for QueueModel {
         fn provider(&self) -> &str {
             "test"
         }
@@ -704,9 +791,16 @@ mod tests {
                     .any(|message| message.role == MessageRole::User)
             );
             assert!(request.output_schema.is_some());
+            self.requests.lock().expect("requests lock").push(request);
+            let content = self
+                .outputs
+                .lock()
+                .expect("outputs lock")
+                .pop_front()
+                .ok_or_else(|| LlmError::Provider("no queued model output".to_owned()))?;
             Ok(ChatCompletion {
                 model: self.model().to_owned(),
-                content: self.output.clone(),
+                content,
                 raw_response: None,
             })
         }
@@ -730,7 +824,7 @@ mod tests {
         });
         let mut agent = Agent::new(
             "finish the task",
-            StaticModel { output },
+            QueueModel::new(vec![output]),
             MockSession::new(),
         );
 
@@ -738,6 +832,114 @@ mod tests {
 
         assert_eq!(item.result, vec![ActionResult::done("finished", true)]);
         assert_eq!(agent.history().final_result(), Some("finished"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_stops_on_done() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "complete",
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(3).await.expect("agent run");
+
+        assert_eq!(history.items.len(), 1);
+        assert_eq!(history.final_result(), Some("complete"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_enforces_max_failures() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "find_elements": {
+                        "selector": "button"
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_failures: 2,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "find buttons",
+            settings,
+            QueueModel::new(vec![output.clone(), output]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(5).await.expect_err("max failures");
+
+        assert!(matches!(
+            error,
+            AgentRunError::MaxFailuresExceeded { failures: 2 }
+        ));
+        assert_eq!(agent.history().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn agent_run_reports_step_limit() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "click once",
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(1).await.expect_err("step limit");
+
+        assert!(matches!(
+            error,
+            AgentRunError::StepLimitReached { max_steps: 1 }
+        ));
+        assert_eq!(agent.history().items.len(), 1);
+    }
+
+    #[test]
+    fn step_request_includes_previous_results() {
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::extracted("Clicked element 1")],
+                state: blank_state(),
+            }],
+        };
+
+        let request = build_step_request(
+            "keep going",
+            &blank_state(),
+            &history,
+            &AgentSettings::default(),
+        )
+        .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+
+        assert!(request_text.contains("Previous action results"));
+        assert!(request_text.contains("Clicked element 1"));
     }
 
     #[test]
