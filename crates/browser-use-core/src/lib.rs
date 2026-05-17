@@ -623,6 +623,9 @@ where
 fn write_file_action(
     params: &browser_use_tools::WriteFileAction,
 ) -> Result<ActionResult, BrowserError> {
+    if let Err(result) = validate_text_file_name(&params.file_name) {
+        return Ok(result);
+    }
     let path = std::path::Path::new(&params.file_name);
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -662,6 +665,9 @@ fn write_file_action(
 }
 
 fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    if let Err(result) = validate_text_file_name(file_name) {
+        return Ok(result);
+    }
     let content = std::fs::read_to_string(file_name)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     let memory = read_file_memory(&content);
@@ -681,6 +687,14 @@ fn replace_file_action(
     old_str: &str,
     new_str: &str,
 ) -> Result<ActionResult, BrowserError> {
+    if let Err(result) = validate_text_file_name(file_name) {
+        return Ok(result);
+    }
+    if old_str.is_empty() {
+        return Ok(ActionResult::error(
+            "Cannot replace empty string. Please provide a non-empty string to replace.",
+        ));
+    }
     let content = std::fs::read_to_string(file_name)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     if !content.contains(old_str) {
@@ -688,12 +702,62 @@ fn replace_file_action(
             "Could not find text to replace in {file_name}"
         )));
     }
-    let updated = content.replacen(old_str, new_str, 1);
+    let updated = content.replace(old_str, new_str);
     std::fs::write(file_name, updated)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     Ok(ActionResult::extracted(format!(
         "Replaced text in file {file_name}"
     )))
+}
+
+fn validate_text_file_name(file_name: &str) -> Result<(), ActionResult> {
+    let path = std::path::Path::new(file_name);
+    let base_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(file_name);
+    let Some(extension) = path.extension().and_then(std::ffi::OsStr::to_str) else {
+        return Err(ActionResult::error(format!(
+            "Filename '{base_name}' has no extension. Supported extensions: {}.",
+            supported_text_extensions_message()
+        )));
+    };
+    let extension = extension.to_ascii_lowercase();
+
+    if unsupported_binary_extensions().contains(&extension.as_str()) {
+        return Err(ActionResult::error(format!(
+            "Cannot write binary/image file '{base_name}'. The file actions only support text-based files. Supported extensions: {}.",
+            supported_text_extensions_message()
+        )));
+    }
+
+    if !supported_text_extensions().contains(&extension.as_str()) {
+        return Err(ActionResult::error(format!(
+            "Unsupported file extension '.{extension}' in '{base_name}'. Supported extensions: {}.",
+            supported_text_extensions_message()
+        )));
+    }
+
+    Ok(())
+}
+
+fn supported_text_extensions() -> &'static [&'static str] {
+    &["txt", "md", "json", "jsonl", "csv", "html", "xml"]
+}
+
+fn unsupported_binary_extensions() -> &'static [&'static str] {
+    &[
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "mp4", "mov", "avi", "zip", "gz", "tar",
+        "exe", "bin",
+    ]
+}
+
+fn supported_text_extensions_message() -> String {
+    supported_text_extensions()
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn read_file_memory(content: &str) -> String {
@@ -1763,7 +1827,7 @@ mod tests {
         let write_result = executor
             .execute(&BrowserAction::WriteFile(WriteFileAction {
                 file_name: file_name.clone(),
-                content: "hello".to_owned(),
+                content: "hello world".to_owned(),
                 append: false,
                 trailing_newline: true,
                 leading_newline: false,
@@ -1796,16 +1860,74 @@ mod tests {
         assert_eq!(replace_result.error, None);
         assert_eq!(
             std::fs::read_to_string(&path).expect("file content"),
-            "hello\n\nEvalOps"
+            "hello EvalOps\n\nEvalOps"
         );
         assert!(
             read_result
                 .extracted_content
                 .as_deref()
                 .expect("read content")
-                .contains("hello\n\nEvalOps")
+                .contains("hello EvalOps\n\nEvalOps")
         );
         assert!(read_result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_unsupported_text_file_actions() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let binary_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: temp_dir.path().join("image.png").display().to_string(),
+                content: "not really an image".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let extensionless_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: temp_dir.path().join("notes").display().to_string(),
+            }))
+            .await;
+
+        let editable_path = temp_dir.path().join("notes.md");
+        std::fs::write(&editable_path, "hello").expect("seed editable file");
+        let empty_replace_result = executor
+            .execute(&BrowserAction::ReplaceFile(ReplaceFileAction {
+                file_name: editable_path.display().to_string(),
+                old_str: String::new(),
+                new_str: "EvalOps".to_owned(),
+            }))
+            .await;
+
+        assert!(
+            binary_result
+                .error
+                .as_deref()
+                .expect("binary error")
+                .contains("binary/image file")
+        );
+        assert!(
+            extensionless_result
+                .error
+                .as_deref()
+                .expect("extension error")
+                .contains("has no extension")
+        );
+        assert!(
+            empty_replace_result
+                .error
+                .as_deref()
+                .expect("empty replace error")
+                .contains("Cannot replace empty string")
+        );
+        assert_eq!(
+            std::fs::read_to_string(editable_path).expect("editable content"),
+            "hello"
+        );
     }
 
     #[tokio::test]

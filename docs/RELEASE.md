@@ -57,4 +57,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   are not implemented.
 - Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
   Gemini GenerateContent, and Ollama Chat is not implemented.
+- Filesystem actions are text-file focused; upstream PDF, DOCX, and image file
+  handling is not implemented.
 - Package publishing is limited to the GitHub release artifact.
