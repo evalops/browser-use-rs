@@ -21,9 +21,9 @@ includes:
   PDF capture, uploads, indexed actions, and page state.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
-  tags and contents, accessible labels, image-alt control names, bounds,
-  hidden-element filtering, and scrollable element metadata, plus common ARIA
-  widget roles.
+  tags and contents, accessible labels, image-alt control names, selected
+  dropdown values, bounds, hidden-element filtering, and scrollable element
+  metadata, plus common ARIA widget roles.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys`, `upload_file`, `screenshot`, `save_as_pdf`, `extract`,

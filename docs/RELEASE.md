@@ -13,7 +13,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   state, element bounds, open shadow-root indexing, same-origin iframe tag and
   content indexing, scrollable element metadata, hidden-element filtering, and
   basic accessible names from labels, ARIA references, and image alt text, plus
-  common ARIA widget roles.
+  selected dropdown values and common ARIA widget roles.
 - Built-in actions for search, navigate, back navigation, tab switch/close,
   click, coordinate click, input, page or indexed element scroll, wait,
   text-target scroll, browser JavaScript evaluation, screenshot, dropdown

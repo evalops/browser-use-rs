@@ -115,6 +115,17 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       .filter(Boolean)
       .join(' ');
   };
+  const controlValueText = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'select') {
+      return Array.from(el.selectedOptions || [])
+        .map((option) => (option.text || option.value || '').trim())
+        .filter(Boolean)
+        .join(' ');
+    }
+    if (tag === 'input' || tag === 'textarea') return (el.value || '').trim();
+    return '';
+  };
   const elements = [];
   const visitFrame = (iframe, offset) => {
     if (!isVisible(iframe)) return;
@@ -146,7 +157,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       if (value) attrs[name] = value;
     }
     const altText = descendantAltText(el);
-    const text = (el.innerText || el.value || altText || '').trim().slice(0, 200);
+    const controlText = controlValueText(el);
+    const text = (controlText || el.innerText || altText || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
     return {
       index: index + 1,
@@ -2029,6 +2041,13 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_uses_selected_option_text() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("controlValueText"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("selectedOptions"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("controlText || el.innerText"));
+    }
+
+    #[test]
     fn renders_runtime_evaluate_values() {
         assert_eq!(
             render_runtime_evaluate_result(&json!({
@@ -2296,6 +2315,42 @@ mod tests {
         assert_eq!(
             element_by_id("image-submit").name.as_deref(),
             Some("Search icon")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_uses_selected_option_as_select_text() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>select smoke</title></head><body><label for='plan'>Plan</label><select id='plan'><option>Starter</option><option selected>Enterprise</option><option>Internal</option></select></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let select = state.dom_state.selector_map.get(&1).expect("select");
+        assert_eq!(select.name.as_deref(), Some("Plan"));
+        assert_eq!(select.text.as_deref(), Some("Enterprise"));
+        assert!(
+            state
+                .dom_state
+                .llm_representation()
+                .contains("Plan Enterprise"),
+            "DOM state did not include selected option value: {}",
+            state.dom_state.llm_representation()
+        );
+        assert!(
+            !state.dom_state.llm_representation().contains("Starter"),
+            "DOM state included unselected option text: {}",
+            state.dom_state.llm_representation()
         );
     }
 
