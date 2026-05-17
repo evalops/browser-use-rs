@@ -3,7 +3,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 use thiserror::Error;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use async_trait::async_trait;
@@ -341,6 +343,8 @@ pub enum AgentRunError {
     Llm(#[from] LlmError),
     #[error("invalid agent output: {0}")]
     InvalidOutput(String),
+    #[error("LLM call timed out after {seconds} seconds")]
+    LlmTimedOut { seconds: u64 },
     #[error("agent reached max steps ({max_steps}) without completing")]
     StepLimitReached { max_steps: usize },
     #[error("agent stopped after {failures} consecutive failures")]
@@ -419,7 +423,14 @@ where
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         let state = self.executor.session().state(true).await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
-        let completion = self.llm.invoke_json(request).await?;
+        let completion = timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        .map_err(|_| AgentRunError::LlmTimedOut {
+            seconds: self.settings.llm_timeout_seconds,
+        })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
         let result = execute_action_sequence(&mut self.executor, &model_output.action).await;
@@ -832,6 +843,47 @@ mod tests {
 
         assert_eq!(item.result, vec![ActionResult::done("finished", true)]);
         assert_eq!(agent.history().final_result(), Some("finished"));
+    }
+
+    struct SlowModel;
+
+    #[async_trait]
+    impl ChatModel for SlowModel {
+        fn provider(&self) -> &str {
+            "test"
+        }
+
+        fn model(&self) -> &str {
+            "slow"
+        }
+
+        async fn invoke_json(
+            &self,
+            _request: ChatRequest,
+        ) -> Result<ChatCompletion<Value>, LlmError> {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok(ChatCompletion {
+                model: self.model().to_owned(),
+                content: serde_json::json!({
+                    "current_state": {},
+                    "action": []
+                }),
+                raw_response: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_step_enforces_llm_timeout() {
+        let settings = AgentSettings {
+            llm_timeout_seconds: 0,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings("timeout", settings, SlowModel, MockSession::new());
+
+        let error = agent.step().await.expect_err("LLM timeout");
+
+        assert!(matches!(error, AgentRunError::LlmTimedOut { seconds: 0 }));
     }
 
     #[tokio::test]
