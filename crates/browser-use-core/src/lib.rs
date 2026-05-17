@@ -515,6 +515,7 @@ where
         BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
         BrowserAction::Extract(params) => {
             let text = session.page_text().await?;
+            let source_url = session.state(false).await.ok().map(|state| state.url);
             let extract_images = should_extract_images(&params.query, params.extract_images);
             let links = if params.extract_links {
                 Some(
@@ -547,6 +548,7 @@ where
             Ok(extract_action_result(
                 params,
                 &text,
+                source_url.as_deref(),
                 extract_images,
                 links.as_deref(),
                 images.as_deref(),
@@ -713,6 +715,7 @@ fn should_extract_images(query: &str, requested: bool) -> bool {
 fn extract_action_result(
     params: &browser_use_tools::ExtractAction,
     page_text: &str,
+    source_url: Option<&str>,
     extract_images: bool,
     links: Option<&[FoundElement]>,
     images: Option<&[FoundElement]>,
@@ -742,7 +745,8 @@ fn extract_action_result(
         params.extract_links,
         extract_images,
     );
-    let rendered = render_extract_envelope(params, &content, &content_stats, links, images);
+    let rendered =
+        render_extract_envelope(params, source_url, &content, &content_stats, links, images);
     let memory = if rendered.chars().count() < 10_000 {
         rendered.clone()
     } else {
@@ -763,6 +767,7 @@ fn extract_action_result(
         success: None,
         metadata: extract_metadata(
             params,
+            source_url,
             total_chars,
             params.start_from_char,
             content.chars().count(),
@@ -805,6 +810,7 @@ fn extract_content_stats(
 #[allow(clippy::too_many_arguments)]
 fn extract_metadata(
     params: &browser_use_tools::ExtractAction,
+    source_url: Option<&str>,
     original_chars: usize,
     start_from_char: usize,
     content_chars: usize,
@@ -819,6 +825,7 @@ fn extract_metadata(
         "structured_extraction": true,
         "schema_used": schema,
         "is_partial": truncated,
+        "source_url": source_url,
         "content_stats": {
             "method": "page_text",
             "original_text_chars": original_chars,
@@ -839,12 +846,16 @@ fn extract_metadata(
 
 fn render_extract_envelope(
     params: &browser_use_tools::ExtractAction,
+    source_url: Option<&str>,
     content: &str,
     content_stats: &str,
     links: Option<&[FoundElement]>,
     images: Option<&[FoundElement]>,
 ) -> String {
-    let mut rendered = format!("<query>\n{}\n</query>\n\n", params.query);
+    let mut rendered = source_url
+        .map(|url| format!("<url>\n{url}\n</url>\n"))
+        .unwrap_or_default();
+    rendered.push_str(&format!("<query>\n{}\n</query>\n\n", params.query));
 
     if let Some(schema) = &params.output_schema {
         let schema = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
@@ -2852,6 +2863,7 @@ mod tests {
             .await;
 
         let content = result.extracted_content.expect("extracted content");
+        assert!(content.contains("<url>\nabout:blank\n</url>"));
         assert!(content.contains("<query>\ncompany\n</query>"));
         assert!(content.contains("<content_stats>"));
         assert!(content.contains("started from char 6"));
@@ -2891,6 +2903,7 @@ mod tests {
         assert!(content.contains("- Existing product"));
         let metadata = result.metadata.expect("extract metadata");
         assert_eq!(metadata["structured_extraction"], true);
+        assert_eq!(metadata["source_url"], "about:blank");
         assert_eq!(metadata["schema_used"]["type"], "object");
         assert_eq!(metadata["is_partial"], false);
         assert_eq!(metadata["content_stats"]["method"], "page_text");
