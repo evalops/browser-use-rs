@@ -3,6 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::Write;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -611,6 +612,113 @@ where
                 params.path, params.index
             )))
         }
+        BrowserAction::WriteFile(params) => write_file_action(params),
+        BrowserAction::ReadFile(params) => read_file_action(&params.file_name),
+        BrowserAction::ReplaceFile(params) => {
+            replace_file_action(&params.file_name, &params.old_str, &params.new_str)
+        }
+    }
+}
+
+fn write_file_action(
+    params: &browser_use_tools::WriteFileAction,
+) -> Result<ActionResult, BrowserError> {
+    let path = std::path::Path::new(&params.file_name);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+    }
+
+    let mut content = params.content.clone();
+    if params.trailing_newline {
+        content.push('\n');
+    }
+    if params.leading_newline {
+        content.insert(0, '\n');
+    }
+
+    if params.append {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        file.write_all(content.as_bytes())
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        Ok(ActionResult::extracted(format!(
+            "Appended to file {}",
+            params.file_name
+        )))
+    } else {
+        std::fs::write(path, content)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        Ok(ActionResult::extracted(format!(
+            "Wrote file {}",
+            params.file_name
+        )))
+    }
+}
+
+fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    let content = std::fs::read_to_string(file_name)
+        .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+    let memory = read_file_memory(&content);
+    Ok(ActionResult {
+        extracted_content: Some(format!("Read file {file_name}:\n{content}")),
+        error: None,
+        long_term_memory: Some(memory),
+        include_extracted_content_only_once: true,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+    })
+}
+
+fn replace_file_action(
+    file_name: &str,
+    old_str: &str,
+    new_str: &str,
+) -> Result<ActionResult, BrowserError> {
+    let content = std::fs::read_to_string(file_name)
+        .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+    if !content.contains(old_str) {
+        return Ok(ActionResult::error(format!(
+            "Could not find text to replace in {file_name}"
+        )));
+    }
+    let updated = content.replacen(old_str, new_str, 1);
+    std::fs::write(file_name, updated)
+        .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+    Ok(ActionResult::extracted(format!(
+        "Replaced text in file {file_name}"
+    )))
+}
+
+fn read_file_memory(content: &str) -> String {
+    const MAX_MEMORY_SIZE: usize = 1_000;
+    if content.len() <= MAX_MEMORY_SIZE {
+        return content.to_owned();
+    }
+
+    let mut display = String::new();
+    let mut lines_count = 0;
+    let lines: Vec<&str> = content.lines().collect();
+    for line in &lines {
+        if display.len() + line.len() + 1 < MAX_MEMORY_SIZE {
+            display.push_str(line);
+            display.push('\n');
+            lines_count += 1;
+        } else {
+            break;
+        }
+    }
+    let remaining_lines = lines.len().saturating_sub(lines_count);
+    if remaining_lines > 0 {
+        format!("{display}{remaining_lines} more lines...")
+    } else {
+        display
     }
 }
 
@@ -1107,8 +1215,9 @@ mod tests {
     use browser_use_tools::{
         ClickElementAction, CloseTabAction, DoneAction, EvaluateAction, ExtractAction,
         FindElementsAction, FindTextAction, GetDropdownOptionsAction, InputTextAction,
-        NavigateAction, NoParamsAction, SaveAsPdfAction, SearchPageAction,
-        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction, UploadFileAction, WaitAction,
+        NavigateAction, NoParamsAction, ReadFileAction, ReplaceFileAction, SaveAsPdfAction,
+        SearchPageAction, SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
+        UploadFileAction, WaitAction, WriteFileAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -1641,6 +1750,62 @@ mod tests {
             Some("EvalOps JS result")
         );
         assert_eq!(executor.session().events(), vec!["evaluate:document.title"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_handles_text_file_actions() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("notes.md");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "hello".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let append_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "world".to_owned(),
+                append: true,
+                trailing_newline: false,
+                leading_newline: true,
+            }))
+            .await;
+        let replace_result = executor
+            .execute(&BrowserAction::ReplaceFile(ReplaceFileAction {
+                file_name: file_name.clone(),
+                old_str: "world".to_owned(),
+                new_str: "EvalOps".to_owned(),
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(append_result.error, None);
+        assert_eq!(replace_result.error, None);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("file content"),
+            "hello\n\nEvalOps"
+        );
+        assert!(
+            read_result
+                .extracted_content
+                .as_deref()
+                .expect("read content")
+                .contains("hello\n\nEvalOps")
+        );
+        assert!(read_result.include_extracted_content_only_once);
     }
 
     #[tokio::test]

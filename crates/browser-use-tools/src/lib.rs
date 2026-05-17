@@ -170,6 +170,30 @@ pub struct UploadFileAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WriteFileAction {
+    pub file_name: String,
+    pub content: String,
+    #[serde(default)]
+    pub append: bool,
+    #[serde(default = "default_true")]
+    pub trailing_newline: bool,
+    #[serde(default)]
+    pub leading_newline: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadFileAction {
+    pub file_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReplaceFileAction {
+    pub file_name: String,
+    pub old_str: String,
+    pub new_str: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NoParamsAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -235,6 +259,9 @@ pub enum BrowserAction {
     Wait(WaitAction),
     SendKeys(SendKeysAction),
     UploadFile(UploadFileAction),
+    WriteFile(WriteFileAction),
+    ReadFile(ReadFileAction),
+    ReplaceFile(ReplaceFileAction),
     Screenshot(ScreenshotAction),
     SaveAsPdf(SaveAsPdfAction),
     GetDropdownOptions(GetDropdownOptionsAction),
@@ -262,6 +289,9 @@ impl BrowserAction {
             Self::Wait(_) => "wait",
             Self::SendKeys(_) => "send_keys",
             Self::UploadFile(_) => "upload_file",
+            Self::WriteFile(_) => "write_file",
+            Self::ReadFile(_) => "read_file",
+            Self::ReplaceFile(_) => "replace_file",
             Self::Screenshot(_) => "screenshot",
             Self::SaveAsPdf(_) => "save_as_pdf",
             Self::GetDropdownOptions(_) => "get_dropdown_options",
@@ -371,5 +401,29 @@ mod tests {
             })
         );
         assert!(action.terminates_sequence());
+    }
+
+    #[test]
+    fn write_file_action_defaults_to_overwrite_with_trailing_newline() {
+        let action: BrowserAction = serde_json::from_value(serde_json::json!({
+            "write_file": {
+                "file_name": "notes.md",
+                "content": "hello"
+            }
+        }))
+        .expect("write_file action");
+
+        assert_eq!(action.name(), "write_file");
+        assert_eq!(
+            action,
+            BrowserAction::WriteFile(WriteFileAction {
+                file_name: "notes.md".to_owned(),
+                content: "hello".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            })
+        );
+        assert!(!action.terminates_sequence());
     }
 }

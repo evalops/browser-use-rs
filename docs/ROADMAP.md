@@ -26,6 +26,7 @@ Implemented:
 - Built-in browser action parity for wait/sleep steps with the upstream default
   and bounded delay behavior, browser-history back navigation, and text-target
   scrolling, plus browser JavaScript evaluation.
+- Built-in text-file read/write/replace action parity for local agent artifacts.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, tab switching/closing, URL/title state,
   screenshots, PDF capture, file uploads, coordinate clicks, scroll, and compact
