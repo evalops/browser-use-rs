@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use async_trait::async_trait;
+use browser_use_cdp::{BrowserError, BrowserSession};
+use url::form_urlencoded;
 
 pub use browser_use_dom::BrowserStateSummary;
 pub use browser_use_llm::{ChatMessage, ChatModel, ChatRequest};
-pub use browser_use_tools::BrowserAction;
+pub use browser_use_tools::{BrowserAction, SearchEngine};
 
 /// Version of the upstream browser-use source that this crate initially targets.
 pub const INITIAL_UPSTREAM_COMMIT: &str = "933e28c599ddd74c15a48568f159da95547e40dd";
@@ -130,6 +132,33 @@ pub struct ActionResult {
 
 impl ActionResult {
     #[must_use]
+    pub fn extracted(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            extracted_content: Some(text.clone()),
+            error: None,
+            long_term_memory: Some(text),
+            include_extracted_content_only_once: false,
+            include_in_memory: false,
+            is_done: false,
+            success: None,
+        }
+    }
+
+    #[must_use]
+    pub fn error(error: impl Into<String>) -> Self {
+        Self {
+            extracted_content: None,
+            error: Some(error.into()),
+            long_term_memory: None,
+            include_extracted_content_only_once: false,
+            include_in_memory: true,
+            is_done: false,
+            success: None,
+        }
+    }
+
+    #[must_use]
     pub fn done(text: impl Into<String>, success: bool) -> Self {
         Self {
             extracted_content: Some(text.into()),
@@ -174,6 +203,132 @@ pub trait ActionExecutor {
     async fn execute(&mut self, action: &BrowserAction) -> ActionResult;
 }
 
+pub struct BrowserActionExecutor<S> {
+    session: S,
+}
+
+impl<S> BrowserActionExecutor<S> {
+    #[must_use]
+    pub fn new(session: S) -> Self {
+        Self { session }
+    }
+
+    #[must_use]
+    pub fn session(&self) -> &S {
+        &self.session
+    }
+}
+
+#[async_trait]
+impl<S> ActionExecutor for BrowserActionExecutor<S>
+where
+    S: BrowserSession + Send + Sync,
+{
+    async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
+        match execute_browser_action(&self.session, action).await {
+            Ok(result) => result,
+            Err(error) => ActionResult::error(error.to_string()),
+        }
+    }
+}
+
+async fn execute_browser_action<S>(
+    session: &S,
+    action: &BrowserAction,
+) -> Result<ActionResult, BrowserError>
+where
+    S: BrowserSession + Send + Sync,
+{
+    match action {
+        BrowserAction::Search(params) => {
+            let url = search_url(&params.engine, &params.query);
+            session.navigate(&url, false).await?;
+            Ok(ActionResult::extracted(format!(
+                "Searched {:?} for '{}'",
+                params.engine, params.query
+            )))
+        }
+        BrowserAction::Navigate(params) => {
+            session.navigate(&params.url, params.new_tab).await?;
+            Ok(ActionResult::extracted(format!(
+                "Navigated to {}",
+                params.url
+            )))
+        }
+        BrowserAction::Click(params) => {
+            match (params.index, params.coordinate_x, params.coordinate_y) {
+                (Some(index), _, _) => {
+                    session.click(index).await?;
+                    Ok(ActionResult::extracted(format!("Clicked element {index}")))
+                }
+                (None, Some(x), Some(y)) => {
+                    session.click_coordinates(x, y).await?;
+                    Ok(ActionResult::extracted(format!(
+                        "Clicked coordinates ({x}, {y})"
+                    )))
+                }
+                _ => Ok(ActionResult::error(
+                    "click requires either an element index or both coordinate_x and coordinate_y",
+                )),
+            }
+        }
+        BrowserAction::Input(params) => {
+            session
+                .input_text(params.index, &params.text, params.clear)
+                .await?;
+            Ok(ActionResult::extracted(format!(
+                "Typed text into element {}",
+                params.index
+            )))
+        }
+        BrowserAction::Scroll(params) => {
+            session
+                .scroll(params.index, params.down, params.pages)
+                .await?;
+            Ok(ActionResult::extracted("Scrolled page"))
+        }
+        BrowserAction::Screenshot(_) => {
+            let screenshot = session.screenshot().await?;
+            Ok(ActionResult {
+                extracted_content: Some(format!(
+                    "Captured screenshot ({} base64 chars)",
+                    screenshot.base64_png.len()
+                )),
+                error: None,
+                long_term_memory: None,
+                include_extracted_content_only_once: true,
+                include_in_memory: false,
+                is_done: false,
+                success: None,
+            })
+        }
+        BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
+        BrowserAction::Extract(_)
+        | BrowserAction::SearchPage(_)
+        | BrowserAction::FindElements(_)
+        | BrowserAction::SwitchTab(_)
+        | BrowserAction::CloseTab(_)
+        | BrowserAction::SendKeys(_)
+        | BrowserAction::UploadFile(_)
+        | BrowserAction::SaveAsPdf(_)
+        | BrowserAction::GetDropdownOptions(_)
+        | BrowserAction::SelectDropdownOption(_) => Ok(ActionResult::error(format!(
+            "action not implemented yet: {}",
+            action.name()
+        ))),
+    }
+}
+
+#[must_use]
+pub fn search_url(engine: &SearchEngine, query: &str) -> String {
+    let encoded: String = form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    match engine {
+        SearchEngine::DuckDuckGo => format!("https://duckduckgo.com/?q={encoded}"),
+        SearchEngine::Google => format!("https://www.google.com/search?q={encoded}&udm=14"),
+        SearchEngine::Bing => format!("https://www.bing.com/search?q={encoded}"),
+    }
+}
+
 /// Execute actions with the same high-level guard shape as browser-use:
 /// stop on errors, stop on `done`, stop after sequence-terminating actions,
 /// and refuse `done` when it is queued after another action.
@@ -206,7 +361,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use browser_use_cdp::Screenshot;
+    use browser_use_dom::SerializedDomState;
     use browser_use_tools::{ClickElementAction, DoneAction, NavigateAction};
+    use std::sync::Mutex;
 
     #[test]
     fn target_commit_is_pinned() {
@@ -313,5 +471,137 @@ mod tests {
 
         assert_eq!(executor.seen, vec!["click"]);
         assert_eq!(results.len(), 1);
+    }
+
+    struct MockSession {
+        events: Mutex<Vec<String>>,
+    }
+
+    impl MockSession {
+        fn new() -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn events(&self) -> Vec<String> {
+            self.events.lock().expect("events lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl BrowserSession for MockSession {
+        async fn state(
+            &self,
+            _include_screenshot: bool,
+        ) -> Result<BrowserStateSummary, BrowserError> {
+            Ok(BrowserStateSummary {
+                dom_state: SerializedDomState::default(),
+                url: "about:blank".to_owned(),
+                title: "Blank".to_owned(),
+                tabs: vec![],
+                screenshot: None,
+                page_info: None,
+                pixels_above: 0,
+                pixels_below: 0,
+                browser_errors: vec![],
+                is_pdf_viewer: false,
+                recent_events: None,
+                pending_network_requests: vec![],
+                pagination_buttons: vec![],
+                closed_popup_messages: vec![],
+            })
+        }
+
+        async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("navigate:{url}:{new_tab}"));
+            Ok(())
+        }
+
+        async fn click(&self, index: u32) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("click:{index}"));
+            Ok(())
+        }
+
+        async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("click_coordinates:{x}:{y}"));
+            Ok(())
+        }
+
+        async fn input_text(
+            &self,
+            index: u32,
+            text: &str,
+            clear: bool,
+        ) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("input:{index}:{text}:{clear}"));
+            Ok(())
+        }
+
+        async fn scroll(
+            &self,
+            index: Option<u32>,
+            down: bool,
+            pages: f64,
+        ) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("scroll:{index:?}:{down}:{pages}"));
+            Ok(())
+        }
+
+        async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push("screenshot".to_owned());
+            Ok(Screenshot {
+                base64_png: "abc".to_owned(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_navigate_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Navigate(NavigateAction {
+                url: "https://example.com".to_owned(),
+                new_tab: false,
+            }))
+            .await;
+
+        assert!(result.error.is_none());
+        assert_eq!(
+            executor.session().events(),
+            vec!["navigate:https://example.com:false"]
+        );
+    }
+
+    #[test]
+    fn search_url_matches_browser_use_engines() {
+        assert_eq!(
+            search_url(&SearchEngine::Google, "browser use rust"),
+            "https://www.google.com/search?q=browser+use+rust&udm=14"
+        );
+        assert_eq!(
+            search_url(&SearchEngine::DuckDuckGo, "browser use rust"),
+            "https://duckduckgo.com/?q=browser+use+rust"
+        );
     }
 }

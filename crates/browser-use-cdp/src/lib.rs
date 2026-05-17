@@ -29,6 +29,8 @@ pub trait BrowserSession: Send + Sync {
 
     async fn click(&self, index: u32) -> Result<(), BrowserError>;
 
+    async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError>;
+
     async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError>;
 
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError>;
