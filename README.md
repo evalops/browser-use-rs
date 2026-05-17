@@ -26,9 +26,9 @@ includes:
   metadata, plus common ARIA widget roles and pagination affordances.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
-  `send_keys`, `upload_file`, text-file read/write/replace, `screenshot`,
-  `save_as_pdf`, `extract`, `search_page`, `find_elements`, back navigation,
-  tab actions, dropdown actions, and `done`.
+  `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file
+  read/write/replace, `screenshot`, `save_as_pdf`, `extract`, `search_page`,
+  `find_elements`, back navigation, tab actions, dropdown actions, and `done`.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture and screenshot image prompts, compact
   page-stat prompt context, one-time extraction replay handling, step/LLM
