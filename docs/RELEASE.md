@@ -15,9 +15,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   basic accessible names from labels, ARIA references, and image alt text, plus
   selected dropdown values, common ARIA widget roles, and pagination affordance
   detection.
-- Built-in actions for search, navigate, back navigation, tab switch/close,
-  click, coordinate click, input, page or indexed element scroll, wait,
-  text-target scroll, browser JavaScript evaluation, screenshot, native and
+- Built-in actions for search, navigate, back navigation, 4-character tab-id
+  switch/close, click, coordinate click, input, page or indexed element scroll,
+  wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
   file upload, local text-file read/write/replace, PDF capture, extraction,
   page search, element lookup, and done.

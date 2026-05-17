@@ -117,11 +117,13 @@ pub struct DoneAction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SwitchTabAction {
+    #[schemars(length(min = 4, max = 4))]
     pub tab_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloseTabAction {
+    #[schemars(length(min = 4, max = 4))]
     pub tab_id: String,
 }
 

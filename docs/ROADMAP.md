@@ -28,10 +28,11 @@ Implemented:
   scrolling, plus browser JavaScript evaluation.
 - Built-in text-file read/write/replace action parity for local agent artifacts.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
-- CDP WebSocket session for navigation, tab switching/closing, URL/title state,
-  screenshots, PDF capture, file uploads, coordinate clicks, keyboard
-  text/special-key/shortcut events, native/ARIA dropdown actions, scroll, and
-  compact DOM-indexed browser actions, including indexed element scrolling.
+- CDP WebSocket session for navigation, 4-character tab-id switching/closing,
+  URL/title state, screenshots, PDF capture, file uploads, coordinate clicks,
+  keyboard text/special-key/shortcut events, native/ARIA dropdown actions,
+  scroll, and compact DOM-indexed browser actions, including indexed element
+  scrolling.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across

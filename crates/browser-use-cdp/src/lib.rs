@@ -1630,6 +1630,43 @@ async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserEr
     Ok(tabs)
 }
 
+fn resolve_page_target_id_from_tabs(
+    tabs: &[TabInfo],
+    tab_id_or_target_id: &str,
+) -> Result<String, BrowserError> {
+    if let Some(tab) = tabs.iter().find(|tab| tab.target_id == tab_id_or_target_id) {
+        return Ok(tab.target_id.clone());
+    }
+
+    if tab_id_or_target_id.len() == 4 {
+        let matches = tabs
+            .iter()
+            .filter(|tab| tab.short_target_id() == tab_id_or_target_id)
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [tab] => Ok(tab.target_id.clone()),
+            [] => Err(BrowserError::ActionFailed(format!(
+                "No open tab found for short tab id {tab_id_or_target_id}"
+            ))),
+            _ => Err(BrowserError::ActionFailed(format!(
+                "Short tab id {tab_id_or_target_id} matched multiple open tabs"
+            ))),
+        };
+    }
+
+    Err(BrowserError::ActionFailed(format!(
+        "No open tab found for target id {tab_id_or_target_id}"
+    )))
+}
+
+async fn resolve_page_target_id(
+    connection: &CdpConnection,
+    tab_id_or_target_id: &str,
+) -> Result<String, BrowserError> {
+    let tabs = page_tabs(connection).await?;
+    resolve_page_target_id_from_tabs(&tabs, tab_id_or_target_id)
+}
+
 #[async_trait]
 impl BrowserSession for CdpBrowserSession {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
@@ -1715,14 +1752,20 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
-        let page = attach_to_target(&self.connection, target_id.to_owned()).await?;
+        let target_id = resolve_page_target_id(&self.connection, target_id).await?;
+        let page = attach_to_target(&self.connection, target_id).await?;
         self.set_current_page(page).await;
         Ok(())
     }
 
     async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+        let target_id = resolve_page_target_id(&self.connection, target_id).await?;
         self.connection
-            .command("Target.closeTarget", json!({ "targetId": target_id }), None)
+            .command(
+                "Target.closeTarget",
+                json!({ "targetId": &target_id }),
+                None,
+            )
             .await?;
 
         if self.current_page().await.target_id == target_id {
@@ -2491,6 +2534,37 @@ mod tests {
         .expect_err("missing previous entry");
 
         assert!(matches!(error, BrowserError::ActionFailed(_)));
+    }
+
+    #[test]
+    fn resolves_full_and_short_page_target_ids() {
+        let tabs = vec![
+            TabInfo {
+                url: "https://example.com/one".to_owned(),
+                title: "One".to_owned(),
+                target_id: "target-aaa111".to_owned(),
+                parent_target_id: None,
+            },
+            TabInfo {
+                url: "https://example.com/two".to_owned(),
+                title: "Two".to_owned(),
+                target_id: "target-bbb222".to_owned(),
+                parent_target_id: None,
+            },
+        ];
+
+        assert_eq!(
+            resolve_page_target_id_from_tabs(&tabs, "target-aaa111").expect("full target id"),
+            "target-aaa111"
+        );
+        assert_eq!(
+            resolve_page_target_id_from_tabs(&tabs, "b222").expect("short target id"),
+            "target-bbb222"
+        );
+        assert!(matches!(
+            resolve_page_target_id_from_tabs(&tabs, "nope"),
+            Err(BrowserError::ActionFailed(_))
+        ));
     }
 
     #[test]
