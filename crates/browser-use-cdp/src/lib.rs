@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use browser_use_dom::{
-    BrowserStateSummary, DomElementRef, ElementBounds, SerializedDomState, TabInfo,
+    BrowserStateSummary, DomElementRef, ElementBounds, PageInfo, SerializedDomState, TabInfo,
 };
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
@@ -68,6 +68,43 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     };
   });
 })()
+"#;
+
+const PAGE_INFO_JS: &str = r#"
+JSON.stringify((() => {
+  const documentElement = document.documentElement;
+  const body = document.body || documentElement;
+  const viewportWidth = Math.round(window.innerWidth || documentElement.clientWidth || 0);
+  const viewportHeight = Math.round(window.innerHeight || documentElement.clientHeight || 0);
+  const pageWidth = Math.round(Math.max(
+    body.scrollWidth,
+    body.offsetWidth,
+    documentElement.clientWidth,
+    documentElement.scrollWidth,
+    documentElement.offsetWidth
+  ));
+  const pageHeight = Math.round(Math.max(
+    body.scrollHeight,
+    body.offsetHeight,
+    documentElement.clientHeight,
+    documentElement.scrollHeight,
+    documentElement.offsetHeight
+  ));
+  const scrollX = Math.round(window.scrollX || window.pageXOffset || 0);
+  const scrollY = Math.round(window.scrollY || window.pageYOffset || 0);
+  return {
+    viewport_width: viewportWidth,
+    viewport_height: viewportHeight,
+    page_width: pageWidth,
+    page_height: pageHeight,
+    scroll_x: scrollX,
+    scroll_y: scrollY,
+    pixels_above: Math.max(0, scrollY),
+    pixels_below: Math.max(0, pageHeight - viewportHeight - scrollY),
+    pixels_left: Math.max(0, scrollX),
+    pixels_right: Math.max(0, pageWidth - viewportWidth - scrollX)
+  };
+})())
 "#;
 
 fn element_action_js(index: u32, action: &str) -> String {
@@ -646,6 +683,18 @@ impl CdpBrowserSession {
         ))
     }
 
+    async fn page_info(&self) -> Result<PageInfo, BrowserError> {
+        let value = self.evaluate_json(PAGE_INFO_JS).await?;
+        let encoded = value.as_str().ok_or_else(|| {
+            BrowserError::MissingResponseData("Runtime.evaluate page info".to_owned())
+        })?;
+        let page_info: Value = serde_json::from_str(encoded)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+
+        page_info_from_value(&page_info)
+            .ok_or_else(|| BrowserError::MissingResponseData("page info fields".to_owned()))
+    }
+
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let value = self.evaluate_json(INTERACTIVE_ELEMENTS_JS).await?;
         let elements = value
@@ -726,6 +775,35 @@ fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
             .as_u64()
             .and_then(|height| u32::try_from(height).ok())?,
     })
+}
+
+fn page_info_from_value(value: &Value) -> Option<PageInfo> {
+    Some(PageInfo {
+        viewport_width: u32_field(value, "viewport_width")?,
+        viewport_height: u32_field(value, "viewport_height")?,
+        page_width: u32_field(value, "page_width")?,
+        page_height: u32_field(value, "page_height")?,
+        scroll_x: i32_field(value, "scroll_x")?,
+        scroll_y: i32_field(value, "scroll_y")?,
+        pixels_above: u32_field(value, "pixels_above")?,
+        pixels_below: u32_field(value, "pixels_below")?,
+        pixels_left: u32_field(value, "pixels_left")?,
+        pixels_right: u32_field(value, "pixels_right")?,
+    })
+}
+
+fn u32_field(value: &Value, field: &str) -> Option<u32> {
+    value
+        .get(field)?
+        .as_u64()
+        .and_then(|number| u32::try_from(number).ok())
+}
+
+fn i32_field(value: &Value, field: &str) -> Option<i32> {
+    value
+        .get(field)?
+        .as_i64()
+        .and_then(|number| i32::try_from(number).ok())
 }
 
 fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
@@ -815,6 +893,7 @@ async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPag
 impl BrowserSession for CdpBrowserSession {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         let (url, title) = self.page_location().await?;
+        let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
         let screenshot = if include_screenshot {
             Some(self.screenshot().await?.base64_png)
@@ -833,9 +912,9 @@ impl BrowserSession for CdpBrowserSession {
                 parent_target_id: None,
             }],
             screenshot,
-            page_info: None,
-            pixels_above: 0,
-            pixels_below: 0,
+            page_info: Some(page_info),
+            pixels_above: page_info.pixels_above,
+            pixels_below: page_info.pixels_below,
             browser_errors: vec![],
             is_pdf_viewer: false,
             recent_events: None,
@@ -1030,6 +1109,26 @@ mod tests {
             devtools_active_port_path(Path::new("/tmp/profile")),
             PathBuf::from("/tmp/profile/DevToolsActivePort")
         );
+    }
+
+    #[test]
+    fn parses_page_info_metrics() {
+        let page_info = page_info_from_value(&json!({
+            "viewport_width": 1280,
+            "viewport_height": 720,
+            "page_width": 1280,
+            "page_height": 2000,
+            "scroll_x": 0,
+            "scroll_y": 300,
+            "pixels_above": 300,
+            "pixels_below": 980,
+            "pixels_left": 0,
+            "pixels_right": 0
+        }))
+        .expect("page info");
+
+        assert_eq!(page_info.scroll_y, 300);
+        assert_eq!(page_info.pixels_below, 980);
     }
 
     #[test]
