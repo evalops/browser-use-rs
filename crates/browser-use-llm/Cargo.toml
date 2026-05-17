@@ -8,3 +8,8 @@ rust-version.workspace = true
 authors.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
