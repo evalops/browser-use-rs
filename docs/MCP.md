@@ -31,8 +31,11 @@ tool `model` argument or `ANTHROPIC_MODEL`; `ANTHROPIC_BASE_URL`,
 All tools support an optional `session_id` argument. When omitted, the tool call
 uses a fresh one-shot browser. When present, the stdio server reuses an
 in-process Chrome session for subsequent calls with the same `session_id`.
-Provide `url` on the first call for a session, and omit it later to inspect or
-act on the current page without reloading.
+If `session_id` matches a persistent session created by `browser-use-rs session
+start`, the stdio server reconnects to that Chrome session after server
+restarts. Provide `url` on the first call for an in-process session, and omit it
+later to inspect or act on the current page without reloading. Persistent CLI
+sessions can be stopped with `browser-use-rs session stop <id>`.
 
 To inspect the manifest from the CLI:
 

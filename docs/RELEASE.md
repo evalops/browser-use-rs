@@ -25,7 +25,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and
   local persistent `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including in-process
-  session reuse by `session_id`.
+  session reuse by `session_id` and reconnection to persistent CLI session
+  records.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -34,7 +35,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Cross-origin iframe interaction is not implemented.
 - Accessibility-tree parity is partial; the DOM serializer currently uses a
   pragmatic compact representation rather than full browser-use AX snapshots.
-- MCP sessions are in-process only and are lost when the stdio server exits.
+- Sessions created inside `mcp-stdio` are still in-process only and are lost
+  when the stdio server exits.
 - CLI sessions are local registry records and are not yet a network daemon API.
 - Provider parity beyond OpenAI-compatible Chat Completions and Anthropic
   Messages is not implemented.

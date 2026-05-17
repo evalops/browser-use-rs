@@ -505,6 +505,19 @@ impl McpRuntime {
             return Ok(session);
         }
 
+        let record_path = session_record_path(session_id)?;
+        if record_path.exists() {
+            let record = read_session_record(session_id)?;
+            let session = Arc::new(CdpBrowserSession::connect(record.endpoint).await?);
+            if let Some(url) = url {
+                session.navigate(&url, false).await?;
+                sleep(Duration::from_millis(150)).await;
+            }
+            self.sessions
+                .insert(session_id.to_owned(), Arc::clone(&session));
+            return Ok(session);
+        }
+
         let url = url
             .ok_or_else(|| anyhow::anyhow!("url is required to create MCP session {session_id}"))?;
         let session = Arc::new(launch_and_navigate(&url).await?);
