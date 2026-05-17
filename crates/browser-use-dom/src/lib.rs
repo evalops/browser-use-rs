@@ -85,6 +85,15 @@ pub enum PaginationButtonType {
     PageNumber,
 }
 
+/// Viewport-relative integer bounds for an indexed element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ElementBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// A compact node reference addressable by an action index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DomElementRef {
@@ -102,6 +111,8 @@ pub struct DomElementRef {
     pub text: Option<String>,
     #[serde(default)]
     pub attributes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<ElementBounds>,
     #[serde(default)]
     pub is_visible: bool,
     #[serde(default)]
@@ -234,6 +245,12 @@ mod tests {
             name: Some("Name".to_owned()),
             text: Some("EvalOps".to_owned()),
             attributes: BTreeMap::new(),
+            bounds: Some(ElementBounds {
+                x: 10,
+                y: 20,
+                width: 120,
+                height: 32,
+            }),
             is_visible: true,
             is_interactive: true,
         };
@@ -242,5 +259,6 @@ mod tests {
 
         assert_eq!(state.llm_representation(), "[1] <input> Name EvalOps");
         assert_eq!(state.element_count(), 1);
+        assert_eq!(state.selector_map[&1].bounds.expect("bounds").width, 120);
     }
 }

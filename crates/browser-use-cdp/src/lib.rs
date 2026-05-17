@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use browser_use_dom::{BrowserStateSummary, DomElementRef, SerializedDomState, TabInfo};
+use browser_use_dom::{
+    BrowserStateSummary, DomElementRef, ElementBounds, SerializedDomState, TabInfo,
+};
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   });
   return visible.slice(0, 400).map((el, offset) => {
+    const rect = el.getBoundingClientRect();
     const attrs = {};
     for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'role', 'title']) {
       const value = el.getAttribute(name);
@@ -54,6 +57,12 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       name,
       text,
       attributes: attrs,
+      bounds: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      },
       is_visible: true,
       is_interactive: true
     };
@@ -684,6 +693,7 @@ impl CdpBrowserSession {
             name: value.get("name").and_then(Value::as_str).map(str::to_owned),
             text: value.get("text").and_then(Value::as_str).map(str::to_owned),
             attributes,
+            bounds: element_bounds_from_value(value),
             is_visible: value
                 .get("is_visible")
                 .and_then(Value::as_bool)
@@ -694,6 +704,28 @@ impl CdpBrowserSession {
                 .unwrap_or(true),
         })
     }
+}
+
+fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
+    let bounds = value.get("bounds")?;
+    Some(ElementBounds {
+        x: bounds
+            .get("x")?
+            .as_i64()
+            .and_then(|x| i32::try_from(x).ok())?,
+        y: bounds
+            .get("y")?
+            .as_i64()
+            .and_then(|y| i32::try_from(y).ok())?,
+        width: bounds
+            .get("width")?
+            .as_u64()
+            .and_then(|width| u32::try_from(width).ok())?,
+        height: bounds
+            .get("height")?
+            .as_u64()
+            .and_then(|height| u32::try_from(height).ok())?,
+    })
 }
 
 fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
