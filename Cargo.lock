@@ -131,6 +131,7 @@ dependencies = [
  "browser-use-core",
  "browser-use-dom",
  "browser-use-llm",
+ "browser-use-mcp",
  "browser-use-tools",
  "clap",
  "schemars",

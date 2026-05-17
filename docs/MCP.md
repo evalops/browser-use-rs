@@ -15,3 +15,9 @@ Current tool contracts:
 Provider secrets are intentionally not part of MCP tool input schemas. A server
 implementation should read provider credentials from its process environment or
 host configuration.
+
+To inspect the manifest from the CLI:
+
+```sh
+browser-use-rs mcp-tools
+```

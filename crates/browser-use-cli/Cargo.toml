@@ -14,6 +14,7 @@ browser-use-cdp = { path = "../browser-use-cdp" }
 browser-use-core = { path = "../browser-use-core" }
 browser-use-dom = { path = "../browser-use-dom" }
 browser-use-llm = { path = "../browser-use-llm" }
+browser-use-mcp = { path = "../browser-use-mcp" }
 browser-use-tools = { path = "../browser-use-tools" }
 clap.workspace = true
 schemars.workspace = true

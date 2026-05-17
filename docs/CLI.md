@@ -10,6 +10,7 @@ prints or writes the result, and exits.
 browser-use-rs version-target
 browser-use-rs schema action
 browser-use-rs schema browser-state
+browser-use-rs mcp-tools
 browser-use-rs open <url>
 browser-use-rs state <url> [--screenshot]
 browser-use-rs screenshot <url> <output.png>

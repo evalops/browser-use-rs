@@ -25,6 +25,8 @@ enum Command {
     VersionTarget,
     /// Print a JSON Schema for a compatibility contract.
     Schema { contract: SchemaContract },
+    /// Print the MCP tool manifest JSON exposed by browser-use-mcp.
+    McpTools,
     /// Launch Chrome, navigate to a URL, print state JSON, then exit.
     Open { url: String },
     /// Launch Chrome, navigate to a URL, and print browser state JSON.
@@ -101,6 +103,12 @@ async fn main() -> anyhow::Result<()> {
                 SchemaContract::BrowserState => schema_for!(browser_use_dom::BrowserStateSummary),
             };
             println!("{}", serde_json::to_string_pretty(&schema)?);
+        }
+        Some(Command::McpTools) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&browser_use_mcp::tool_manifest_json())?
+            );
         }
         Some(Command::Open { url }) => {
             let session = launch_and_navigate(&url).await?;
