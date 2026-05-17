@@ -30,8 +30,8 @@ Implemented:
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, tab switching/closing, URL/title state,
   screenshots, PDF capture, file uploads, coordinate clicks, keyboard
-  text/special-key/shortcut events, scroll, and compact DOM-indexed browser
-  actions, including indexed element scrolling.
+  text/special-key/shortcut events, native/ARIA dropdown actions, scroll, and
+  compact DOM-indexed browser actions, including indexed element scrolling.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across

@@ -325,6 +325,100 @@ fn element_action_js(index: u32, action: &str) -> String {
     element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
+fn dropdown_options_js(index: u32) -> String {
+    element_eval_js(
+        index,
+        r#"
+  const textOf = (node) => (node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('value') || '').trim();
+  const isVisible = (node) => {
+    const style = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width >= 0 && rect.height >= 0;
+  };
+  const addOption = (seen, node) => {
+    if (!node || seen.has(node) || !isVisible(node)) return;
+    const text = textOf(node);
+    if (text) seen.set(node, text);
+  };
+  const collectOptions = (seen, root) => {
+    if (!root || !root.querySelectorAll) return;
+    for (const node of root.querySelectorAll('option, [role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [data-value]')) {
+      addOption(seen, node);
+    }
+  };
+  if (el.tagName.toLowerCase() === 'select') {
+    return JSON.stringify(Array.from(el.options).map((option) => (option.text || option.value || '').trim()).filter(Boolean));
+  }
+  const seen = new Map();
+  collectOptions(seen, el);
+  for (const attr of ['aria-controls', 'aria-owns']) {
+    for (const id of (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean)) {
+      collectOptions(seen, el.ownerDocument.getElementById(id));
+    }
+  }
+  const options = Array.from(seen.values());
+  if (options.length === 0) {
+    throw new Error('Element is not a select, ARIA listbox, combobox, or menu with visible options');
+  }
+  return JSON.stringify(options);
+"#,
+    )
+}
+
+fn select_dropdown_option_js(index: u32, text: &str) -> Result<String, BrowserError> {
+    let text_json =
+        serde_json::to_string(text).map_err(|error| BrowserError::Transport(error.to_string()))?;
+    Ok(element_eval_js(
+        index,
+        &format!(
+            r#"
+  const requested = {text_json};
+  const textOf = (node) => (node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('value') || '').trim();
+  const isVisible = (node) => {{
+    const style = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width >= 0 && rect.height >= 0;
+  }};
+  const matchesRequested = (node) => {{
+    return node.getAttribute('value') === requested || textOf(node) === requested;
+  }};
+  if (el.tagName.toLowerCase() === 'select') {{
+    const option = Array.from(el.options).find(matchesRequested);
+    if (!option) throw new Error(`No dropdown option found for ${{requested}}`);
+    el.value = option.value;
+    option.selected = true;
+    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    return true;
+  }}
+  const candidates = [];
+  const collectOptions = (root) => {{
+    if (!root || !root.querySelectorAll) return;
+    for (const node of root.querySelectorAll('option, [role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [data-value]')) {{
+      if (isVisible(node)) candidates.push(node);
+    }}
+  }};
+  collectOptions(el);
+  for (const attr of ['aria-controls', 'aria-owns']) {{
+    for (const id of (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean)) {{
+      collectOptions(el.ownerDocument.getElementById(id));
+    }}
+  }}
+  const option = candidates.find(matchesRequested);
+  if (!option) throw new Error(`No dropdown option found for ${{requested}}`);
+  option.setAttribute('aria-selected', 'true');
+  option.click();
+  option.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+  option.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  option.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  return true;
+"#
+        ),
+    ))
+}
+
 fn scroll_to_text_js(text: &str) -> Result<String, BrowserError> {
     let text =
         serde_json::to_string(text).map_err(|error| BrowserError::Transport(error.to_string()))?;
@@ -1728,15 +1822,7 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
-        let value = self
-            .evaluate_json(&element_eval_js(
-                index,
-                r#"
-  if (el.tagName.toLowerCase() !== 'select') throw new Error('Element is not a select');
-  return JSON.stringify(Array.from(el.options).map((option) => (option.text || option.value || '').trim()));
-"#,
-            ))
-            .await?;
+        let value = self.evaluate_json(&dropdown_options_js(index)).await?;
         let encoded = value.as_str().ok_or_else(|| {
             BrowserError::MissingResponseData("dropdown options string".to_owned())
         })?;
@@ -1744,27 +1830,8 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
-        let text_json = serde_json::to_string(text)
-            .map_err(|error| BrowserError::Transport(error.to_string()))?;
-        self.evaluate_effect(element_eval_js(
-            index,
-            &format!(
-                r#"
-  if (el.tagName.toLowerCase() !== 'select') throw new Error('Element is not a select');
-  const requested = {text_json};
-  const option = Array.from(el.options).find((candidate) => {{
-    return candidate.value === requested || (candidate.text || '').trim() === requested;
-  }});
-  if (!option) throw new Error(`No dropdown option found for ${{requested}}`);
-  el.value = option.value;
-  option.selected = true;
-  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-  el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-  return true;
-"#
-            ),
-        ))
-        .await
+        self.evaluate_effect(select_dropdown_option_js(index, text)?)
+            .await
     }
 
     async fn page_text(&self) -> Result<String, BrowserError> {
@@ -2469,6 +2536,20 @@ mod tests {
                 "windowsVirtualKeyCode": 34,
             })
         );
+    }
+
+    #[test]
+    fn dropdown_scripts_support_aria_options() {
+        let options_script = dropdown_options_js(2);
+        let select_script =
+            select_dropdown_option_js(2, r#"Two "quoted""#).expect("select dropdown script");
+
+        assert!(options_script.contains("aria-controls"));
+        assert!(options_script.contains(r#"[role="option"]"#));
+        assert!(options_script.contains("ARIA listbox"));
+        assert!(select_script.contains(r#"const requested = "Two \"quoted\"";"#));
+        assert!(select_script.contains("aria-selected"));
+        assert!(select_script.contains("MouseEvent('click'"));
     }
 
     #[test]
