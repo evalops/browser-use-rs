@@ -11,6 +11,10 @@ authors.workspace = true
 browser-use-dom = { path = "../browser-use-dom" }
 browser-use-llm = { path = "../browser-use-llm" }
 browser-use-tools = { path = "../browser-use-tools" }
+async-trait.workspace = true
 schemars.workspace = true
 serde.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

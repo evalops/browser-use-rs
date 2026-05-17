@@ -8,3 +8,6 @@ rust-version.workspace = true
 authors.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+browser-use-dom = { path = "../browser-use-dom" }
+thiserror.workspace = true

@@ -4,6 +4,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use async_trait::async_trait;
+
 pub use browser_use_dom::BrowserStateSummary;
 pub use browser_use_llm::{ChatMessage, ChatModel, ChatRequest};
 pub use browser_use_tools::BrowserAction;
@@ -167,9 +169,44 @@ impl AgentHistory {
     }
 }
 
+#[async_trait]
+pub trait ActionExecutor {
+    async fn execute(&mut self, action: &BrowserAction) -> ActionResult;
+}
+
+/// Execute actions with the same high-level guard shape as browser-use:
+/// stop on errors, stop on `done`, stop after sequence-terminating actions,
+/// and refuse `done` when it is queued after another action.
+pub async fn execute_action_sequence<E>(
+    executor: &mut E,
+    actions: &[BrowserAction],
+) -> Vec<ActionResult>
+where
+    E: ActionExecutor + Send,
+{
+    let mut results = Vec::new();
+
+    for (index, action) in actions.iter().enumerate() {
+        if index > 0 && matches!(action, BrowserAction::Done(_)) {
+            break;
+        }
+
+        let result = executor.execute(action).await;
+        let should_stop = result.is_done || result.error.is_some() || action.terminates_sequence();
+        results.push(result);
+
+        if should_stop {
+            break;
+        }
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use browser_use_tools::{ClickElementAction, DoneAction, NavigateAction};
 
     #[test]
     fn target_commit_is_pinned() {
@@ -213,5 +250,68 @@ mod tests {
         };
 
         assert_eq!(history.final_result(), Some("finished"));
+    }
+
+    struct RecordingExecutor {
+        seen: Vec<&'static str>,
+    }
+
+    #[async_trait]
+    impl ActionExecutor for RecordingExecutor {
+        async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
+            self.seen.push(action.name());
+            ActionResult {
+                extracted_content: Some(action.name().to_owned()),
+                error: None,
+                long_term_memory: None,
+                include_extracted_content_only_once: false,
+                include_in_memory: false,
+                is_done: matches!(action, BrowserAction::Done(_)),
+                success: None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn action_sequence_stops_after_navigation() {
+        let actions = vec![
+            BrowserAction::Navigate(NavigateAction {
+                url: "https://example.com".to_owned(),
+                new_tab: false,
+            }),
+            BrowserAction::Click(ClickElementAction {
+                index: Some(1),
+                coordinate_x: None,
+                coordinate_y: None,
+            }),
+        ];
+        let mut executor = RecordingExecutor { seen: Vec::new() };
+
+        let results = execute_action_sequence(&mut executor, &actions).await;
+
+        assert_eq!(executor.seen, vec!["navigate"]);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn done_is_only_executed_when_first_action() {
+        let actions = vec![
+            BrowserAction::Click(ClickElementAction {
+                index: Some(1),
+                coordinate_x: None,
+                coordinate_y: None,
+            }),
+            BrowserAction::Done(DoneAction {
+                text: "finished".to_owned(),
+                success: true,
+                files_to_display: vec![],
+            }),
+        ];
+        let mut executor = RecordingExecutor { seen: Vec::new() };
+
+        let results = execute_action_sequence(&mut executor, &actions).await;
+
+        assert_eq!(executor.seen, vec!["click"]);
+        assert_eq!(results.len(), 1);
     }
 }
