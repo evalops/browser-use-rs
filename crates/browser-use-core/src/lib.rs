@@ -548,18 +548,10 @@ where
             )
             .map_err(BrowserError::ActionFailed)?;
 
-            if matches.is_empty() {
-                Ok(ActionResult::extracted(format!(
-                    "No page matches for '{}'",
-                    params.pattern
-                )))
-            } else {
-                Ok(ActionResult::extracted(format!(
-                    "Page matches for '{}':\n{}",
-                    params.pattern,
-                    matches.join("\n")
-                )))
-            }
+            Ok(ActionResult::extracted(format_search_page_results(
+                &params.pattern,
+                &matches,
+            )))
         }
         BrowserAction::FindElements(params) => {
             let attributes = params
@@ -574,13 +566,9 @@ where
                     params.include_text,
                 )
                 .await?;
-            let rendered = serde_json::to_string_pretty(&elements)
-                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-            Ok(ActionResult::extracted(format!(
-                "Found {} elements for selector '{}':\n{}",
-                elements.len(),
-                params.selector,
-                rendered
+            Ok(ActionResult::extracted(format_find_elements_results(
+                &params.selector,
+                &elements,
             )))
         }
         BrowserAction::GetDropdownOptions(params) => {
@@ -1193,6 +1181,12 @@ pub fn search_url(engine: &SearchEngine, query: &str) -> String {
     }
 }
 
+struct SearchTextResult {
+    matches: Vec<String>,
+    total: usize,
+    has_more: bool,
+}
+
 fn search_text_matches(
     text: &str,
     pattern: &str,
@@ -1200,9 +1194,13 @@ fn search_text_matches(
     case_sensitive: bool,
     context_chars: usize,
     max_results: usize,
-) -> Result<Vec<String>, String> {
+) -> Result<SearchTextResult, String> {
     if pattern.is_empty() || max_results == 0 {
-        return Ok(Vec::new());
+        return Ok(SearchTextResult {
+            matches: Vec::new(),
+            total: 0,
+            has_more: false,
+        });
     }
 
     let pattern = if regex {
@@ -1215,14 +1213,118 @@ fn search_text_matches(
         .build()
         .map_err(|error| error.to_string())?;
 
-    Ok(matcher
-        .find_iter(text)
-        .take(max_results)
-        .map(|hit| context_snippet(text, hit.start(), hit.end(), context_chars))
-        .collect())
+    let mut matches = Vec::new();
+    let mut total = 0;
+    for hit in matcher.find_iter(text) {
+        total += 1;
+        if matches.len() < max_results {
+            matches.push(context_snippet(text, hit.start(), hit.end(), context_chars));
+        }
+    }
+
+    Ok(SearchTextResult {
+        has_more: total > matches.len(),
+        matches,
+        total,
+    })
+}
+
+fn format_search_page_results(pattern: &str, result: &SearchTextResult) -> String {
+    if result.total == 0 {
+        return format!("No matches found for \"{pattern}\" on page.");
+    }
+
+    let mut lines = vec![format!(
+        "Found {} {} for \"{pattern}\" on page:",
+        result.total,
+        if result.total == 1 {
+            "match"
+        } else {
+            "matches"
+        }
+    )];
+    lines.push(String::new());
+    lines.extend(
+        result
+            .matches
+            .iter()
+            .enumerate()
+            .map(|(index, context)| format!("[{}] {context}", index + 1)),
+    );
+
+    if result.has_more {
+        lines.push(format!(
+            "\n... showing {} of {} total matches. Increase max_results to see more.",
+            result.matches.len(),
+            result.total
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn format_find_elements_results(selector: &str, elements: &[FoundElement]) -> String {
+    if elements.is_empty() {
+        return format!("No elements found matching \"{selector}\".");
+    }
+
+    let mut lines = vec![format!(
+        "Found {} {} matching \"{selector}\":",
+        elements.len(),
+        if elements.len() == 1 {
+            "element"
+        } else {
+            "elements"
+        }
+    )];
+    lines.push(String::new());
+    lines.extend(
+        elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| format_found_element(index, element)),
+    );
+    lines.join("\n")
+}
+
+fn format_found_element(index: usize, element: &FoundElement) -> String {
+    let mut parts = vec![format!("[{index}] <{}>", element.tag_name)];
+    if let Some(text) = element
+        .text
+        .as_deref()
+        .map(collapse_whitespace)
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(format!("\"{}\"", truncate_chars(&text, 120)));
+    }
+    if !element.attributes.is_empty() {
+        let attrs = element
+            .attributes
+            .iter()
+            .map(|(key, value)| format!("{key}=\"{}\"", truncate_chars(value, 500)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("{{{attrs}}}"));
+    }
+    parts.join(" ")
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    let mut truncated = text.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn context_snippet(text: &str, start: usize, end: usize, context_chars: usize) -> String {
+    let has_prefix = text[..start].chars().count() > context_chars;
+    let has_suffix = text[end..].chars().count() > context_chars;
     let prefix: String = text[..start]
         .chars()
         .rev()
@@ -1232,7 +1334,12 @@ fn context_snippet(text: &str, start: usize, end: usize, context_chars: usize) -
         .rev()
         .collect();
     let suffix: String = text[end..].chars().take(context_chars).collect();
-    format!("{prefix}{}{suffix}", &text[start..end])
+    format!(
+        "{}{prefix}{}{suffix}{}",
+        if has_prefix { "..." } else { "" },
+        &text[start..end],
+        if has_suffix { "..." } else { "" }
+    )
 }
 
 #[derive(Debug, Error)]
@@ -2675,6 +2782,9 @@ mod tests {
             .await;
 
         let content = result.extracted_content.expect("search content");
+        assert!(content.contains("Found 2 matches for \"evalops\" on page:"));
+        assert!(content.contains("[1] ...lpha EvalOps Beta..."));
+        assert!(content.contains("[2] ...cond EvalOps line"));
         assert!(content.contains("EvalOps"));
         assert_eq!(content.matches("EvalOps").count(), 2);
     }
@@ -2694,6 +2804,8 @@ mod tests {
             .await;
 
         let content = result.extracted_content.expect("find content");
+        assert!(content.contains("Found 1 element matching \"button\":"));
+        assert!(content.contains("[0] <button> \"Run EvalOps\" {id=\"run\"}"));
         assert!(content.contains("Run EvalOps"));
         assert_eq!(
             executor.session().events(),
