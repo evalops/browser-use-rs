@@ -1,0 +1,27 @@
+{
+  "text": "[1] <button> Run\n[2] <input> Name EvalOps",
+  "selector_map": {
+    "1": {
+      "index": 1,
+      "target_id": "fixture-target",
+      "backend_node_id": 0,
+      "tag_name": "button",
+      "name": "Run",
+      "text": "Run",
+      "attributes": {},
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "2": {
+      "index": 2,
+      "target_id": "fixture-target",
+      "backend_node_id": 0,
+      "tag_name": "input",
+      "name": "Name",
+      "text": "EvalOps",
+      "attributes": {},
+      "is_visible": true,
+      "is_interactive": true
+    }
+  }
+}
