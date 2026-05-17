@@ -1,6 +1,6 @@
 //! Chrome DevTools Protocol browser-session layer.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use browser_use_dom::BrowserStateSummary;
@@ -12,6 +12,8 @@ use thiserror::Error;
 pub enum BrowserError {
     #[error("browser is not connected")]
     NotConnected,
+    #[error("Chrome/Chromium executable not found; checked: {0:?}")]
+    ExecutableNotFound(Vec<PathBuf>),
     #[error("navigation failed: {0}")]
     NavigationFailed(String),
     #[error("action failed: {0}")]
@@ -95,6 +97,14 @@ fn default_headless() -> bool {
 }
 
 impl BrowserProfile {
+    pub fn resolve_executable(&self) -> Result<PathBuf, BrowserError> {
+        resolve_chrome_executable(
+            self.executable_path.as_deref(),
+            std::env::var_os("BROWSER_USE_CHROME").map(PathBuf::from),
+            default_chrome_candidates(),
+        )
+    }
+
     #[must_use]
     pub fn launch_plan(&self) -> BrowserLaunchPlan {
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
@@ -127,6 +137,85 @@ impl BrowserProfile {
             args,
         }
     }
+}
+
+pub fn resolve_chrome_executable<I>(
+    explicit_path: Option<&Path>,
+    env_override: Option<PathBuf>,
+    candidates: I,
+) -> Result<PathBuf, BrowserError>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut checked = Vec::new();
+
+    if let Some(path) = explicit_path {
+        checked.push(path.to_path_buf());
+        if path.exists() {
+            return Ok(path.to_path_buf());
+        }
+    }
+
+    if let Some(path) = env_override {
+        checked.push(path.clone());
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    for path in candidates {
+        checked.push(path.clone());
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    Err(BrowserError::ExecutableNotFound(checked))
+}
+
+#[must_use]
+pub fn default_chrome_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ));
+        candidates.push(PathBuf::from(
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ));
+        candidates.push(PathBuf::from(
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        candidates.push(PathBuf::from("/usr/bin/google-chrome"));
+        candidates.push(PathBuf::from("/usr/bin/google-chrome-stable"));
+        candidates.push(PathBuf::from("/usr/bin/chromium"));
+        candidates.push(PathBuf::from("/usr/bin/chromium-browser"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(program_files) = std::env::var_os("PROGRAMFILES") {
+            candidates
+                .push(PathBuf::from(program_files).join("Google/Chrome/Application/chrome.exe"));
+        }
+        if let Some(program_files_x86) = std::env::var_os("PROGRAMFILES(X86)") {
+            candidates.push(
+                PathBuf::from(program_files_x86).join("Google/Chrome/Application/chrome.exe"),
+            );
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            candidates
+                .push(PathBuf::from(local_app_data).join("Google/Chrome/Application/chrome.exe"));
+        }
+    }
+
+    candidates
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -259,5 +348,26 @@ mod tests {
             endpoint.websocket_url,
             "ws://127.0.0.1:38119/devtools/browser/abc123"
         );
+    }
+
+    #[test]
+    fn executable_resolution_prefers_explicit_path() {
+        let current_exe = std::env::current_exe().expect("current exe");
+        let resolved = resolve_chrome_executable(Some(&current_exe), None, Vec::<PathBuf>::new())
+            .expect("resolve executable");
+
+        assert_eq!(resolved, current_exe);
+    }
+
+    #[test]
+    fn executable_resolution_reports_checked_paths() {
+        let missing = PathBuf::from("/definitely/not/a/chrome");
+        let error = resolve_chrome_executable(None, None, vec![missing.clone()])
+            .expect_err("missing executable");
+
+        match error {
+            BrowserError::ExecutableNotFound(checked) => assert_eq!(checked, vec![missing]),
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }
