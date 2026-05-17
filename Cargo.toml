@@ -21,6 +21,7 @@ authors = ["EvalOps"]
 [workspace.dependencies]
 anyhow = "1.0.98"
 async-trait = "0.1.88"
+base64 = "0.22.1"
 clap = { version = "4.5.40", features = ["derive", "env"] }
 futures-util = "0.3.31"
 schemars = { version = "0.8.22", features = ["derive", "uuid1"] }

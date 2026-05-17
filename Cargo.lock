@@ -70,6 +70,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -105,12 +111,15 @@ name = "browser-use-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
+ "browser-use-cdp",
  "browser-use-core",
  "browser-use-dom",
  "browser-use-tools",
  "clap",
  "schemars",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
