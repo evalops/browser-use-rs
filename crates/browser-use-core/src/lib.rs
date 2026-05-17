@@ -2,6 +2,8 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
 use uuid::Uuid;
 
 use async_trait::async_trait;
@@ -9,7 +11,9 @@ use browser_use_cdp::{BrowserError, BrowserSession};
 use url::form_urlencoded;
 
 pub use browser_use_dom::BrowserStateSummary;
-pub use browser_use_llm::{ChatMessage, ChatModel, ChatRequest};
+pub use browser_use_llm::{
+    ChatCompletion, ChatMessage, ChatModel, ChatRequest, LlmError, MessageRole,
+};
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
 /// Version of the upstream browser-use source that this crate initially targets.
@@ -329,6 +333,88 @@ pub fn search_url(engine: &SearchEngine, query: &str) -> String {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum AgentRunError {
+    #[error(transparent)]
+    Browser(#[from] BrowserError),
+    #[error(transparent)]
+    Llm(#[from] LlmError),
+    #[error("invalid agent output: {0}")]
+    InvalidOutput(String),
+}
+
+pub struct Agent<M, S> {
+    task: String,
+    llm: M,
+    executor: BrowserActionExecutor<S>,
+    history: AgentHistory,
+}
+
+impl<M, S> Agent<M, S>
+where
+    M: ChatModel,
+    S: BrowserSession + Send + Sync,
+{
+    #[must_use]
+    pub fn new(task: impl Into<String>, llm: M, session: S) -> Self {
+        Self {
+            task: task.into(),
+            llm,
+            executor: BrowserActionExecutor::new(session),
+            history: AgentHistory::default(),
+        }
+    }
+
+    pub fn history(&self) -> &AgentHistory {
+        &self.history
+    }
+
+    pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        let state = self.executor.session().state(true).await?;
+        let request = build_step_request(&self.task, &state)?;
+        let completion = self.llm.invoke_json(request).await?;
+        let model_output: AgentOutput = serde_json::from_value(completion.content)
+            .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+        let result = execute_action_sequence(&mut self.executor, &model_output.action).await;
+
+        self.history.items.push(AgentHistoryItem {
+            model_output: Some(model_output),
+            result,
+            state,
+        });
+
+        self.history
+            .items
+            .last()
+            .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
+    }
+}
+
+pub fn build_step_request(
+    task: &str,
+    state: &BrowserStateSummary,
+) -> Result<ChatRequest, AgentRunError> {
+    let state_json = serde_json::to_string_pretty(state)
+        .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+    Ok(ChatRequest {
+        messages: vec![
+            ChatMessage::text(
+                MessageRole::System,
+                "You are controlling a browser. Return a JSON object matching AgentOutput.",
+            ),
+            ChatMessage::text(
+                MessageRole::User,
+                format!("Task:\n{task}\n\nBrowser state:\n{state_json}"),
+            ),
+        ],
+        output_schema: Some(schema_for_agent_output()),
+    })
+}
+
+fn schema_for_agent_output() -> Value {
+    serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
+}
+
 /// Execute actions with the same high-level guard shape as browser-use:
 /// stop on errors, stop on `done`, stop after sequence-terminating actions,
 /// and refuse `done` when it is queued after another action.
@@ -591,6 +677,67 @@ mod tests {
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
         );
+    }
+
+    struct StaticModel {
+        output: Value,
+    }
+
+    #[async_trait]
+    impl ChatModel for StaticModel {
+        fn provider(&self) -> &str {
+            "test"
+        }
+
+        fn model(&self) -> &str {
+            "static"
+        }
+
+        async fn invoke_json(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatCompletion<Value>, LlmError> {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|message| message.role == MessageRole::User)
+            );
+            assert!(request.output_schema.is_some());
+            Ok(ChatCompletion {
+                model: self.model().to_owned(),
+                content: self.output.clone(),
+                raw_response: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_step_records_done_history() {
+        let output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "finished",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "finish the task",
+            StaticModel { output },
+            MockSession::new(),
+        );
+
+        let item = agent.step().await.expect("agent step");
+
+        assert_eq!(item.result, vec![ActionResult::done("finished", true)]);
+        assert_eq!(agent.history().final_result(), Some("finished"));
     }
 
     #[test]
