@@ -42,17 +42,29 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   };
   const elements = [];
-  const visitNode = (node) => {
+  const visitFrame = (iframe, offset) => {
+    if (!isVisible(iframe)) return;
+    try {
+      const frameDocument = iframe.contentDocument;
+      if (!frameDocument) return;
+      const rect = iframe.getBoundingClientRect();
+      visitChildren(frameDocument, { x: offset.x + rect.x, y: offset.y + rect.y });
+    } catch (_) {
+      return;
+    }
+  };
+  const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
-    if (node.matches(selector) && isVisible(node)) elements.push(node);
-    if (node.shadowRoot) visitChildren(node.shadowRoot);
-    visitChildren(node);
+    if (node.matches(selector) && isVisible(node)) elements.push({ el: node, offset });
+    if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
+    if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
+    visitChildren(node, offset);
   };
-  const visitChildren = (root) => {
-    for (const child of Array.from(root.children || [])) visitNode(child);
+  const visitChildren = (root, offset) => {
+    for (const child of Array.from(root.children || [])) visitNode(child, offset);
   };
-  visitChildren(document);
-  return elements.slice(0, 400).map((el, offset) => {
+  visitChildren(document, { x: 0, y: 0 });
+  return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
     for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'role', 'title']) {
@@ -62,15 +74,15 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const text = (el.innerText || el.value || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || text || '').trim();
     return {
-      index: offset + 1,
+      index: index + 1,
       tag_name: el.tagName.toLowerCase(),
       role: el.getAttribute('role'),
       name,
       text,
       attributes: attrs,
       bounds: {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
+        x: Math.round(rect.x + offset.x),
+        y: Math.round(rect.y + offset.y),
         width: Math.round(rect.width),
         height: Math.round(rect.height)
       },
@@ -139,16 +151,28 @@ fn element_eval_js(index: u32, body: &str) -> String {
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   }};
   const elements = [];
-  const visitNode = (node) => {{
+  const visitFrame = (iframe, offset) => {{
+    if (!isVisible(iframe)) return;
+    try {{
+      const frameDocument = iframe.contentDocument;
+      if (!frameDocument) return;
+      const rect = iframe.getBoundingClientRect();
+      visitChildren(frameDocument, {{ x: offset.x + rect.x, y: offset.y + rect.y }});
+    }} catch (_) {{
+      return;
+    }}
+  }};
+  const visitNode = (node, offset) => {{
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (node.matches(selector) && isVisible(node)) elements.push(node);
-    if (node.shadowRoot) visitChildren(node.shadowRoot);
-    visitChildren(node);
+    if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
+    if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
+    visitChildren(node, offset);
   }};
-  const visitChildren = (root) => {{
-    for (const child of Array.from(root.children || [])) visitNode(child);
+  const visitChildren = (root, offset) => {{
+    for (const child of Array.from(root.children || [])) visitNode(child, offset);
   }};
-  visitChildren(document);
+  visitChildren(document, {{ x: 0, y: 0 }});
   const el = elements[{zero_based}];
   if (!el) throw new Error('No interactive element found for index {index}');
   el.scrollIntoView({{ block: 'center', inline: 'center' }});
@@ -1649,6 +1673,50 @@ mod tests {
             "DOM state did not include shadow input value: {}",
             state.dom_state.llm_representation()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_can_index_same_origin_iframe_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>iframe smoke</title></head><body><script>const iframe=document.createElement('iframe');iframe.srcdoc='<button onclick=\"parent.document.title=&quot;iframe clicked&quot;\">Frame click</button><input placeholder=\"Frame name\">';document.body.appendChild(iframe);</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(200)).await;
+
+        let initial_state = session.state(false).await.expect("initial state");
+        assert_eq!(initial_state.dom_state.element_count(), 2);
+        assert!(
+            initial_state
+                .dom_state
+                .llm_representation()
+                .contains("Frame click")
+        );
+
+        session.click(1).await.expect("iframe click");
+        session
+            .input_text(2, "EvalOps", true)
+            .await
+            .expect("iframe input");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("iframe state");
+        assert_eq!(state.title, "iframe clicked");
+        let iframe_input_value = session
+            .evaluate_json(
+                "document.querySelector('iframe').contentDocument.querySelector('input').value",
+            )
+            .await
+            .expect("iframe input value");
+        assert_eq!(iframe_input_value.as_str(), Some("EvalOps"));
     }
 
     #[tokio::test]
