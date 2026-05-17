@@ -1,5 +1,6 @@
 //! Chrome DevTools Protocol browser-session layer.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -175,6 +176,15 @@ pub struct Screenshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pdf {
     pub base64_pdf: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FoundElement {
+    pub tag_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1042,6 +1052,65 @@ impl BrowserSession for CdpBrowserSession {
         .await
     }
 
+    async fn page_text(&self) -> Result<String, BrowserError> {
+        let value = self
+            .evaluate_json(
+                "(document.body ? document.body.innerText : document.documentElement.innerText || '')",
+            )
+            .await?;
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| BrowserError::MissingResponseData("page text".to_owned()))
+    }
+
+    async fn find_elements(
+        &self,
+        selector: &str,
+        attributes: &[String],
+        max_results: usize,
+        include_text: bool,
+    ) -> Result<Vec<FoundElement>, BrowserError> {
+        let selector_json = serde_json::to_string(selector)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let attributes_json = serde_json::to_string(attributes)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let value = self
+            .evaluate_json(&format!(
+                r#"
+JSON.stringify((() => {{
+  const selector = {selector_json};
+  const attributeNames = {attributes_json};
+  return Array.from(document.querySelectorAll(selector)).slice(0, {max_results}).map((el) => {{
+    const attrs = {{}};
+    for (const name of attributeNames) {{
+      const value = el.getAttribute(name);
+      if (value !== null && value !== '') attrs[name] = value;
+    }}
+    return {{
+      tag_name: el.tagName.toLowerCase(),
+      text: {text_expr},
+      attributes: attrs
+    }};
+  }});
+}})())
+"#,
+                selector_json = selector_json,
+                attributes_json = attributes_json,
+                max_results = max_results,
+                text_expr = if include_text {
+                    "(el.innerText || el.value || '').trim().slice(0, 500)"
+                } else {
+                    "null"
+                }
+            ))
+            .await?;
+        let encoded = value.as_str().ok_or_else(|| {
+            BrowserError::MissingResponseData("find elements result string".to_owned())
+        })?;
+        serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
+    }
+
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
         self.connection
             .command(
@@ -1138,6 +1207,16 @@ pub trait BrowserSession: Send + Sync {
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError>;
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
+
+    async fn page_text(&self) -> Result<String, BrowserError>;
+
+    async fn find_elements(
+        &self,
+        selector: &str,
+        attributes: &[String],
+        max_results: usize,
+        include_text: bool,
+    ) -> Result<Vec<FoundElement>, BrowserError>;
 
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError>;
 

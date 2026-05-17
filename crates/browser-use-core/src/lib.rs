@@ -310,6 +310,83 @@ where
             })
         }
         BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
+        BrowserAction::Extract(params) => {
+            let text = session.page_text().await?;
+            let extracted: String = text
+                .chars()
+                .skip(params.start_from_char)
+                .take(4_000)
+                .collect();
+            Ok(ActionResult {
+                extracted_content: Some(format!(
+                    "Extracted page content for '{}':\n{}",
+                    params.query, extracted
+                )),
+                error: None,
+                long_term_memory: Some(extracted),
+                include_extracted_content_only_once: true,
+                include_in_memory: true,
+                is_done: false,
+                success: None,
+            })
+        }
+        BrowserAction::SearchPage(params) => {
+            let text = if let Some(scope) = &params.css_scope {
+                session
+                    .find_elements(scope, &[], params.max_results.max(1), true)
+                    .await?
+                    .into_iter()
+                    .filter_map(|element| element.text)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                session.page_text().await?
+            };
+            let matches = search_text_matches(
+                &text,
+                &params.pattern,
+                params.regex,
+                params.case_sensitive,
+                params.context_chars,
+                params.max_results,
+            )
+            .map_err(BrowserError::ActionFailed)?;
+
+            if matches.is_empty() {
+                Ok(ActionResult::extracted(format!(
+                    "No page matches for '{}'",
+                    params.pattern
+                )))
+            } else {
+                Ok(ActionResult::extracted(format!(
+                    "Page matches for '{}':\n{}",
+                    params.pattern,
+                    matches.join("\n")
+                )))
+            }
+        }
+        BrowserAction::FindElements(params) => {
+            let attributes = params
+                .attributes
+                .clone()
+                .unwrap_or_else(default_find_element_attributes);
+            let elements = session
+                .find_elements(
+                    &params.selector,
+                    &attributes,
+                    params.max_results,
+                    params.include_text,
+                )
+                .await?;
+            let rendered = serde_json::to_string_pretty(&elements)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            Ok(ActionResult::extracted(format!(
+                "Found {} elements for selector '{}':\n{}",
+                elements.len(),
+                params.selector,
+                rendered
+            )))
+        }
         BrowserAction::GetDropdownOptions(params) => {
             let options = session.dropdown_options(params.index).await?;
             Ok(ActionResult::extracted(format!(
@@ -373,16 +450,30 @@ where
                 })
             }
         }
-        BrowserAction::Extract(_)
-        | BrowserAction::SearchPage(_)
-        | BrowserAction::FindElements(_)
-        | BrowserAction::SwitchTab(_)
-        | BrowserAction::CloseTab(_)
-        | BrowserAction::UploadFile(_) => Ok(ActionResult::error(format!(
-            "action not implemented yet: {}",
-            action.name()
-        ))),
+        BrowserAction::SwitchTab(_) | BrowserAction::CloseTab(_) | BrowserAction::UploadFile(_) => {
+            Ok(ActionResult::error(format!(
+                "action not implemented yet: {}",
+                action.name()
+            )))
+        }
     }
+}
+
+fn default_find_element_attributes() -> Vec<String> {
+    [
+        "id",
+        "class",
+        "name",
+        "type",
+        "placeholder",
+        "href",
+        "aria-label",
+        "role",
+        "title",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 #[must_use]
@@ -393,6 +484,48 @@ pub fn search_url(engine: &SearchEngine, query: &str) -> String {
         SearchEngine::Google => format!("https://www.google.com/search?q={encoded}&udm=14"),
         SearchEngine::Bing => format!("https://www.bing.com/search?q={encoded}"),
     }
+}
+
+fn search_text_matches(
+    text: &str,
+    pattern: &str,
+    regex: bool,
+    case_sensitive: bool,
+    context_chars: usize,
+    max_results: usize,
+) -> Result<Vec<String>, String> {
+    if pattern.is_empty() || max_results == 0 {
+        return Ok(Vec::new());
+    }
+
+    let pattern = if regex {
+        pattern.to_owned()
+    } else {
+        regex::escape(pattern)
+    };
+    let matcher = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    Ok(matcher
+        .find_iter(text)
+        .take(max_results)
+        .map(|hit| context_snippet(text, hit.start(), hit.end(), context_chars))
+        .collect())
+}
+
+fn context_snippet(text: &str, start: usize, end: usize, context_chars: usize) -> String {
+    let prefix: String = text[..start]
+        .chars()
+        .rev()
+        .take(context_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let suffix: String = text[end..].chars().take(context_chars).collect();
+    format!("{prefix}{}{suffix}", &text[start..end])
 }
 
 #[derive(Debug, Error)]
@@ -612,13 +745,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use browser_use_cdp::{Pdf, Screenshot};
+    use browser_use_cdp::{FoundElement, Pdf, Screenshot};
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
-        ClickElementAction, DoneAction, GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction,
+        ClickElementAction, DoneAction, ExtractAction, FindElementsAction,
+        GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction, SearchPageAction,
         SelectDropdownOptionAction, SendKeysAction,
     };
-    use std::{collections::VecDeque, sync::Mutex};
+    use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
     #[test]
     fn target_commit_is_pinned() {
@@ -824,6 +958,34 @@ mod tests {
             Ok(())
         }
 
+        async fn page_text(&self) -> Result<String, BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push("page_text".to_owned());
+            Ok("Alpha EvalOps Beta\nSecond EvalOps line".to_owned())
+        }
+
+        async fn find_elements(
+            &self,
+            selector: &str,
+            attributes: &[String],
+            max_results: usize,
+            include_text: bool,
+        ) -> Result<Vec<FoundElement>, BrowserError> {
+            self.events.lock().expect("events lock").push(format!(
+                "find_elements:{selector}:{}:{max_results}:{include_text}",
+                attributes.join("|")
+            ));
+            let mut attrs = BTreeMap::new();
+            attrs.insert("id".to_owned(), "run".to_owned());
+            Ok(vec![FoundElement {
+                tag_name: "button".to_owned(),
+                text: include_text.then(|| "Run EvalOps".to_owned()),
+                attributes: attrs,
+            }])
+        }
+
         async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
             self.events
                 .lock()
@@ -957,6 +1119,70 @@ mod tests {
         assert_eq!(
             executor.session().events(),
             vec!["save_pdf:true:false:1:Letter"]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_extracts_page_text() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Extract(ExtractAction {
+                query: "company".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 6,
+                output_schema: None,
+                already_collected: vec![],
+            }))
+            .await;
+
+        let content = result.extracted_content.expect("extracted content");
+        assert!(content.contains("EvalOps Beta"));
+        assert_eq!(executor.session().events(), vec!["page_text"]);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_searches_page_text() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::SearchPage(SearchPageAction {
+                pattern: "evalops".to_owned(),
+                regex: false,
+                case_sensitive: false,
+                context_chars: 5,
+                css_scope: None,
+                max_results: 2,
+            }))
+            .await;
+
+        let content = result.extracted_content.expect("search content");
+        assert!(content.contains("EvalOps"));
+        assert_eq!(content.matches("EvalOps").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_finds_css_elements() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::FindElements(FindElementsAction {
+                selector: "button".to_owned(),
+                attributes: Some(vec!["id".to_owned()]),
+                max_results: 3,
+                include_text: true,
+            }))
+            .await;
+
+        let content = result.extracted_content.expect("find content");
+        assert!(content.contains("Run EvalOps"));
+        assert_eq!(
+            executor.session().events(),
+            vec!["find_elements:button:id:3:true"]
         );
     }
 
@@ -1152,8 +1378,9 @@ mod tests {
             "current_state": {},
             "action": [
                 {
-                    "find_elements": {
-                        "selector": "button"
+                    "upload_file": {
+                        "index": 1,
+                        "path": "/tmp/missing.txt"
                     }
                 }
             ]
