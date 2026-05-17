@@ -137,6 +137,8 @@ pub struct ActionResult {
     pub is_done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub success: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 impl ActionResult {
@@ -151,6 +153,7 @@ impl ActionResult {
             include_in_memory: false,
             is_done: false,
             success: None,
+            metadata: None,
         }
     }
 
@@ -164,6 +167,7 @@ impl ActionResult {
             include_in_memory: true,
             is_done: false,
             success: None,
+            metadata: None,
         }
     }
 
@@ -177,6 +181,7 @@ impl ActionResult {
             include_in_memory: true,
             is_done: true,
             success: Some(success),
+            metadata: None,
         }
     }
 }
@@ -427,6 +432,7 @@ where
                     include_in_memory: false,
                     is_done: false,
                     success: None,
+                    metadata: None,
                 })
             }
         }
@@ -449,6 +455,7 @@ where
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    metadata: None,
                 })
             }
             Err(error) => Ok(ActionResult::error(format!(
@@ -487,6 +494,7 @@ where
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    metadata: None,
                 })
             } else {
                 Ok(ActionResult {
@@ -497,6 +505,7 @@ where
                     include_in_memory: false,
                     is_done: false,
                     success: None,
+                    metadata: None,
                 })
             }
         }
@@ -645,6 +654,7 @@ where
                 include_in_memory: true,
                 is_done: false,
                 success: None,
+                metadata: None,
             })
         }
         BrowserAction::UploadFile(params) => {
@@ -748,6 +758,17 @@ fn extract_action_result(
         include_in_memory: true,
         is_done: false,
         success: None,
+        metadata: extract_metadata(
+            params,
+            total_chars,
+            params.start_from_char,
+            content.chars().count(),
+            truncated,
+            next_start_char,
+            extract_images,
+            links.map_or(0, <[FoundElement]>::len),
+            images.map_or(0, <[FoundElement]>::len),
+        ),
     }
 }
 
@@ -776,6 +797,41 @@ fn extract_content_stats(
         ));
     }
     stats
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_metadata(
+    params: &browser_use_tools::ExtractAction,
+    original_chars: usize,
+    start_from_char: usize,
+    content_chars: usize,
+    truncated: bool,
+    next_start_char: usize,
+    extract_images: bool,
+    links_count: usize,
+    images_count: usize,
+) -> Option<Value> {
+    let schema = params.output_schema.as_ref()?;
+    Some(serde_json::json!({
+        "structured_extraction": true,
+        "schema_used": schema,
+        "is_partial": truncated,
+        "content_stats": {
+            "method": "page_text",
+            "original_text_chars": original_chars,
+            "final_filtered_chars": original_chars,
+            "started_from_char": start_from_char,
+            "returned_chars": content_chars,
+            "next_start_char": if truncated { Some(next_start_char) } else { None::<usize> },
+        },
+        "options": {
+            "extract_links": params.extract_links,
+            "extract_images": extract_images,
+            "links_count": links_count,
+            "images_count": images_count,
+            "already_collected_count": params.already_collected.len(),
+        }
+    }))
 }
 
 fn render_extract_envelope(
@@ -1060,6 +1116,7 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
         include_in_memory: true,
         is_done: false,
         success: None,
+        metadata: None,
     })
 }
 
@@ -1876,6 +1933,7 @@ mod tests {
                 include_in_memory: false,
                 is_done: matches!(action, BrowserAction::Done(_)),
                 success: None,
+                metadata: None,
             }
         }
     }
@@ -2822,6 +2880,15 @@ mod tests {
         assert!(content.contains("<images>\n- Hero shot: https://evalops.dev/hero.png\n</images>"));
         assert!(content.contains("<already_collected>"));
         assert!(content.contains("- Existing product"));
+        let metadata = result.metadata.expect("extract metadata");
+        assert_eq!(metadata["structured_extraction"], true);
+        assert_eq!(metadata["schema_used"]["type"], "object");
+        assert_eq!(metadata["is_partial"], false);
+        assert_eq!(metadata["content_stats"]["method"], "page_text");
+        assert_eq!(metadata["options"]["extract_links"], true);
+        assert_eq!(metadata["options"]["extract_images"], true);
+        assert_eq!(metadata["options"]["links_count"], 1);
+        assert_eq!(metadata["options"]["images_count"], 1);
         assert_eq!(
             executor.session().events(),
             vec![
@@ -3433,6 +3500,7 @@ mod tests {
                         include_in_memory: true,
                         is_done: false,
                         success: None,
+                        metadata: None,
                     }],
                     state: blank_state(),
                 },
@@ -3464,6 +3532,7 @@ mod tests {
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    metadata: None,
                 }],
                 state: blank_state(),
             }],
