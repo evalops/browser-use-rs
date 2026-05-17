@@ -40,10 +40,11 @@ Implemented:
 - One-shot CLI agent command backed by explicit provider selection.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs.
+- Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
 
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Add a network daemon API on top of the persistent session registry.
+2. Harden the network daemon with HTTP, auth, and supervision options.
 3. Expand agent planning, replay/conformance fixtures, and provider parity
    beyond OpenAI-compatible and Anthropic.

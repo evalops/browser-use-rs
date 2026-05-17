@@ -12,6 +12,7 @@ use clap::Parser;
 use schemars::schema_for;
 use serde_json::Value;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::sleep;
 
 #[derive(Debug, Parser)]
@@ -34,6 +35,11 @@ enum Command {
     McpTools,
     /// Run a stdio MCP server exposing browser-use tools.
     McpStdio,
+    /// Run a TCP JSON-RPC daemon exposing the same tools as mcp-stdio.
+    Daemon {
+        #[arg(long, default_value = "127.0.0.1:8765")]
+        addr: String,
+    },
     /// Create, reuse, and stop local Chrome sessions across CLI invocations.
     Session {
         #[command(subcommand)]
@@ -168,6 +174,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::McpStdio) => {
             run_mcp_stdio().await?;
+        }
+        Some(Command::Daemon { addr }) => {
+            run_daemon(&addr).await?;
         }
         Some(Command::Session { command }) => {
             run_session_command(command).await?;
@@ -491,6 +500,46 @@ async fn run_mcp_stdio() -> anyhow::Result<()> {
             encoded.push(b'\n');
             stdout.write_all(&encoded).await?;
             stdout.flush().await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_daemon(addr: &str) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    println!("{}", listener.local_addr()?);
+    let runtime = Arc::new(tokio::sync::Mutex::new(McpRuntime::default()));
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let runtime = Arc::clone(&runtime);
+        tokio::spawn(async move {
+            let _ = handle_daemon_connection(stream, runtime).await;
+        });
+    }
+}
+
+async fn handle_daemon_connection(
+    stream: TcpStream,
+    runtime: Arc<tokio::sync::Mutex<McpRuntime>>,
+) -> anyhow::Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = {
+            let mut runtime = runtime.lock().await;
+            handle_mcp_message(&line, &mut runtime).await
+        };
+        if let Some(response) = response {
+            let mut encoded = serde_json::to_vec(&response)?;
+            encoded.push(b'\n');
+            writer.write_all(&encoded).await?;
+            writer.flush().await?;
         }
     }
 

@@ -12,6 +12,7 @@ browser-use-rs schema action
 browser-use-rs schema browser-state
 browser-use-rs mcp-tools
 browser-use-rs mcp-stdio
+browser-use-rs daemon [--addr 127.0.0.1:8765]
 browser-use-rs open <url>
 browser-use-rs state <url> [--screenshot]
 browser-use-rs screenshot <url> <output.png>
@@ -79,6 +80,11 @@ session. `browser_use_session` can start, stop, and list persistent session
 records. If `session_id` matches a persistent session record, `mcp-stdio`
 reconnects to that Chrome session even after the stdio server process restarts.
 
+`daemon` binds a TCP listener and exposes the same newline-delimited JSON-RPC
+surface as `mcp-stdio` to each connection. It prints the bound address on
+startup, shares one in-process session runtime across active connections, and
+uses the same persistent session registry as the CLI and MCP session tool.
+
 ## Current Limits
 
 - MCP can reconnect to persistent sessions created by `browser-use-rs session
@@ -92,3 +98,5 @@ reconnects to that Chrome session even after the stdio server process restarts.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.
+- The daemon is a local TCP JSON-RPC surface; it does not yet provide HTTP,
+  authentication, or production process supervision.

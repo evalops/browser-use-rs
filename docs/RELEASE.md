@@ -28,6 +28,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   session reuse by `session_id` and reconnection to persistent CLI session
   records.
 - MCP stdio persistent session lifecycle for start, stop, and list.
+- Local TCP JSON-RPC daemon exposing the MCP tool surface with shared
+  in-process sessions across active connections.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -38,7 +40,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   pragmatic compact representation rather than full browser-use AX snapshots.
 - Browser/action calls that implicitly create MCP sessions are still in-process
   only and are lost when the stdio server exits.
-- CLI sessions are local registry records and are not yet a network daemon API.
+- CLI sessions are local registry records; there is not yet a supervised
+  background service that owns their lifecycle.
+- The daemon is local TCP JSON-RPC only; HTTP, auth, and production supervision
+  are not implemented.
 - Provider parity beyond OpenAI-compatible Chat Completions and Anthropic
   Messages is not implemented.
 - Package publishing is limited to the GitHub release artifact.

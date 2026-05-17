@@ -5,10 +5,13 @@ server exposed through:
 
 ```sh
 browser-use-rs mcp-stdio
+browser-use-rs daemon --addr 127.0.0.1:8765
 ```
 
 The server implements newline-delimited JSON-RPC over stdin/stdout for the MCP
-`2025-06-18` lifecycle and tools surface.
+`2025-06-18` lifecycle and tools surface. The daemon exposes the same
+newline-delimited JSON-RPC messages over TCP and shares one in-process runtime
+across active connections.
 
 Current tool contracts:
 
