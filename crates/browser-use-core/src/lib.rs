@@ -2582,6 +2582,13 @@ mod tests {
                 is_scrollable: true,
             },
         ]);
+        state.tabs = vec![browser_use_dom::TabInfo {
+            url: "https://example.com/docs".to_owned(),
+            title: "Docs".to_owned(),
+            tab_id: browser_use_dom::TabInfo::tab_id_for_target("target-1234abcd"),
+            target_id: "target-1234abcd".to_owned(),
+            parent_target_id: None,
+        }];
         let history = AgentHistory {
             items: vec![AgentHistoryItem {
                 model_output: None,
@@ -2593,12 +2600,22 @@ mod tests {
         let request = build_step_request("keep going", &state, &history, &AgentSettings::default())
             .expect("step request");
         let request_text = serde_json::to_string(&request.messages).expect("messages json");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let user_text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
 
         assert!(request_text.contains("Previous action results"));
         assert!(request_text.contains("Clicked element 1"));
         assert!(request_text.contains("Page stats"));
         assert!(request_text.contains("1 links, 2 interactive"));
         assert!(request_text.contains("1 scroll containers"));
+        assert!(user_text.contains(r#""tab_id": "abcd""#));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
     }
 

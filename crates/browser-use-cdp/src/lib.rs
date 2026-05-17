@@ -1611,6 +1611,7 @@ async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserEr
         .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
         .filter_map(|target| {
             let target_id = target.get("targetId")?.as_str()?.to_owned();
+            let tab_id = TabInfo::tab_id_for_target(&target_id);
             Some(TabInfo {
                 url: target
                     .get("url")
@@ -1622,6 +1623,7 @@ async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserEr
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned(),
+                tab_id,
                 target_id,
                 parent_target_id: None,
             })
@@ -1690,6 +1692,7 @@ impl BrowserSession for CdpBrowserSession {
                 vec![TabInfo {
                     url,
                     title,
+                    tab_id: TabInfo::tab_id_for_target(&current_page.target_id),
                     target_id: current_page.target_id,
                     parent_target_id: None,
                 }]
@@ -2542,12 +2545,14 @@ mod tests {
             TabInfo {
                 url: "https://example.com/one".to_owned(),
                 title: "One".to_owned(),
+                tab_id: TabInfo::tab_id_for_target("target-aaa111"),
                 target_id: "target-aaa111".to_owned(),
                 parent_target_id: None,
             },
             TabInfo {
                 url: "https://example.com/two".to_owned(),
                 title: "Two".to_owned(),
+                tab_id: TabInfo::tab_id_for_target("target-bbb222"),
                 target_id: "target-bbb222".to_owned(),
                 parent_target_id: None,
             },

@@ -20,6 +20,8 @@ pub type NodeId = u64;
 pub struct TabInfo {
     pub url: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tab_id: String,
     pub target_id: TargetId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_target_id: Option<TargetId>,
@@ -28,8 +30,21 @@ pub struct TabInfo {
 impl TabInfo {
     #[must_use]
     pub fn short_target_id(&self) -> &str {
-        let len = self.target_id.len();
-        &self.target_id[len.saturating_sub(4)..]
+        if !self.tab_id.is_empty() {
+            return &self.tab_id;
+        }
+        Self::short_target_id_for(&self.target_id)
+    }
+
+    #[must_use]
+    pub fn short_target_id_for(target_id: &str) -> &str {
+        let len = target_id.len();
+        &target_id[len.saturating_sub(4)..]
+    }
+
+    #[must_use]
+    pub fn tab_id_for_target(target_id: &str) -> String {
+        Self::short_target_id_for(target_id).to_owned()
     }
 }
 
@@ -225,11 +240,28 @@ mod tests {
         let tab = TabInfo {
             url: "about:blank".to_owned(),
             title: "Blank".to_owned(),
+            tab_id: TabInfo::tab_id_for_target("123456abcdef"),
             target_id: "123456abcdef".to_owned(),
             parent_target_id: None,
         };
 
         assert_eq!(tab.short_target_id(), "cdef");
+    }
+
+    #[test]
+    fn tab_info_serializes_browser_use_short_tab_id() {
+        let tab = TabInfo {
+            url: "about:blank".to_owned(),
+            title: "Blank".to_owned(),
+            tab_id: TabInfo::tab_id_for_target("123456abcdef"),
+            target_id: "123456abcdef".to_owned(),
+            parent_target_id: None,
+        };
+
+        let value = serde_json::to_value(tab).expect("tab json");
+
+        assert_eq!(value["tab_id"], "cdef");
+        assert_eq!(value["target_id"], "123456abcdef");
     }
 
     #[test]

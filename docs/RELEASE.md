@@ -9,12 +9,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 ## Supported
 
 - Local Chrome/Chromium launch and CDP attach.
-- Browser state with URL, title, tabs, screenshots, page metrics, compact DOM
-  state, element bounds, open shadow-root indexing, same-origin iframe tag and
-  content indexing, scrollable element metadata, hidden-element filtering, and
-  basic accessible names from labels, ARIA references, and image alt text, plus
-  selected dropdown values, common ARIA widget roles, and pagination affordance
-  detection.
+- Browser state with URL, title, tabs plus browser-use-style short tab ids,
+  screenshots, page metrics, compact DOM state, element bounds, open
+  shadow-root indexing, same-origin iframe tag and content indexing, scrollable
+  element metadata, hidden-element filtering, and basic accessible names from
+  labels, ARIA references, and image alt text, plus selected dropdown values,
+  common ARIA widget roles, and pagination affordance detection.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
