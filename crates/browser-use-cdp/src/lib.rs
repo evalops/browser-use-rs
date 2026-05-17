@@ -33,15 +33,58 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     'input',
     'textarea',
     'select',
+    'details',
+    'summary',
+    'option',
+    'optgroup',
     '[role="button"]',
     '[role="link"]',
+    '[role="menuitem"]',
+    '[role="option"]',
+    '[role="radio"]',
+    '[role="checkbox"]',
+    '[role="tab"]',
+    '[role="textbox"]',
+    '[role="combobox"]',
+    '[role="slider"]',
+    '[role="spinbutton"]',
+    '[role="search"]',
+    '[role="searchbox"]',
+    '[role="row"]',
+    '[role="cell"]',
+    '[role="gridcell"]',
     '[onclick]',
-    '[tabindex]:not([tabindex="-1"])'
+    '[tabindex]:not([tabindex="-1"])',
+    '[contenteditable="true"]',
+    '[contenteditable=""]',
+    '[aria-checked]',
+    '[aria-expanded]',
+    '[aria-pressed]',
+    '[aria-selected]'
   ].join(',');
+  const hasFormControlDescendant = (el, depth) => {
+    if (depth <= 0) return false;
+    for (const child of Array.from(el.children || [])) {
+      const tag = child.tagName ? child.tagName.toLowerCase() : '';
+      if (['input', 'select', 'textarea'].includes(tag)) return true;
+      if (hasFormControlDescendant(child, depth - 1)) return true;
+    }
+    return false;
+  };
+  const isDisabledOrHidden = (el) => {
+    return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
+  };
   const isVisible = (el) => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  const isInteractive = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'html' || tag === 'body') return false;
+    if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
+    if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    return el.matches(selector);
   };
   const isScrollable = (el) => {
     const style = window.getComputedStyle(el);
@@ -75,7 +118,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   };
   const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
-    if (node.matches(selector) && isVisible(node)) elements.push({ el: node, offset });
+    if (isInteractive(node) && isVisible(node)) elements.push({ el: node, offset });
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
     if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
     visitChildren(node, offset);
@@ -87,7 +130,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'role', 'title']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'href', 'aria-label', 'aria-checked', 'aria-expanded', 'aria-pressed', 'aria-selected', 'role', 'title', 'contenteditable']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
@@ -161,15 +204,58 @@ fn element_eval_js(index: u32, body: &str) -> String {
     'input',
     'textarea',
     'select',
+    'details',
+    'summary',
+    'option',
+    'optgroup',
     '[role="button"]',
     '[role="link"]',
+    '[role="menuitem"]',
+    '[role="option"]',
+    '[role="radio"]',
+    '[role="checkbox"]',
+    '[role="tab"]',
+    '[role="textbox"]',
+    '[role="combobox"]',
+    '[role="slider"]',
+    '[role="spinbutton"]',
+    '[role="search"]',
+    '[role="searchbox"]',
+    '[role="row"]',
+    '[role="cell"]',
+    '[role="gridcell"]',
     '[onclick]',
-    '[tabindex]:not([tabindex="-1"])'
+    '[tabindex]:not([tabindex="-1"])',
+    '[contenteditable="true"]',
+    '[contenteditable=""]',
+    '[aria-checked]',
+    '[aria-expanded]',
+    '[aria-pressed]',
+    '[aria-selected]'
   ].join(',');
+  const hasFormControlDescendant = (el, depth) => {{
+    if (depth <= 0) return false;
+    for (const child of Array.from(el.children || [])) {{
+      const tag = child.tagName ? child.tagName.toLowerCase() : '';
+      if (['input', 'select', 'textarea'].includes(tag)) return true;
+      if (hasFormControlDescendant(child, depth - 1)) return true;
+    }}
+    return false;
+  }};
+  const isDisabledOrHidden = (el) => {{
+    return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
+  }};
   const isVisible = (el) => {{
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }};
+  const isInteractive = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'html' || tag === 'body') return false;
+    if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
+    if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    return el.matches(selector);
   }};
   const elements = [];
   const visitFrame = (iframe, offset) => {{
@@ -185,7 +271,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   }};
   const visitNode = (node, offset) => {{
     if (node.nodeType !== Node.ELEMENT_NODE) return;
-    if (node.matches(selector) && isVisible(node)) elements.push(node);
+    if (isInteractive(node) && isVisible(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
     if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
     visitChildren(node, offset);
@@ -1875,6 +1961,68 @@ mod tests {
             .get(&2)
             .expect("labelled button");
         assert_eq!(button.name.as_deref(), Some("Submit request"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_accessibility_widget_roles() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>roles smoke</title></head><body><details id='details'><summary id='summary'>More details</summary><p>Body</p></details><div id='menuitem' role='menuitem' aria-label='Open menu'>Menu</div><div id='checkbox' role='checkbox' aria-checked='false'>Subscribe</div><div id='hidden-role' role='button' aria-hidden='true'>Hidden role</div><button id='disabled-button' disabled>Disabled</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing interactive element with id {id}"))
+        };
+
+        let summary = element_by_id("summary");
+        assert_eq!(summary.tag_name, "summary");
+        assert_eq!(summary.name.as_deref(), Some("More details"));
+
+        let menuitem = element_by_id("menuitem");
+        assert_eq!(menuitem.role.as_deref(), Some("menuitem"));
+        assert_eq!(menuitem.name.as_deref(), Some("Open menu"));
+
+        let checkbox = element_by_id("checkbox");
+        assert_eq!(checkbox.role.as_deref(), Some("checkbox"));
+        assert_eq!(checkbox.name.as_deref(), Some("Subscribe"));
+
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "hidden-role" && id != "disabled-button")
+        }));
+
+        session
+            .click(summary.index)
+            .await
+            .expect("click summary element");
+        let details_open = session
+            .evaluate_json("document.getElementById('details').open")
+            .await
+            .expect("details open");
+        assert_eq!(details_open.as_bool(), Some(true));
     }
 
     #[tokio::test]

@@ -15,7 +15,8 @@ browser-use where compatibility is claimed.
 
 1. Schema snapshots: action JSON schemas, browser state JSON, and agent output.
 2. DOM fixtures: numbered clickable elements, text representation, selector
-   maps, iframes, hidden elements, dropdowns, and accessibility names.
+   maps, iframes, hidden elements, dropdowns, ARIA widget roles, and
+   accessibility names.
 3. Browser actions: navigation, search, click, input, scroll, keyboard, tab
    switching, downloads, screenshots, and PDF output.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
