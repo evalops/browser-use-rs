@@ -49,8 +49,8 @@ Implemented:
   one-time extraction replay handling, invalid model-output recovery,
   loop-awareness prompt nudges, custom prompt-visible DOM attributes,
   structured extraction metadata, per-step timing metadata, configurable
-  prompt-history length, final-result, success, error, duration, action, and URL
-  helpers.
+  prompt-history and clickable-element text limits, final-result, success,
+  error, duration, action, and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.

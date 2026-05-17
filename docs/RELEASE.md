@@ -34,7 +34,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   previous result context, vision-aware screenshot capture and image prompt
   parts, compact page-stat prompt context, one-time extraction replay handling,
   invalid model-output recovery, loop-awareness prompt nudges, per-step timing
-  metadata, configurable prompt-history length, and typed
+  metadata, configurable prompt-history and clickable-element text limits, and typed
   history/final-result/success/error/duration/action/url accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication

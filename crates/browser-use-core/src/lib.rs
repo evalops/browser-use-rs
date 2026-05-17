@@ -42,6 +42,8 @@ pub struct AgentSettings {
     pub loop_detection_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_history_items: Option<usize>,
+    #[serde(default = "default_max_clickable_elements_length")]
+    pub max_clickable_elements_length: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
 }
@@ -57,6 +59,7 @@ impl Default for AgentSettings {
             loop_detection_window: default_loop_detection_window(),
             loop_detection_enabled: default_loop_detection_enabled(),
             max_history_items: None,
+            max_clickable_elements_length: default_max_clickable_elements_length(),
             include_attributes: Vec::new(),
         }
     }
@@ -88,6 +91,10 @@ fn default_loop_detection_window() -> usize {
 
 fn default_loop_detection_enabled() -> bool {
     true
+}
+
+fn default_max_clickable_elements_length() -> usize {
+    40_000
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1774,6 +1781,10 @@ pub fn build_step_request(
             .dom_state
             .llm_representation_with_attributes(&settings.include_attributes);
     }
+    state_for_text.dom_state.text = truncate_clickable_elements_text(
+        &state_for_text.dom_state.text,
+        settings.max_clickable_elements_length,
+    );
     let state_json = serde_json::to_string_pretty(&state_for_text)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history, settings.max_history_items);
@@ -1820,6 +1831,18 @@ fn screenshot_data_url(screenshot: &str) -> String {
     } else {
         format!("data:image/png;base64,{screenshot}")
     }
+}
+
+fn truncate_clickable_elements_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return "[clickable elements omitted by max_clickable_elements_length]".to_owned();
+    }
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+
+    let truncated = text.chars().take(max_chars).collect::<String>();
+    format!("{truncated}\n...[clickable elements truncated to {max_chars} chars]")
 }
 
 fn render_page_stats(state: &BrowserStateSummary) -> String {
@@ -2098,6 +2121,7 @@ mod tests {
         assert_eq!(settings.loop_detection_window, 20);
         assert!(settings.loop_detection_enabled);
         assert_eq!(settings.max_history_items, None);
+        assert_eq!(settings.max_clickable_elements_length, 40_000);
         assert!(settings.include_attributes.is_empty());
     }
 
@@ -3905,6 +3929,32 @@ mod tests {
 
         assert!(text.contains(r#""text": "[1] <button data-testid=run-action> Run""#));
         assert!(!text.contains(r#""text": "[1] <button id=run> Run""#));
+    }
+
+    #[test]
+    fn step_request_truncates_large_clickable_element_text() {
+        let mut state = blank_state();
+        state.dom_state.text = "abcdef".repeat(20);
+        let settings = AgentSettings {
+            max_clickable_elements_length: 12,
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("summarize", &state, &AgentHistory::default(), &settings)
+            .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+
+        assert!(text.contains("abcdefabcdef"));
+        assert!(text.contains("[clickable elements truncated to 12 chars]"));
+        assert!(!text.contains("abcdefabcdefabcdef"));
     }
 
     #[test]
