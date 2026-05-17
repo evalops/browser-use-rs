@@ -617,7 +617,7 @@ pub struct AttachedPage {
 
 pub struct CdpBrowserSession {
     connection: CdpConnection,
-    page: AttachedPage,
+    page: Mutex<AttachedPage>,
     _launched_browser: Option<LaunchedBrowser>,
 }
 
@@ -628,7 +628,7 @@ impl CdpBrowserSession {
 
         Ok(Self {
             connection,
-            page,
+            page: Mutex::new(page),
             _launched_browser: None,
         })
     }
@@ -640,12 +640,21 @@ impl CdpBrowserSession {
 
         Ok(Self {
             connection,
-            page,
+            page: Mutex::new(page),
             _launched_browser: Some(launched_browser),
         })
     }
 
+    async fn current_page(&self) -> AttachedPage {
+        self.page.lock().await.clone()
+    }
+
+    async fn set_current_page(&self, page: AttachedPage) {
+        *self.page.lock().await = page;
+    }
+
     async fn evaluate_json(&self, expression: &str) -> Result<Value, BrowserError> {
+        let page = self.current_page().await;
         let result = self
             .connection
             .command(
@@ -655,7 +664,7 @@ impl CdpBrowserSession {
                     "returnByValue": true,
                     "awaitPromise": true,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
 
@@ -663,6 +672,7 @@ impl CdpBrowserSession {
     }
 
     async fn evaluate_effect(&self, expression: String) -> Result<(), BrowserError> {
+        let page = self.current_page().await;
         let result = self
             .connection
             .command(
@@ -672,7 +682,7 @@ impl CdpBrowserSession {
                     "awaitPromise": true,
                     "returnByValue": true,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
         let _ = runtime_evaluate_value(result)?;
@@ -714,6 +724,7 @@ impl CdpBrowserSession {
     }
 
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
+        let page = self.current_page().await;
         let value = self.evaluate_json(INTERACTIVE_ELEMENTS_JS).await?;
         let elements = value
             .as_array()
@@ -721,56 +732,56 @@ impl CdpBrowserSession {
                 BrowserError::MissingResponseData("interactive element array".to_owned())
             })?
             .iter()
-            .map(|element| self.dom_element_from_value(element))
+            .map(|element| dom_element_from_value(&page.target_id, element))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(SerializedDomState::from_elements(elements))
     }
+}
 
-    fn dom_element_from_value(&self, value: &Value) -> Result<DomElementRef, BrowserError> {
-        let index = value
-            .get("index")
-            .and_then(Value::as_u64)
-            .and_then(|index| u32::try_from(index).ok())
-            .ok_or_else(|| BrowserError::MissingResponseData("element index".to_owned()))?;
-        let attributes = value
-            .get("attributes")
-            .and_then(Value::as_object)
-            .map(|attrs| {
-                attrs
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        value.as_str().map(|value| (key.clone(), value.to_owned()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(DomElementRef {
-            index,
-            target_id: self.page.target_id.clone(),
-            backend_node_id: 0,
-            node_id: None,
-            tag_name: value
-                .get("tag_name")
-                .and_then(Value::as_str)
-                .unwrap_or("element")
-                .to_owned(),
-            role: value.get("role").and_then(Value::as_str).map(str::to_owned),
-            name: value.get("name").and_then(Value::as_str).map(str::to_owned),
-            text: value.get("text").and_then(Value::as_str).map(str::to_owned),
-            attributes,
-            bounds: element_bounds_from_value(value),
-            is_visible: value
-                .get("is_visible")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
-            is_interactive: value
-                .get("is_interactive")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
+fn dom_element_from_value(target_id: &str, value: &Value) -> Result<DomElementRef, BrowserError> {
+    let index = value
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or_else(|| BrowserError::MissingResponseData("element index".to_owned()))?;
+    let attributes = value
+        .get("attributes")
+        .and_then(Value::as_object)
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect()
         })
-    }
+        .unwrap_or_default();
+
+    Ok(DomElementRef {
+        index,
+        target_id: target_id.to_owned(),
+        backend_node_id: 0,
+        node_id: None,
+        tag_name: value
+            .get("tag_name")
+            .and_then(Value::as_str)
+            .unwrap_or("element")
+            .to_owned(),
+        role: value.get("role").and_then(Value::as_str).map(str::to_owned),
+        name: value.get("name").and_then(Value::as_str).map(str::to_owned),
+        text: value.get("text").and_then(Value::as_str).map(str::to_owned),
+        attributes,
+        bounds: element_bounds_from_value(value),
+        is_visible: value
+            .get("is_visible")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        is_interactive: value
+            .get("is_interactive")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    })
 }
 
 fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
@@ -848,42 +859,68 @@ async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPag
     let targets = connection
         .command("Target.getTargets", json!({}), None)
         .await?;
-    let page_target = targets
+    let target_infos = targets
         .get("targetInfos")
         .and_then(Value::as_array)
-        .and_then(|targets| {
-            targets
-                .iter()
-                .find(|target| {
-                    target.get("type").and_then(Value::as_str) == Some("page")
-                        && target.get("url").and_then(Value::as_str) != Some("chrome://newtab/")
-                })
-                .or_else(|| {
-                    targets
-                        .iter()
-                        .find(|target| target.get("type").and_then(Value::as_str) == Some("page"))
-                })
+        .cloned()
+        .unwrap_or_default();
+    let mut page_targets: Vec<String> = target_infos
+        .iter()
+        .filter(|target| {
+            target.get("type").and_then(Value::as_str) == Some("page")
+                && target.get("url").and_then(Value::as_str) != Some("chrome://newtab/")
         })
-        .and_then(|target| {
+        .filter_map(|target| {
             target
                 .get("targetId")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-        });
+        })
+        .collect();
+    page_targets.extend(
+        target_infos
+            .iter()
+            .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+            .filter(|target| target.get("url").and_then(Value::as_str) == Some("chrome://newtab/"))
+            .filter_map(|target| {
+                target
+                    .get("targetId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }),
+    );
 
-    let target_id = match page_target {
-        Some(target_id) => target_id,
-        None => connection
-            .command("Target.createTarget", json!({ "url": "about:blank" }), None)
-            .await?
-            .get("targetId")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| {
-                BrowserError::MissingResponseData("Target.createTarget targetId".to_owned())
-            })?,
-    };
+    for target_id in page_targets {
+        match attach_to_target(connection, target_id).await {
+            Ok(page) => return Ok(page),
+            Err(BrowserError::CommandFailed { method, message })
+                if method == "Target.attachToTarget"
+                    && message.contains("No target with given id found") =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 
+    let target_id = create_target(connection, "about:blank").await?;
+    attach_to_target(connection, target_id).await
+}
+
+async fn create_target(connection: &CdpConnection, url: &str) -> Result<String, BrowserError> {
+    connection
+        .command("Target.createTarget", json!({ "url": url }), None)
+        .await?
+        .get("targetId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| BrowserError::MissingResponseData("Target.createTarget targetId".to_owned()))
+}
+
+async fn attach_to_target(
+    connection: &CdpConnection,
+    target_id: String,
+) -> Result<AttachedPage, BrowserError> {
     let session_id = connection
         .command(
             "Target.attachToTarget",
@@ -907,12 +944,45 @@ async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPag
     })
 }
 
+async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserError> {
+    let targets = connection
+        .command("Target.getTargets", json!({}), None)
+        .await?;
+    let tabs = targets
+        .get("targetInfos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+        .filter_map(|target| {
+            let target_id = target.get("targetId")?.as_str()?.to_owned();
+            Some(TabInfo {
+                url: target
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("about:blank")
+                    .to_owned(),
+                title: target
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                target_id,
+                parent_target_id: None,
+            })
+        })
+        .collect();
+    Ok(tabs)
+}
+
 #[async_trait]
 impl BrowserSession for CdpBrowserSession {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         let (url, title) = self.page_location().await?;
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
+        let current_page = self.current_page().await;
+        let tabs = page_tabs(&self.connection).await?;
         let screenshot = if include_screenshot {
             Some(self.screenshot().await?.base64_png)
         } else {
@@ -923,12 +993,16 @@ impl BrowserSession for CdpBrowserSession {
             dom_state,
             url: url.clone(),
             title: title.clone(),
-            tabs: vec![TabInfo {
-                url,
-                title,
-                target_id: self.page.target_id.clone(),
-                parent_target_id: None,
-            }],
+            tabs: if tabs.is_empty() {
+                vec![TabInfo {
+                    url,
+                    title,
+                    target_id: current_page.target_id,
+                    parent_target_id: None,
+                }]
+            } else {
+                tabs
+            },
             screenshot,
             page_info: Some(page_info),
             pixels_above: page_info.pixels_above,
@@ -942,16 +1016,43 @@ impl BrowserSession for CdpBrowserSession {
         })
     }
 
-    async fn navigate(&self, url: &str, _new_tab: bool) -> Result<(), BrowserError> {
+    async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
+        if new_tab {
+            let target_id = create_target(&self.connection, url).await?;
+            let page = attach_to_target(&self.connection, target_id).await?;
+            self.set_current_page(page).await;
+            return Ok(());
+        }
+
+        let page = self.current_page().await;
         self.connection
             .command(
                 "Page.navigate",
                 json!({
                     "url": url,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
+        Ok(())
+    }
+
+    async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+        let page = attach_to_target(&self.connection, target_id.to_owned()).await?;
+        self.set_current_page(page).await;
+        Ok(())
+    }
+
+    async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+        self.connection
+            .command("Target.closeTarget", json!({ "targetId": target_id }), None)
+            .await?;
+
+        if self.current_page().await.target_id == target_id {
+            let page = attach_or_create_page(&self.connection).await?;
+            self.set_current_page(page).await;
+        }
+
         Ok(())
     }
 
@@ -964,6 +1065,7 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
+        let page = self.current_page().await;
         for event_type in ["mousePressed", "mouseReleased"] {
             self.connection
                 .command(
@@ -975,7 +1077,7 @@ impl BrowserSession for CdpBrowserSession {
                         "button": "left",
                         "clickCount": 1,
                     }),
-                    Some(&self.page.session_id),
+                    Some(&page.session_id),
                 )
                 .await?;
         }
@@ -1112,19 +1214,21 @@ JSON.stringify((() => {{
     }
 
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
+        let page = self.current_page().await;
         self.connection
             .command(
                 "Input.insertText",
                 json!({
                     "text": keys,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
         Ok(())
     }
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+        let page = self.current_page().await;
         let result = self
             .connection
             .command(
@@ -1133,7 +1237,7 @@ JSON.stringify((() => {{
                     "format": "png",
                     "fromSurface": true,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
 
@@ -1155,6 +1259,7 @@ JSON.stringify((() => {{
         scale: f64,
         paper_format: &str,
     ) -> Result<Pdf, BrowserError> {
+        let page = self.current_page().await;
         let (paper_width, paper_height) = paper_size_inches(paper_format);
         let result = self
             .connection
@@ -1167,7 +1272,7 @@ JSON.stringify((() => {{
                     "paperWidth": paper_width,
                     "paperHeight": paper_height,
                 }),
-                Some(&self.page.session_id),
+                Some(&page.session_id),
             )
             .await?;
 
@@ -1195,6 +1300,10 @@ pub trait BrowserSession: Send + Sync {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
+
+    async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError>;
+
+    async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError>;
 
     async fn click(&self, index: u32) -> Result<(), BrowserError>;
 
@@ -1429,5 +1538,53 @@ mod tests {
             state.dom_state.llm_representation()
         );
         assert!(state.screenshot.expect("screenshot").len() > 100);
+
+        let original_target_id = state.tabs.first().expect("original tab").target_id.clone();
+        session
+            .navigate(
+                "data:text/html,<html><head><title>browser-use-rs tab smoke</title></head><body>Second tab</body></html>",
+                true,
+            )
+            .await
+            .expect("navigate new tab");
+        sleep(Duration::from_millis(100)).await;
+
+        let tab_state = session.state(false).await.expect("new tab state");
+        assert_eq!(tab_state.title, "browser-use-rs tab smoke");
+        assert!(tab_state.tabs.len() >= 2);
+        let new_target_id = tab_state
+            .tabs
+            .iter()
+            .find(|tab| tab.title == "browser-use-rs tab smoke")
+            .expect("new tab target")
+            .target_id
+            .clone();
+
+        session
+            .switch_tab(&original_target_id)
+            .await
+            .expect("switch original tab");
+        sleep(Duration::from_millis(100)).await;
+        let switched_state = session.state(false).await.expect("switched state");
+        assert_eq!(switched_state.title, "clicked");
+
+        session
+            .switch_tab(&new_target_id)
+            .await
+            .expect("switch new tab");
+        session
+            .close_tab(&new_target_id)
+            .await
+            .expect("close new tab");
+        sleep(Duration::from_millis(100)).await;
+
+        let after_close = session.state(false).await.expect("state after close");
+        assert_eq!(after_close.title, "clicked");
+        assert!(
+            after_close
+                .tabs
+                .iter()
+                .all(|tab| tab.target_id != new_target_id)
+        );
     }
 }

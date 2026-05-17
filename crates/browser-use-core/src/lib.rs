@@ -262,6 +262,20 @@ where
                 params.url
             )))
         }
+        BrowserAction::SwitchTab(params) => {
+            session.switch_tab(&params.tab_id).await?;
+            Ok(ActionResult::extracted(format!(
+                "Switched to tab {}",
+                params.tab_id
+            )))
+        }
+        BrowserAction::CloseTab(params) => {
+            session.close_tab(&params.tab_id).await?;
+            Ok(ActionResult::extracted(format!(
+                "Closed tab {}",
+                params.tab_id
+            )))
+        }
         BrowserAction::Click(params) => {
             match (params.index, params.coordinate_x, params.coordinate_y) {
                 (Some(index), _, _) => {
@@ -450,12 +464,10 @@ where
                 })
             }
         }
-        BrowserAction::SwitchTab(_) | BrowserAction::CloseTab(_) | BrowserAction::UploadFile(_) => {
-            Ok(ActionResult::error(format!(
-                "action not implemented yet: {}",
-                action.name()
-            )))
-        }
+        BrowserAction::UploadFile(_) => Ok(ActionResult::error(format!(
+            "action not implemented yet: {}",
+            action.name()
+        ))),
     }
 }
 
@@ -748,9 +760,9 @@ mod tests {
     use browser_use_cdp::{FoundElement, Pdf, Screenshot};
     use browser_use_dom::SerializedDomState;
     use browser_use_tools::{
-        ClickElementAction, DoneAction, ExtractAction, FindElementsAction,
+        ClickElementAction, CloseTabAction, DoneAction, ExtractAction, FindElementsAction,
         GetDropdownOptionsAction, NavigateAction, SaveAsPdfAction, SearchPageAction,
-        SelectDropdownOptionAction, SendKeysAction,
+        SelectDropdownOptionAction, SendKeysAction, SwitchTabAction,
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
@@ -900,6 +912,22 @@ mod tests {
             Ok(())
         }
 
+        async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("switch_tab:{target_id}"));
+            Ok(())
+        }
+
+        async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("close_tab:{target_id}"));
+            Ok(())
+        }
+
         async fn click(&self, index: u32) -> Result<(), BrowserError> {
             self.events
                 .lock()
@@ -1036,6 +1064,30 @@ mod tests {
         assert_eq!(
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_maps_tab_actions_to_session() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let switch_result = executor
+            .execute(&BrowserAction::SwitchTab(SwitchTabAction {
+                tab_id: "target-2".to_owned(),
+            }))
+            .await;
+        let close_result = executor
+            .execute(&BrowserAction::CloseTab(CloseTabAction {
+                tab_id: "target-1".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(switch_result.error, None);
+        assert_eq!(close_result.error, None);
+        assert_eq!(
+            executor.session().events(),
+            vec!["switch_tab:target-2", "close_tab:target-1"]
         );
     }
 
