@@ -159,6 +159,33 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
     return /(auto|scroll|overlay)/.test(overflow) && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
   };
+  const isDropdownContainer = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    const classText = String(el.getAttribute('class') || '').toLowerCase();
+    const classes = classText.split(/\s+/).filter(Boolean);
+    return tag === 'select'
+      || ['listbox', 'menu', 'combobox', 'menubar', 'tree', 'grid'].includes(role)
+      || classes.includes('dropdown')
+      || classes.includes('dropdown-menu')
+      || classes.includes('select-menu')
+      || (classes.includes('ui') && classText.includes('dropdown'));
+  };
+  const hasInteractiveDescendant = (el) => {
+    const visit = (root) => {
+      for (const child of Array.from(root.children || [])) {
+        if (isDecorativeSvgChild(child) || isBrowserUseExcluded(child)) continue;
+        if (isInteractive(child) && isVisible(child)) return true;
+        if (child.shadowRoot && visit(child.shadowRoot)) return true;
+        if (visit(child)) return true;
+      }
+      return false;
+    };
+    return visit(el);
+  };
+  const shouldIndexScrollable = (el) => {
+    return isScrollable(el) && (isDropdownContainer(el) || !hasInteractiveDescendant(el));
+  };
   const referencedText = (el, attribute) => {
     const ids = (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean);
     return ids.map((id) => {
@@ -229,7 +256,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (tag === 'iframe' || tag === 'frame') stats.iframes += 1;
     if (tag === 'img') stats.images += 1;
     if (isScrollable(node)) stats.scroll_containers += 1;
-    const interactive = isInteractive(node) && isVisible(node);
+    const interactive = (isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node);
     if (interactive) {
       stats.interactive_elements += 1;
       elements.push({ el: node, offset });
@@ -447,6 +474,23 @@ fn element_eval_js(index: u32, body: &str) -> String {
     const style = window.getComputedStyle(el);
     return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   }};
+  const isScrollable = (el) => {{
+    const style = window.getComputedStyle(el);
+    const overflow = `${{style.overflow}} ${{style.overflowX}} ${{style.overflowY}}`;
+    return /(auto|scroll|overlay)/.test(overflow) && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
+  }};
+  const isDropdownContainer = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    const classText = String(el.getAttribute('class') || '').toLowerCase();
+    const classes = classText.split(/\s+/).filter(Boolean);
+    return tag === 'select'
+      || ['listbox', 'menu', 'combobox', 'menubar', 'tree', 'grid'].includes(role)
+      || classes.includes('dropdown')
+      || classes.includes('dropdown-menu')
+      || classes.includes('select-menu')
+      || (classes.includes('ui') && classText.includes('dropdown'));
+  }};
   const isInteractive = (el) => {{
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'html' || tag === 'body') return false;
@@ -460,6 +504,21 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (hasIconSignal(el)) return true;
     if (hasPointerCursor(el)) return true;
     return el.matches(selector);
+  }};
+  const hasInteractiveDescendant = (el) => {{
+    const visit = (root) => {{
+      for (const child of Array.from(root.children || [])) {{
+        if (isDecorativeSvgChild(child) || isBrowserUseExcluded(child)) continue;
+        if (isInteractive(child) && isVisible(child)) return true;
+        if (child.shadowRoot && visit(child.shadowRoot)) return true;
+        if (visit(child)) return true;
+      }}
+      return false;
+    }};
+    return visit(el);
+  }};
+  const shouldIndexScrollable = (el) => {{
+    return isScrollable(el) && (isDropdownContainer(el) || !hasInteractiveDescendant(el));
   }};
   const elements = [];
   const visitFrame = (iframe, offset) => {{
@@ -477,7 +536,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (isDecorativeSvgChild(node)) return;
     if (isBrowserUseExcluded(node)) return;
-    if (isInteractive(node) && isVisible(node)) elements.push(node);
+    if ((isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
     if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
     visitChildren(node, offset);
@@ -4099,6 +4158,18 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_indexes_scrollable_containers_without_descendant_controls() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("shouldIndexScrollable"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("hasInteractiveDescendant"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isDropdownContainer"));
+
+        let action_script = element_action_js(1, "el.scrollBy(0, el.clientHeight);");
+        assert!(action_script.contains("shouldIndexScrollable"));
+        assert!(action_script.contains("hasInteractiveDescendant"));
+        assert!(action_script.contains("isDropdownContainer"));
+    }
+
+    #[test]
     fn renders_runtime_evaluate_values() {
         assert_eq!(
             render_runtime_evaluate_result(&json!({
@@ -5366,6 +5437,63 @@ mod tests {
             .expect("scroll pane");
         let scroll_top = session
             .evaluate_json("document.getElementById('pane').scrollTop")
+            .await
+            .expect("scrollTop");
+        assert!(scroll_top.as_f64().unwrap_or_default() > 0.0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_plain_scroll_container_without_tabindex() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>plain scroll container</title></head><body><div id='plain-pane' style='height:60px;width:200px;overflow:auto;border:1px solid black'><div style='height:400px'>Plain scroll content</div></div><div id='button-pane' style='height:60px;width:200px;overflow:auto;border:1px solid black'><button id='inner-button'>Inner button</button><div style='height:400px'></div></div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(150)).await;
+
+        let state = session.state(false).await.expect("state");
+        let plain_pane = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "plain-pane")
+            })
+            .expect("plain scroll pane indexed");
+        assert!(
+            plain_pane.is_scrollable,
+            "plain pane was not marked scrollable: {plain_pane:?}"
+        );
+        assert!(state.dom_state.selector_map.values().any(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_some_and(|id| id == "inner-button")
+        }));
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "button-pane")
+        }));
+
+        session
+            .scroll(Some(plain_pane.index), true, 1.0)
+            .await
+            .expect("scroll plain pane");
+        let scroll_top = session
+            .evaluate_json("document.getElementById('plain-pane').scrollTop")
             .await
             .expect("scrollTop");
         assert!(scroll_top.as_f64().unwrap_or_default() > 0.0);
