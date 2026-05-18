@@ -964,6 +964,8 @@ fn display_done_file(file_name: &str) -> Option<(String, String)> {
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
 const MAX_EXTRACT_RELATED_ELEMENTS: usize = 200;
+const MAX_PROMPT_ERROR_CHARS: usize = 200;
+const PROMPT_ERROR_EDGE_CHARS: usize = 100;
 const IMAGE_QUERY_KEYWORDS: &[&str] = &[
     "image",
     "photo",
@@ -2442,16 +2444,17 @@ fn consecutive_stagnant_pages(history: &AgentHistory, state: &BrowserStateSummar
     count
 }
 
-fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> &str {
+fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> String {
     if let Some(error) = result.error.as_deref() {
-        return error;
+        return truncate_error_for_prompt(error);
     }
 
     if result.include_extracted_content_only_once && !is_latest_step {
         return result
             .long_term_memory
             .as_deref()
-            .unwrap_or("[extracted content omitted after first prompt]");
+            .unwrap_or("[extracted content omitted after first prompt]")
+            .to_owned();
     }
 
     result
@@ -2459,6 +2462,27 @@ fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> &str
         .as_deref()
         .or(result.long_term_memory.as_deref())
         .unwrap_or("no content")
+        .to_owned()
+}
+
+fn truncate_error_for_prompt(error: &str) -> String {
+    if error.chars().count() <= MAX_PROMPT_ERROR_CHARS {
+        return error.to_owned();
+    }
+
+    let prefix = error
+        .chars()
+        .take(PROMPT_ERROR_EDGE_CHARS)
+        .collect::<String>();
+    let suffix = error
+        .chars()
+        .rev()
+        .take(PROMPT_ERROR_EDGE_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{prefix}......{suffix}")
 }
 
 fn repeated_action_loop(history: &AgentHistory, window: usize) -> bool {
@@ -4963,6 +4987,25 @@ mod tests {
         assert!(!rendered.contains("first"));
         assert!(rendered.contains("second"));
         assert!(rendered.contains("third"));
+    }
+
+    #[test]
+    fn previous_results_truncate_long_errors_like_upstream() {
+        let error = format!("{}{}", "a".repeat(120), "b".repeat(120));
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::error(error.clone())],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        let rendered = render_previous_results(&history, None);
+        let expected = format!("{}......{}", "a".repeat(100), "b".repeat(100));
+
+        assert!(rendered.contains(&expected));
+        assert!(!rendered.contains(&error));
     }
 
     #[test]

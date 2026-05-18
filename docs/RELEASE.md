@@ -46,9 +46,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   recovery, loop-awareness prompt nudges, upstream
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, thinking/flash output-schema controls, configurable
-  prompt-history and clickable-element text limits, typed upstream-style
-  last-result completion helpers, and step-error, model-output, model-action,
-  thought, duration, and URL accessors.
+  prompt-history and clickable-element text limits, upstream-style prompt error
+  truncation, typed upstream-style last-result completion helpers, and
+  step-error, model-output, model-action, thought, duration, and URL accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.
