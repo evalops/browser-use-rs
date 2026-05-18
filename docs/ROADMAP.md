@@ -5,13 +5,14 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#3 Implement DOM and accessibility serializer parity](https://github.com/evalops/browser-use-rs/issues/3)
-- [#4 Implement agent loop and LLM provider contracts](https://github.com/evalops/browser-use-rs/issues/4)
+- [#8 Cut first public conformance release](https://github.com/evalops/browser-use-rs/issues/8)
 
 ## Completed Tracks
 
 - [#1 Implement CDP-backed local Chrome sessions](https://github.com/evalops/browser-use-rs/issues/1)
 - [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)
+- [#3 Implement DOM and accessibility serializer parity](https://github.com/evalops/browser-use-rs/issues/3)
+- [#4 Implement agent loop and LLM provider contracts](https://github.com/evalops/browser-use-rs/issues/4)
 
 ## Current Checkpoint
 
@@ -131,11 +132,12 @@ Implemented:
 - `browser-use-dom` now also exposes a tree-shaped eval/judge representation
   that mirrors upstream `DOMEvalSerializer` markers for backend-node
   interactives, shadow roots, iframe contents, compact key attributes, scroll
-  context, and collapsed SVG contents.
+  context, collapsed SVG contents, live CDP capture, and Chrome OOPIF child
+  target merging.
 
 Next:
 
-1. Move compact DOM serialization toward accessibility-aware parity.
+1. Cut and verify the first public conformance release from `main`.
 2. Continue browser-profile security parity toward an event-driven watchdog
    when the CDP layer grows background event dispatch.
 3. Expand agent planning depth, replay coverage, and deeper provider-specific
