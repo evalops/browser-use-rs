@@ -526,6 +526,17 @@ mod tests {
     }
 
     #[test]
+    fn agent_history_replay_run_schema_matches_golden_fixture() {
+        let actual =
+            serde_json::to_value(schema_for!(AgentHistoryReplayRun)).expect("serialize schema");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/agent_history_replay_run_schema.json"),
+        );
+    }
+
+    #[test]
     fn eval_tree_state_matches_golden_fixture() {
         assert_eq!(
             eval_tree_state().eval_representation(),

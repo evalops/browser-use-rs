@@ -1,0 +1,1611 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentHistoryReplayRun",
+  "type": "object",
+  "required": [
+    "current_state",
+    "execution",
+    "plan"
+  ],
+  "properties": {
+    "current_state": {
+      "$ref": "#/definitions/BrowserStateSummary"
+    },
+    "execution": {
+      "$ref": "#/definitions/AgentHistoryReplayExecution"
+    },
+    "plan": {
+      "$ref": "#/definitions/AgentHistoryReplayPlan"
+    }
+  },
+  "definitions": {
+    "ActionReplayRematch": {
+      "type": "object",
+      "required": [
+        "action"
+      ],
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/BrowserAction"
+        },
+        "changed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "match_result": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DomInteractedElementMatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "original_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "rematched_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ActionResult": {
+      "type": "object",
+      "properties": {
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extracted_content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "images": {
+          "type": "array",
+          "items": true
+        },
+        "include_extracted_content_only_once": {
+          "default": false,
+          "type": "boolean"
+        },
+        "include_in_memory": {
+          "default": false,
+          "type": "boolean"
+        },
+        "is_done": {
+          "default": false,
+          "type": "boolean"
+        },
+        "judgement": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JudgementResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "long_term_memory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": true,
+        "success": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "AgentHistoryReplayExecution": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AgentHistoryReplayExecutionItem"
+          }
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AgentHistoryReplayStop"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "AgentHistoryReplayExecutionItem": {
+      "type": "object",
+      "required": [
+        "action_index",
+        "executed_action",
+        "original_action",
+        "rematch",
+        "result",
+        "step_index"
+      ],
+      "properties": {
+        "action_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "executed_action": {
+          "$ref": "#/definitions/BrowserAction"
+        },
+        "original_action": {
+          "$ref": "#/definitions/BrowserAction"
+        },
+        "rematch": {
+          "$ref": "#/definitions/ActionReplayRematch"
+        },
+        "result": {
+          "$ref": "#/definitions/ActionResult"
+        },
+        "step_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AgentHistoryReplayPlan": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AgentHistoryReplayPlanItem"
+          }
+        }
+      }
+    },
+    "AgentHistoryReplayPlanItem": {
+      "type": "object",
+      "required": [
+        "action_index",
+        "original_action",
+        "remapped_action",
+        "rematch",
+        "step_index"
+      ],
+      "properties": {
+        "action_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "original_action": {
+          "$ref": "#/definitions/BrowserAction"
+        },
+        "remapped_action": {
+          "$ref": "#/definitions/BrowserAction"
+        },
+        "rematch": {
+          "$ref": "#/definitions/ActionReplayRematch"
+        },
+        "step_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AgentHistoryReplayStop": {
+      "type": "object",
+      "required": [
+        "action_index",
+        "reason",
+        "step_index"
+      ],
+      "properties": {
+        "action_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "diagnostic": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/definitions/AgentHistoryReplayStopReason"
+        },
+        "step_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AgentHistoryReplayStopReason": {
+      "type": "string",
+      "enum": [
+        "done_after_prior_action",
+        "done",
+        "error",
+        "page_changed",
+        "terminating_action"
+      ]
+    },
+    "BrowserAction": {
+      "description": "Browser-use action model: each serialized action is a one-key object.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "extract"
+          ],
+          "properties": {
+            "extract": {
+              "$ref": "#/definitions/ExtractAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "search_page"
+          ],
+          "properties": {
+            "search_page": {
+              "$ref": "#/definitions/SearchPageAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "find_elements"
+          ],
+          "properties": {
+            "find_elements": {
+              "$ref": "#/definitions/FindElementsAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "search"
+          ],
+          "properties": {
+            "search": {
+              "$ref": "#/definitions/SearchAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "navigate"
+          ],
+          "properties": {
+            "navigate": {
+              "$ref": "#/definitions/NavigateAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "go_back"
+          ],
+          "properties": {
+            "go_back": {
+              "$ref": "#/definitions/NoParamsAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "click"
+          ],
+          "properties": {
+            "click": {
+              "$ref": "#/definitions/ClickElementAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "input"
+          ],
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/InputTextAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "done"
+          ],
+          "properties": {
+            "done": {
+              "$ref": "#/definitions/DoneAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "switch_tab"
+          ],
+          "properties": {
+            "switch_tab": {
+              "$ref": "#/definitions/SwitchTabAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "close_tab"
+          ],
+          "properties": {
+            "close_tab": {
+              "$ref": "#/definitions/CloseTabAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "scroll"
+          ],
+          "properties": {
+            "scroll": {
+              "$ref": "#/definitions/ScrollAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "find_text"
+          ],
+          "properties": {
+            "find_text": {
+              "$ref": "#/definitions/FindTextAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "evaluate"
+          ],
+          "properties": {
+            "evaluate": {
+              "$ref": "#/definitions/EvaluateAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "wait"
+          ],
+          "properties": {
+            "wait": {
+              "$ref": "#/definitions/WaitAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "send_keys"
+          ],
+          "properties": {
+            "send_keys": {
+              "$ref": "#/definitions/SendKeysAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "upload_file"
+          ],
+          "properties": {
+            "upload_file": {
+              "$ref": "#/definitions/UploadFileAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "write_file"
+          ],
+          "properties": {
+            "write_file": {
+              "$ref": "#/definitions/WriteFileAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "read_file"
+          ],
+          "properties": {
+            "read_file": {
+              "$ref": "#/definitions/ReadFileAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "replace_file"
+          ],
+          "properties": {
+            "replace_file": {
+              "$ref": "#/definitions/ReplaceFileAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "screenshot"
+          ],
+          "properties": {
+            "screenshot": {
+              "$ref": "#/definitions/ScreenshotAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "save_as_pdf"
+          ],
+          "properties": {
+            "save_as_pdf": {
+              "$ref": "#/definitions/SaveAsPdfAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "get_dropdown_options"
+          ],
+          "properties": {
+            "get_dropdown_options": {
+              "$ref": "#/definitions/GetDropdownOptionsAction"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "select_dropdown_option"
+          ],
+          "properties": {
+            "select_dropdown_option": {
+              "$ref": "#/definitions/SelectDropdownOptionAction"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "BrowserStateSummary": {
+      "description": "Browser state summary compatible with the browser-use agent step contract.",
+      "type": "object",
+      "required": [
+        "dom_state",
+        "title",
+        "url"
+      ],
+      "properties": {
+        "browser_errors": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "closed_popup_messages": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dom_state": {
+          "$ref": "#/definitions/SerializedDomState"
+        },
+        "is_pdf_viewer": {
+          "default": false,
+          "type": "boolean"
+        },
+        "page_info": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PageInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pagination_buttons": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PaginationButton"
+          }
+        },
+        "pending_network_requests": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NetworkRequest"
+          }
+        },
+        "pixels_above": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_below": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "recent_events": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "screenshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tabs": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TabInfo"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "ClickElementAction": {
+      "type": "object",
+      "properties": {
+        "coordinate_x": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "coordinate_y": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1.0
+        }
+      }
+    },
+    "CloseTabAction": {
+      "type": "object",
+      "required": [
+        "tab_id"
+      ],
+      "properties": {
+        "tab_id": {
+          "type": "string",
+          "maxLength": 4,
+          "minLength": 4
+        }
+      }
+    },
+    "DomElementRef": {
+      "description": "A compact node reference addressable by an action index.",
+      "type": "object",
+      "required": [
+        "backend_node_id",
+        "index",
+        "tag_name",
+        "target_id"
+      ],
+      "properties": {
+        "attributes": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "backend_node_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ElementBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "is_interactive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "is_scrollable": {
+          "type": "boolean"
+        },
+        "is_visible": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag_name": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "DomEvalNode": {
+      "description": "Tree-shaped DOM node used for browser-use's evaluation/judge representation.",
+      "type": "object",
+      "required": [
+        "node_type"
+      ],
+      "properties": {
+        "attributes": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "backend_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "children": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DomEvalNode"
+          }
+        },
+        "excluded_by_parent": {
+          "type": "boolean"
+        },
+        "is_interactive": {
+          "type": "boolean"
+        },
+        "is_scrollable": {
+          "type": "boolean"
+        },
+        "is_visible": {
+          "type": "boolean"
+        },
+        "node_type": {
+          "$ref": "#/definitions/DomEvalNodeType"
+        },
+        "node_value": {
+          "type": "string"
+        },
+        "scroll_info": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "should_display": {
+          "type": "boolean"
+        },
+        "tag_name": {
+          "type": "string"
+        }
+      }
+    },
+    "DomEvalNodeType": {
+      "description": "Node kind used by the evaluation-focused DOM tree serializer.",
+      "type": "string",
+      "enum": [
+        "document_fragment",
+        "element",
+        "text"
+      ]
+    },
+    "DomInteractedElementMatch": {
+      "type": "object",
+      "required": [
+        "index",
+        "level"
+      ],
+      "properties": {
+        "attribute": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "level": {
+          "$ref": "#/definitions/DomInteractedElementMatchLevel"
+        }
+      }
+    },
+    "DomInteractedElementMatchLevel": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "stable",
+        "x_path",
+        "ax_name",
+        "attribute"
+      ]
+    },
+    "DomPageStats": {
+      "description": "Compact page-shape statistics rendered into the agent prompt.",
+      "type": "object",
+      "properties": {
+        "iframes": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "images": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "interactive_elements": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "links": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "scroll_containers": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "shadow_closed": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "shadow_open": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "text_chars": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "total_elements": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "DoneAction": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "files_to_display": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "success": {
+          "default": true,
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "ElementBounds": {
+      "description": "Viewport-relative integer bounds for an indexed element.",
+      "type": "object",
+      "required": [
+        "height",
+        "width",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "x": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "EvaluateAction": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "ExtractAction": {
+      "description": "Free-text or schema-guided page extraction.",
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "already_collected": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extract_images": {
+          "default": false,
+          "type": "boolean"
+        },
+        "extract_links": {
+          "default": false,
+          "type": "boolean"
+        },
+        "output_schema": true,
+        "query": {
+          "type": "string"
+        },
+        "start_from_char": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "FindElementsAction": {
+      "description": "CSS selector lookup against the page.",
+      "type": "object",
+      "required": [
+        "selector"
+      ],
+      "properties": {
+        "attributes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "include_text": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_results": {
+          "default": 50,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "selector": {
+          "type": "string"
+        }
+      }
+    },
+    "FindTextAction": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "GetDropdownOptionsAction": {
+      "type": "object",
+      "required": [
+        "index"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "InputTextAction": {
+      "type": "object",
+      "required": [
+        "index",
+        "text"
+      ],
+      "properties": {
+        "clear": {
+          "default": true,
+          "type": "boolean"
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "JudgementResult": {
+      "type": "object",
+      "required": [
+        "verdict"
+      ],
+      "properties": {
+        "failure_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "impossible_task": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reached_captcha": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verdict": {
+          "type": "boolean"
+        }
+      }
+    },
+    "NavigateAction": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "new_tab": {
+          "default": false,
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "NetworkRequest": {
+      "description": "A network request that is still in flight when browser state is captured.",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "loading_duration_ms": {
+          "default": 0.0,
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "default": "GET",
+          "type": "string"
+        },
+        "resource_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "NoParamsAction": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "PageInfo": {
+      "description": "Viewport and scroll metrics used to help the agent reason about page shape.",
+      "type": "object",
+      "required": [
+        "page_height",
+        "page_width",
+        "pixels_above",
+        "pixels_below",
+        "pixels_left",
+        "pixels_right",
+        "scroll_x",
+        "scroll_y",
+        "viewport_height",
+        "viewport_width"
+      ],
+      "properties": {
+        "page_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "page_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_above": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_below": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_left": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_right": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "scroll_x": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "scroll_y": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "viewport_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "viewport_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "PaginationButton": {
+      "description": "Pagination affordance detected from the current page.",
+      "type": "object",
+      "required": [
+        "backend_node_id",
+        "button_type",
+        "selector",
+        "text"
+      ],
+      "properties": {
+        "backend_node_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "button_type": {
+          "$ref": "#/definitions/PaginationButtonType"
+        },
+        "is_disabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "PaginationButtonType": {
+      "type": "string",
+      "enum": [
+        "next",
+        "prev",
+        "first",
+        "last",
+        "page_number"
+      ]
+    },
+    "ReadFileAction": {
+      "type": "object",
+      "required": [
+        "file_name"
+      ],
+      "properties": {
+        "file_name": {
+          "type": "string"
+        }
+      }
+    },
+    "ReplaceFileAction": {
+      "type": "object",
+      "required": [
+        "file_name",
+        "new_str",
+        "old_str"
+      ],
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "new_str": {
+          "type": "string"
+        },
+        "old_str": {
+          "type": "string"
+        }
+      }
+    },
+    "SaveAsPdfAction": {
+      "type": "object",
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "landscape": {
+          "default": false,
+          "type": "boolean"
+        },
+        "paper_format": {
+          "default": "Letter",
+          "type": "string"
+        },
+        "print_background": {
+          "default": true,
+          "type": "boolean"
+        },
+        "scale": {
+          "default": 1.0,
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "ScreenshotAction": {
+      "type": "object",
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ScrollAction": {
+      "type": "object",
+      "properties": {
+        "down": {
+          "default": true,
+          "type": "boolean"
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pages": {
+          "default": 1.0,
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "SearchAction": {
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "engine": {
+          "default": "duckduckgo",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SearchEngine"
+            }
+          ]
+        },
+        "query": {
+          "type": "string"
+        }
+      }
+    },
+    "SearchEngine": {
+      "type": "string",
+      "enum": [
+        "duckduckgo",
+        "google",
+        "bing"
+      ]
+    },
+    "SearchPageAction": {
+      "description": "Text or regex search against page content.",
+      "type": "object",
+      "required": [
+        "pattern"
+      ],
+      "properties": {
+        "case_sensitive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "context_chars": {
+          "default": 150,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "css_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_results": {
+          "default": 25,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "regex": {
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "SelectDropdownOptionAction": {
+      "type": "object",
+      "required": [
+        "index",
+        "text"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "SendKeysAction": {
+      "type": "object",
+      "required": [
+        "keys"
+      ],
+      "properties": {
+        "keys": {
+          "type": "string"
+        }
+      }
+    },
+    "SerializedDomState": {
+      "description": "Serialized DOM state in the form the agent consumes.",
+      "type": "object",
+      "properties": {
+        "eval_root": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DomEvalNode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "page_stats": {
+          "$ref": "#/definitions/DomPageStats"
+        },
+        "selector_map": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/DomElementRef"
+          }
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        }
+      }
+    },
+    "SwitchTabAction": {
+      "type": "object",
+      "required": [
+        "tab_id"
+      ],
+      "properties": {
+        "tab_id": {
+          "type": "string",
+          "maxLength": 4,
+          "minLength": 4
+        }
+      }
+    },
+    "TabInfo": {
+      "description": "Information about an open tab or page target.",
+      "type": "object",
+      "required": [
+        "target_id",
+        "title",
+        "url"
+      ],
+      "properties": {
+        "parent_target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "UploadFileAction": {
+      "type": "object",
+      "required": [
+        "index",
+        "path"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "WaitAction": {
+      "type": "object",
+      "properties": {
+        "seconds": {
+          "default": 3,
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "WriteFileAction": {
+      "type": "object",
+      "required": [
+        "content",
+        "file_name"
+      ],
+      "properties": {
+        "append": {
+          "default": false,
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "leading_newline": {
+          "default": false,
+          "type": "boolean"
+        },
+        "trailing_newline": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

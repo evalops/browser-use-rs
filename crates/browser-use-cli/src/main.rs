@@ -245,6 +245,7 @@ impl LlmProvider {
 enum SchemaContract {
     Action,
     AgentOutput,
+    ReplayRun,
     BrowserState,
 }
 
@@ -304,6 +305,7 @@ async fn main() -> anyhow::Result<()> {
             let schema = match contract {
                 SchemaContract::Action => schema_for!(browser_use_tools::BrowserAction),
                 SchemaContract::AgentOutput => schema_for!(browser_use_core::AgentOutput),
+                SchemaContract::ReplayRun => schema_for!(browser_use_core::AgentHistoryReplayRun),
                 SchemaContract::BrowserState => schema_for!(browser_use_dom::BrowserStateSummary),
             };
             println!("{}", serde_json::to_string_pretty(&schema)?);
@@ -2026,6 +2028,17 @@ mod tests {
                 assert_eq!(history, PathBuf::from("history.json"));
             }
             _ => panic!("expected replay command"),
+        }
+    }
+
+    #[test]
+    fn parses_replay_run_schema_contract() {
+        let cli = Cli::try_parse_from(["browser-use-rs", "schema", "replay-run"])
+            .expect("schema command should parse");
+
+        match cli.command.expect("schema command") {
+            Command::Schema { contract } => assert!(matches!(contract, SchemaContract::ReplayRun)),
+            _ => panic!("expected schema command"),
         }
     }
 
