@@ -1495,6 +1495,23 @@ impl<S> BrowserActionExecutor<S>
 where
     S: BrowserSession + Send + Sync,
 {
+    async fn execute_for_agent(&mut self, action: &BrowserAction) -> ActionResult {
+        match execute_browser_action(
+            &self.session,
+            &mut self.file_system,
+            action,
+            self.display_files_in_done_text,
+            self.enforce_upload_file_availability,
+            &self.available_file_paths,
+            false,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => ActionResult::error(error.to_string()),
+        }
+    }
+
     pub async fn execute_sequence(&mut self, actions: &[BrowserAction]) -> Vec<ActionResult> {
         let mut results = Vec::new();
 
@@ -1766,6 +1783,7 @@ where
             self.display_files_in_done_text,
             self.enforce_upload_file_availability,
             &self.available_file_paths,
+            true,
         )
         .await
         {
@@ -1782,6 +1800,7 @@ async fn execute_browser_action<S>(
     display_files_in_done_text: bool,
     enforce_upload_file_availability: bool,
     available_file_paths: &BTreeSet<String>,
+    save_extract_envelope_to_file_system: bool,
 ) -> Result<ActionResult, BrowserError>
 where
     S: BrowserSession + Send + Sync,
@@ -2022,7 +2041,7 @@ where
                 extract_images,
                 links.as_deref(),
                 images.as_deref(),
-                Some(file_system),
+                save_extract_envelope_to_file_system.then_some(file_system),
             ))
         }
         BrowserAction::SearchPage(params) => {
@@ -2254,6 +2273,7 @@ fn upload_file_action_path(
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
 const MAX_EXTRACT_RELATED_ELEMENTS: usize = 200;
+const MAX_EXTRACT_MEMORY_LENGTH: usize = 10_000;
 const MAX_PROMPT_CONTENT_CHARS: usize = 60_000;
 const MAX_PROMPT_ERROR_CHARS: usize = 200;
 const PROMPT_ERROR_EDGE_CHARS: usize = 100;
@@ -2463,6 +2483,149 @@ fn render_extract_envelope(
     }
 
     rendered
+}
+
+fn build_extract_llm_request(
+    params: &browser_use_tools::ExtractAction,
+    raw_envelope: &str,
+) -> ChatRequest {
+    let structured_schema = params.output_schema.clone();
+    let system_prompt = if structured_schema.is_some() {
+        "You are an expert at extracting structured data from webpage markdown. Extract only information present in the webpage. Return data that conforms exactly to the provided JSON Schema."
+    } else {
+        "You are an expert at extracting data from webpage markdown. Extract only information relevant to the query. Do not guess or use outside knowledge."
+    };
+    let user_prompt = format!(
+        "Use the prepared extraction envelope below. It contains the query, content statistics, webpage markdown, and any link/image/already-collected context.\n\n{raw_envelope}"
+    );
+
+    ChatRequest {
+        messages: vec![
+            ChatMessage::text(MessageRole::System, system_prompt),
+            ChatMessage::text(MessageRole::User, user_prompt),
+        ],
+        output_schema: Some(structured_schema.unwrap_or_else(schema_for_extract_text_result)),
+    }
+}
+
+fn schema_for_extract_text_result() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "result": { "type": "string" }
+        },
+        "required": ["result"],
+        "additionalProperties": false
+    })
+}
+
+fn complete_llm_extract_result(
+    params: &browser_use_tools::ExtractAction,
+    raw_envelope: &str,
+    raw_metadata: Option<&Value>,
+    completion: Value,
+    file_system: &mut ManagedFileSystem,
+) -> ActionResult {
+    let source_url = tagged_section(raw_envelope, "url").unwrap_or("about:blank");
+    let metadata = params
+        .output_schema
+        .as_ref()
+        .map(|schema| structured_extract_metadata(schema, raw_metadata, source_url, &completion));
+    let extracted_content = if params.output_schema.is_some() {
+        format!(
+            "<url>\n{source_url}\n</url>\n<query>\n{}\n</query>\n<structured_result>\n{}\n</structured_result>",
+            params.query,
+            serde_json::to_string(&completion).unwrap_or_else(|_| completion.to_string())
+        )
+    } else {
+        format!(
+            "<url>\n{source_url}\n</url>\n<query>\n{}\n</query>\n<result>\n{}\n</result>",
+            params.query,
+            extract_text_completion(completion)
+        )
+    };
+    let (long_term_memory, include_extracted_content_only_once) =
+        extract_memory_fields(&params.query, &extracted_content, file_system);
+
+    ActionResult {
+        extracted_content: Some(extracted_content),
+        error: None,
+        judgement: None,
+        long_term_memory: Some(long_term_memory),
+        include_extracted_content_only_once,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+        attachments: Vec::new(),
+        images: Vec::new(),
+        metadata,
+    }
+}
+
+fn extract_text_completion(completion: Value) -> String {
+    completion
+        .get("result")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| completion.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| completion.to_string())
+}
+
+fn extract_memory_fields(
+    query: &str,
+    extracted_content: &str,
+    file_system: &mut ManagedFileSystem,
+) -> (String, bool) {
+    if extracted_content.chars().count() < MAX_EXTRACT_MEMORY_LENGTH {
+        return (extracted_content.to_owned(), false);
+    }
+
+    if let Ok(file_name) = file_system.save_extracted_content(extracted_content) {
+        (
+            format!("Query: {query}\nContent in {file_name} and once in <read_state>."),
+            true,
+        )
+    } else {
+        (
+            format!(
+                "Query: {query}\nExtracted result length: {} characters.",
+                extracted_content.chars().count()
+            ),
+            true,
+        )
+    }
+}
+
+fn structured_extract_metadata(
+    schema: &Value,
+    raw_metadata: Option<&Value>,
+    source_url: &str,
+    data: &Value,
+) -> Value {
+    serde_json::json!({
+        "structured_extraction": true,
+        "extraction_result": {
+            "data": data,
+            "schema_used": schema,
+            "is_partial": raw_metadata
+                .and_then(|metadata| metadata.get("is_partial"))
+                .cloned()
+                .unwrap_or(Value::Bool(false)),
+            "source_url": source_url,
+            "content_stats": raw_metadata
+                .and_then(|metadata| metadata.get("content_stats"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        }
+    })
+}
+
+fn tagged_section<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let start_tag = format!("<{tag}>\n");
+    let end_tag = format!("\n</{tag}>");
+    let start = text.find(&start_tag)? + start_tag.len();
+    let end = text[start..].find(&end_tag)? + start;
+    Some(&text[start..end])
 }
 
 fn render_link_appendix(elements: &[FoundElement]) -> Option<String> {
@@ -4868,7 +5031,7 @@ where
             return self.record_model_error(state, error, step_start_time);
         }
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
-        let result = self.executor.execute_sequence(&actions).await;
+        let result = self.execute_agent_sequence(&actions).await;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
         self.history.items.push(AgentHistoryItem {
@@ -4884,6 +5047,99 @@ where
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
 
+    async fn execute_agent_sequence(&mut self, actions: &[BrowserAction]) -> Vec<ActionResult> {
+        let mut results = Vec::new();
+
+        for (index, action) in actions.iter().enumerate() {
+            if index > 0 && matches!(action, BrowserAction::Done(_)) {
+                break;
+            }
+
+            let needs_page_change_guard = !action.terminates_sequence();
+            let before = if needs_page_change_guard {
+                match self.executor.session().state(false).await {
+                    Ok(state) => Some(state),
+                    Err(error) => {
+                        results.push(ActionResult::error(error.to_string()));
+                        break;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let raw_result = self.executor.execute_for_agent(action).await;
+            let result = self.resolve_agent_action_result(action, raw_result).await;
+            let should_stop =
+                result.is_done || result.error.is_some() || action.terminates_sequence();
+            let page_changed = if should_stop {
+                false
+            } else if let Some(before) = before {
+                match self.executor.session().state(false).await {
+                    Ok(after) => after.url != before.url,
+                    Err(error) => {
+                        results.push(result);
+                        results.push(ActionResult::error(error.to_string()));
+                        break;
+                    }
+                }
+            } else {
+                false
+            };
+
+            results.push(result);
+
+            if should_stop || page_changed {
+                break;
+            }
+        }
+
+        results
+    }
+
+    async fn resolve_agent_action_result(
+        &mut self,
+        action: &BrowserAction,
+        raw_result: ActionResult,
+    ) -> ActionResult {
+        let BrowserAction::Extract(params) = action else {
+            return raw_result;
+        };
+        if raw_result.error.is_some() {
+            return raw_result;
+        }
+        let Some(raw_content) = raw_result.extracted_content.as_deref() else {
+            return raw_result;
+        };
+
+        let request = build_extract_llm_request(params, raw_content);
+        let completion = match timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        {
+            Ok(Ok(completion)) => completion,
+            Ok(Err(error)) => {
+                return ActionResult::error(format!("LLM-backed extract failed: {error}"));
+            }
+            Err(_) => {
+                return ActionResult::error(format!(
+                    "LLM-backed extract timed out after {} seconds",
+                    self.settings.llm_timeout_seconds
+                ));
+            }
+        };
+
+        complete_llm_extract_result(
+            params,
+            raw_content,
+            raw_result.metadata.as_ref(),
+            completion.content,
+            self.executor.file_system_mut(),
+        )
+    }
+
     async fn execute_initial_actions(&mut self) -> Result<(), AgentRunError> {
         if self.initial_actions_executed || self.settings.initial_actions.is_empty() {
             return Ok(());
@@ -4896,7 +5152,7 @@ where
         let current_url = state.url.clone();
         let execution_actions =
             actions_for_execution(&initial_actions, &self.settings, &current_url);
-        let result = self.executor.execute_sequence(&execution_actions).await;
+        let result = self.execute_agent_sequence(&execution_actions).await;
         let step_end_time = now_seconds();
 
         self.history.items.push(AgentHistoryItem {
@@ -10948,6 +11204,165 @@ mod tests {
                 raw_response: None,
             })
         }
+    }
+
+    #[tokio::test]
+    async fn agent_extract_action_uses_llm_result_sections() {
+        let agent_output = serde_json::json!({
+            "current_state": {
+                "thinking": "extract"
+            },
+            "action": [
+                {
+                    "extract": {
+                        "query": "company summary",
+                        "extract_links": false,
+                        "extract_images": false,
+                        "start_from_char": 0,
+                        "already_collected": []
+                    }
+                }
+            ]
+        });
+        let extract_output = serde_json::json!({
+            "result": "EvalOps appears in the page content."
+        });
+        let mut agent = Agent::new(
+            "extract company summary",
+            QueueModel::new(vec![agent_output, extract_output]),
+            MockSession::new(),
+        );
+
+        let result = {
+            let item = agent.step().await.expect("agent step");
+            item.result[0].clone()
+        };
+
+        let content = result.extracted_content.as_deref().expect("extract result");
+        assert!(content.contains("<url>\nabout:blank\n</url>"));
+        assert!(content.contains("<query>\ncompany summary\n</query>"));
+        assert!(content.contains("<result>\nEvalOps appears in the page content.\n</result>"));
+        assert_eq!(result.long_term_memory.as_deref(), Some(content));
+        assert!(!result.include_extracted_content_only_once);
+
+        let requests = agent.llm.requests.lock().expect("requests lock").clone();
+        assert_eq!(requests.len(), 2);
+        let extract_request_text = request_text(&requests[1]);
+        assert!(extract_request_text.contains("<webpage_content>"));
+        assert!(extract_request_text.contains("Alpha EvalOps Beta"));
+        assert!(
+            requests[1]
+                .output_schema
+                .as_ref()
+                .is_some_and(|schema| schema["properties"]["result"]["type"] == "string")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_extract_action_passes_structured_schema_to_llm() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "company": { "type": "string" },
+                "links": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            },
+            "required": ["company"]
+        });
+        let agent_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "extract": {
+                        "query": "company and links",
+                        "extract_links": true,
+                        "extract_images": false,
+                        "start_from_char": 0,
+                        "output_schema": schema,
+                        "already_collected": ["Old EvalOps"]
+                    }
+                }
+            ]
+        });
+        let extract_output = serde_json::json!({
+            "company": "EvalOps",
+            "links": ["https://evalops.dev/run"]
+        });
+        let mut agent = Agent::new(
+            "extract structured company data",
+            QueueModel::new(vec![agent_output, extract_output]),
+            MockSession::new(),
+        );
+
+        let result = {
+            let item = agent.step().await.expect("agent step");
+            item.result[0].clone()
+        };
+
+        let content = result.extracted_content.as_deref().expect("extract result");
+        assert!(content.contains("<structured_result>"));
+        assert!(content.contains(r#""company":"EvalOps""#));
+        assert!(content.contains("https://evalops.dev/run"));
+
+        let metadata = result.metadata.as_ref().expect("structured metadata");
+        assert_eq!(metadata["structured_extraction"], true);
+        assert_eq!(metadata["extraction_result"]["data"]["company"], "EvalOps");
+        assert_eq!(
+            metadata["extraction_result"]["schema_used"]["required"][0],
+            "company"
+        );
+        assert_eq!(metadata["extraction_result"]["source_url"], "about:blank");
+
+        let requests = agent.llm.requests.lock().expect("requests lock").clone();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].output_schema.as_ref().expect("extract schema"),
+            &schema
+        );
+        let extract_request_text = request_text(&requests[1]);
+        assert!(extract_request_text.contains("<links>"));
+        assert!(extract_request_text.contains("<already_collected>"));
+    }
+
+    #[tokio::test]
+    async fn agent_extract_action_records_llm_failure_as_action_error() {
+        let agent_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "extract": {
+                        "query": "company summary",
+                        "extract_links": false,
+                        "extract_images": false,
+                        "start_from_char": 0,
+                        "already_collected": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "extract with failing model",
+            QueueModel::with_results(vec![
+                Ok(agent_output),
+                Err(LlmError::Provider("extract unavailable".to_owned())),
+            ]),
+            MockSession::new(),
+        );
+
+        let result = {
+            let item = agent.step().await.expect("agent step");
+            item.result[0].clone()
+        };
+
+        assert!(result.extracted_content.is_none());
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("LLM-backed extract failed"))
+        );
     }
 
     #[tokio::test]
