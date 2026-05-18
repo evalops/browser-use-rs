@@ -30,6 +30,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
 const URL_POLICY_SETTLE_MS: u64 = 200;
 const MAX_SECURITY_EVENTS: usize = 8;
+const MAX_LIFECYCLE_EVENTS: usize = 32;
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -1243,6 +1244,143 @@ impl BrowserProfile {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserLifecycleEventKind {
+    BrowserConnected,
+    BrowserCloseRequested,
+    TargetCreated,
+    TargetClosed,
+    TargetSwitched,
+    NavigationStarted,
+    NavigationCompleted,
+    NavigationBlocked,
+    CurrentTargetReset,
+    CurrentTargetResetFailed,
+    PopupClosed,
+    PopupCloseFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrowserLifecycleEvent {
+    pub kind: BrowserLifecycleEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub message: String,
+}
+
+impl BrowserLifecycleEvent {
+    fn new(
+        kind: BrowserLifecycleEventKind,
+        target_id: Option<String>,
+        url: Option<String>,
+        reason: Option<String>,
+        error: Option<String>,
+        message: String,
+    ) -> Self {
+        Self {
+            kind,
+            target_id,
+            url,
+            reason,
+            error,
+            message,
+        }
+    }
+
+    fn browser_connected(url: impl Into<String>) -> Self {
+        let url = url.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserConnected,
+            None,
+            Some(url.clone()),
+            None,
+            None,
+            format!("Browser connected at {url}"),
+        )
+    }
+
+    fn browser_close_requested() -> Self {
+        Self::new(
+            BrowserLifecycleEventKind::BrowserCloseRequested,
+            None,
+            None,
+            None,
+            None,
+            "Browser close requested".to_owned(),
+        )
+    }
+
+    fn target_created(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        let url = url.into();
+        Self::new(
+            BrowserLifecycleEventKind::TargetCreated,
+            Some(target_id.clone()),
+            Some(url.clone()),
+            None,
+            None,
+            format!("Target {target_id} created for {url}"),
+        )
+    }
+
+    fn target_closed(target_id: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        Self::new(
+            BrowserLifecycleEventKind::TargetClosed,
+            Some(target_id.clone()),
+            None,
+            None,
+            None,
+            format!("Target {target_id} closed"),
+        )
+    }
+
+    fn target_switched(target_id: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        Self::new(
+            BrowserLifecycleEventKind::TargetSwitched,
+            Some(target_id.clone()),
+            None,
+            None,
+            None,
+            format!("Agent focus switched to target {target_id}"),
+        )
+    }
+
+    fn navigation_started(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        let url = url.into();
+        Self::new(
+            BrowserLifecycleEventKind::NavigationStarted,
+            Some(target_id.clone()),
+            Some(url.clone()),
+            None,
+            None,
+            format!("Navigation started on target {target_id} to {url}"),
+        )
+    }
+
+    fn navigation_completed(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        let url = url.into();
+        Self::new(
+            BrowserLifecycleEventKind::NavigationCompleted,
+            Some(target_id.clone()),
+            Some(url.clone()),
+            None,
+            None,
+            format!("Navigation completed on target {target_id} to {url}"),
+        )
+    }
+}
+
 pub fn resolve_chrome_executable<I>(
     explicit_path: Option<&Path>,
     env_override: Option<PathBuf>,
@@ -1817,6 +1955,7 @@ pub struct CdpBrowserSession {
     last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
     pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
     security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
+    lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     url_policy: UrlAccessPolicy,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
@@ -1830,6 +1969,14 @@ impl CdpBrowserSession {
         let last_dom_state = Arc::new(Mutex::new(None));
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
+        let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        {
+            let mut events = lifecycle_events.lock().await;
+            push_lifecycle_event(
+                &mut events,
+                BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
+            );
+        }
 
         Ok(Self {
             connection,
@@ -1837,6 +1984,7 @@ impl CdpBrowserSession {
             last_dom_state,
             pending_url_policy_error,
             security_events,
+            lifecycle_events,
             url_policy: UrlAccessPolicy::default(),
             _security_watchdog: None,
             _launched_browser: None,
@@ -1852,12 +2000,23 @@ impl CdpBrowserSession {
         let last_dom_state = Arc::new(Mutex::new(None));
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
+        let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        {
+            let mut events = lifecycle_events.lock().await;
+            push_lifecycle_event(
+                &mut events,
+                BrowserLifecycleEvent::browser_connected(
+                    launched_browser.endpoint().http_url.clone(),
+                ),
+            );
+        }
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
             page.clone(),
             last_dom_state.clone(),
             pending_url_policy_error.clone(),
             security_events.clone(),
+            lifecycle_events.clone(),
             url_policy.clone(),
         )
         .await?;
@@ -1868,6 +2027,7 @@ impl CdpBrowserSession {
             last_dom_state,
             pending_url_policy_error,
             security_events,
+            lifecycle_events,
             url_policy,
             _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
@@ -1875,6 +2035,8 @@ impl CdpBrowserSession {
     }
 
     pub async fn close_browser(&self) -> Result<(), BrowserError> {
+        self.record_lifecycle_event(BrowserLifecycleEvent::browser_close_requested())
+            .await;
         self.connection
             .command("Browser.close", json!({}), None)
             .await
@@ -1920,8 +2082,20 @@ impl CdpBrowserSession {
     }
 
     async fn record_security_event(&self, event: BrowserSecurityEvent) {
+        let lifecycle_event = event.lifecycle_event.clone();
         let mut events = self.security_events.lock().await;
         push_security_event(&mut events, event);
+        drop(events);
+        self.record_lifecycle_event(lifecycle_event).await;
+    }
+
+    async fn record_lifecycle_event(&self, event: BrowserLifecycleEvent) {
+        let mut events = self.lifecycle_events.lock().await;
+        push_lifecycle_event(&mut events, event);
+    }
+
+    pub async fn lifecycle_events(&self) -> Vec<BrowserLifecycleEvent> {
+        self.lifecycle_events.lock().await.iter().cloned().collect()
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -2434,6 +2608,7 @@ impl BrowserSecurityWatchdog {
         last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
         pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
         security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
+        lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
         url_policy: UrlAccessPolicy,
     ) -> Result<Option<Self>, BrowserError> {
         if url_policy.is_unrestricted() {
@@ -2462,6 +2637,7 @@ impl BrowserSecurityWatchdog {
                     &last_dom_state,
                     &pending_url_policy_error,
                     &security_events,
+                    &lifecycle_events,
                     action,
                 )
                 .await;
@@ -2497,24 +2673,41 @@ struct BrowserSecurityEvent {
     message: String,
     browser_error_message: Option<String>,
     closed_popup_message: Option<String>,
+    lifecycle_event: BrowserLifecycleEvent,
 }
 
 impl BrowserSecurityEvent {
     fn prevented_navigation(url: String, reason: String) -> Self {
+        let message =
+            format!("Blocked navigation to {url} ({reason}); no browser navigation was started");
         Self {
-            message: format!(
-                "Blocked navigation to {url} ({reason}); no browser navigation was started"
+            lifecycle_event: BrowserLifecycleEvent::new(
+                BrowserLifecycleEventKind::NavigationBlocked,
+                None,
+                Some(url),
+                Some(reason),
+                None,
+                message.clone(),
             ),
+            message,
             browser_error_message: None,
             closed_popup_message: None,
         }
     }
 
     fn reset_current(url: String, reason: String) -> Self {
+        let message =
+            format!("Blocked navigation to {url} ({reason}); reset current tab to about:blank");
         Self {
-            message: format!(
-                "Blocked navigation to {url} ({reason}); reset current tab to about:blank"
+            lifecycle_event: BrowserLifecycleEvent::new(
+                BrowserLifecycleEventKind::CurrentTargetReset,
+                None,
+                Some(url),
+                Some(reason),
+                None,
+                message.clone(),
             ),
+            message,
             browser_error_message: None,
             closed_popup_message: None,
         }
@@ -2525,6 +2718,14 @@ impl BrowserSecurityEvent {
             "Failed to reset blocked navigation to {url} ({reason}) to about:blank: {error}"
         );
         Self {
+            lifecycle_event: BrowserLifecycleEvent::new(
+                BrowserLifecycleEventKind::CurrentTargetResetFailed,
+                None,
+                Some(url),
+                Some(reason),
+                Some(error),
+                message.clone(),
+            ),
             browser_error_message: Some(message.clone()),
             message,
             closed_popup_message: None,
@@ -2534,6 +2735,14 @@ impl BrowserSecurityEvent {
     fn closed_popup(url: String, reason: String) -> Self {
         let message = format!("Closed popup {url} ({reason})");
         Self {
+            lifecycle_event: BrowserLifecycleEvent::new(
+                BrowserLifecycleEventKind::PopupClosed,
+                None,
+                Some(url),
+                Some(reason),
+                None,
+                message.clone(),
+            ),
             browser_error_message: None,
             closed_popup_message: Some(message.clone()),
             message,
@@ -2543,6 +2752,14 @@ impl BrowserSecurityEvent {
     fn close_popup_failed(url: String, reason: String, error: String) -> Self {
         let message = format!("Failed to close popup {url} ({reason}): {error}");
         Self {
+            lifecycle_event: BrowserLifecycleEvent::new(
+                BrowserLifecycleEventKind::PopupCloseFailed,
+                None,
+                Some(url),
+                Some(reason),
+                Some(error),
+                message.clone(),
+            ),
             browser_error_message: Some(message.clone()),
             closed_popup_message: None,
             message,
@@ -2632,6 +2849,7 @@ async fn apply_url_policy_watchdog_action(
     last_dom_state: &Arc<Mutex<Option<SerializedDomState>>>,
     pending_url_policy_error: &Arc<Mutex<Option<BrowserError>>>,
     security_events: &Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
+    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     action: UrlPolicyWatchdogAction,
 ) {
     let event = BrowserSecurityEvent::from_watchdog_action(&action);
@@ -2673,15 +2891,23 @@ async fn apply_url_policy_watchdog_action(
                 BrowserSecurityEvent::close_popup_failed(url, reason, error.to_string())
             }
         };
+        let lifecycle_event = failure_event.lifecycle_event.clone();
         let mut events = security_events.lock().await;
         push_security_event(&mut events, failure_event);
+        drop(events);
+        let mut events = lifecycle_events.lock().await;
+        push_lifecycle_event(&mut events, lifecycle_event);
         return;
     }
 
     *last_dom_state.lock().await = None;
     {
+        let lifecycle_event = event.lifecycle_event.clone();
         let mut events = security_events.lock().await;
         push_security_event(&mut events, event);
+        drop(events);
+        let mut events = lifecycle_events.lock().await;
+        push_lifecycle_event(&mut events, lifecycle_event);
     }
     let mut pending = pending_url_policy_error.lock().await;
     if pending.is_none() {
@@ -2691,6 +2917,16 @@ async fn apply_url_policy_watchdog_action(
 
 fn push_security_event(events: &mut VecDeque<BrowserSecurityEvent>, event: BrowserSecurityEvent) {
     while events.len() >= MAX_SECURITY_EVENTS {
+        events.pop_front();
+    }
+    events.push_back(event);
+}
+
+fn push_lifecycle_event(
+    events: &mut VecDeque<BrowserLifecycleEvent>,
+    event: BrowserLifecycleEvent,
+) {
+    while events.len() >= MAX_LIFECYCLE_EVENTS {
         events.pop_front();
     }
     events.push_back(event);
@@ -3919,13 +4155,39 @@ impl BrowserSession for CdpBrowserSession {
         self.validate_url_policy_before_navigation(url).await?;
         if new_tab {
             let target_id = create_target(&self.connection, url).await?;
+            self.record_lifecycle_event(BrowserLifecycleEvent::target_created(
+                target_id.clone(),
+                url.to_owned(),
+            ))
+            .await;
+            self.record_lifecycle_event(BrowserLifecycleEvent::navigation_started(
+                target_id.clone(),
+                url.to_owned(),
+            ))
+            .await;
             let page = attach_to_target(&self.connection, target_id).await?;
+            let target_id = page.target_id.clone();
             self.set_current_page(page).await;
+            self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id.clone()))
+                .await;
             self.clear_cached_dom_state().await;
-            return self.enforce_url_policy_after_settle().await;
+            let result = self.enforce_url_policy_after_settle().await;
+            if result.is_ok() {
+                self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
+                    target_id,
+                    url.to_owned(),
+                ))
+                .await;
+            }
+            return result;
         }
 
         let page = self.current_page().await;
+        self.record_lifecycle_event(BrowserLifecycleEvent::navigation_started(
+            page.target_id.clone(),
+            url.to_owned(),
+        ))
+        .await;
         self.connection
             .command(
                 "Page.navigate",
@@ -3936,7 +4198,15 @@ impl BrowserSession for CdpBrowserSession {
             )
             .await?;
         self.clear_cached_dom_state().await;
-        self.enforce_url_policy_after_settle().await
+        let result = self.enforce_url_policy_after_settle().await;
+        if result.is_ok() {
+            self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
+                page.target_id,
+                url.to_owned(),
+            ))
+            .await;
+        }
+        result
     }
 
     async fn go_back(&self) -> Result<(), BrowserError> {
@@ -3964,7 +4234,10 @@ impl BrowserSession for CdpBrowserSession {
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
         let target_id = resolve_page_target_id(&self.connection, target_id).await?;
         let page = attach_to_target(&self.connection, target_id).await?;
+        let target_id = page.target_id.clone();
         self.set_current_page(page).await;
+        self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id))
+            .await;
         self.clear_cached_dom_state().await;
         self.enforce_open_tab_url_policy().await
     }
@@ -3978,10 +4251,15 @@ impl BrowserSession for CdpBrowserSession {
                 None,
             )
             .await?;
+        self.record_lifecycle_event(BrowserLifecycleEvent::target_closed(target_id.clone()))
+            .await;
 
         if self.current_page().await.target_id == target_id {
             let page = attach_or_create_page(&self.connection).await?;
+            let target_id = page.target_id.clone();
             self.set_current_page(page).await;
+            self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id))
+                .await;
         }
         self.clear_cached_dom_state().await;
 
@@ -5064,6 +5342,22 @@ mod tests {
                 "Failed to close popup https://stuck.test/popup (in_prohibited_domains): CDP target is already detached"
             ]
         );
+        assert_eq!(
+            events[0].lifecycle_event.kind,
+            BrowserLifecycleEventKind::NavigationBlocked
+        );
+        assert_eq!(
+            events[1].lifecycle_event.kind,
+            BrowserLifecycleEventKind::PopupClosed
+        );
+        assert_eq!(
+            events[2].lifecycle_event.kind,
+            BrowserLifecycleEventKind::CurrentTargetReset
+        );
+        assert_eq!(
+            events[3].lifecycle_event.kind,
+            BrowserLifecycleEventKind::PopupCloseFailed
+        );
     }
 
     #[test]
@@ -5090,6 +5384,75 @@ mod tests {
         assert!(!recent_events.contains("blocked-1.test"));
         assert!(recent_events.contains("blocked-2.test"));
         assert!(recent_events.contains("blocked-9.test"));
+    }
+
+    #[test]
+    fn browser_lifecycle_events_cover_target_and_navigation_transitions() {
+        let events = vec![
+            BrowserLifecycleEvent::browser_connected("http://127.0.0.1:9222"),
+            BrowserLifecycleEvent::target_created("target-1", "https://example.test"),
+            BrowserLifecycleEvent::target_switched("target-1"),
+            BrowserLifecycleEvent::navigation_started("target-1", "https://example.test"),
+            BrowserLifecycleEvent::navigation_completed("target-1", "https://example.test"),
+            BrowserLifecycleEvent::target_closed("target-1"),
+            BrowserSecurityEvent::reset_current(
+                "https://blocked.test".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserSecurityEvent::close_popup_failed(
+                "https://stuck.test/popup".to_owned(),
+                "in_prohibited_domains".to_owned(),
+                "No target with given id found".to_owned(),
+            )
+            .lifecycle_event,
+        ];
+
+        assert_eq!(
+            events.iter().map(|event| &event.kind).collect::<Vec<_>>(),
+            vec![
+                &BrowserLifecycleEventKind::BrowserConnected,
+                &BrowserLifecycleEventKind::TargetCreated,
+                &BrowserLifecycleEventKind::TargetSwitched,
+                &BrowserLifecycleEventKind::NavigationStarted,
+                &BrowserLifecycleEventKind::NavigationCompleted,
+                &BrowserLifecycleEventKind::TargetClosed,
+                &BrowserLifecycleEventKind::CurrentTargetReset,
+                &BrowserLifecycleEventKind::PopupCloseFailed,
+            ]
+        );
+        assert_eq!(events[1].target_id.as_deref(), Some("target-1"));
+        assert_eq!(events[3].url.as_deref(), Some("https://example.test"));
+        assert_eq!(events[6].reason.as_deref(), Some("not_in_allowed_domains"));
+        assert_eq!(
+            events[7].error.as_deref(),
+            Some("No target with given id found")
+        );
+
+        let json = serde_json::to_value(&events).expect("serialize lifecycle events");
+        assert_eq!(json[0]["kind"], "browser_connected");
+        assert_eq!(json[4]["kind"], "navigation_completed");
+    }
+
+    #[test]
+    fn browser_lifecycle_events_are_bounded() {
+        let mut events = VecDeque::new();
+        for index in 0..(MAX_LIFECYCLE_EVENTS + 2) {
+            push_lifecycle_event(
+                &mut events,
+                BrowserLifecycleEvent::navigation_completed(
+                    format!("target-{index}"),
+                    format!("https://example.test/{index}"),
+                ),
+            );
+        }
+
+        assert_eq!(events.len(), MAX_LIFECYCLE_EVENTS);
+        assert_eq!(events[0].target_id.as_deref(), Some("target-2"));
+        assert_eq!(
+            events.back().and_then(|event| event.target_id.as_deref()),
+            Some("target-33")
+        );
     }
 
     #[test]
