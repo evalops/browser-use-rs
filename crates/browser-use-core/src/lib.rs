@@ -44,6 +44,12 @@ pub struct AgentSettings {
     pub max_history_items: Option<usize>,
     #[serde(default = "default_max_clickable_elements_length")]
     pub max_clickable_elements_length: usize,
+    #[serde(default = "default_enable_planning")]
+    pub enable_planning: bool,
+    #[serde(default = "default_planning_replan_on_stall")]
+    pub planning_replan_on_stall: usize,
+    #[serde(default = "default_planning_exploration_limit")]
+    pub planning_exploration_limit: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
 }
@@ -60,6 +66,9 @@ impl Default for AgentSettings {
             loop_detection_enabled: default_loop_detection_enabled(),
             max_history_items: None,
             max_clickable_elements_length: default_max_clickable_elements_length(),
+            enable_planning: default_enable_planning(),
+            planning_replan_on_stall: default_planning_replan_on_stall(),
+            planning_exploration_limit: default_planning_exploration_limit(),
             include_attributes: Vec::new(),
         }
     }
@@ -95,6 +104,18 @@ fn default_loop_detection_enabled() -> bool {
 
 fn default_max_clickable_elements_length() -> usize {
     40_000
+}
+
+fn default_enable_planning() -> bool {
+    true
+}
+
+fn default_planning_replan_on_stall() -> usize {
+    3
+}
+
+fn default_planning_exploration_limit() -> usize {
+    5
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1836,12 +1857,15 @@ pub fn build_step_request(
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let previous_results = render_previous_results(history, settings.max_history_items);
     let page_stats = render_page_stats(state);
+    let planning_context = render_planning_context(history, settings)
+        .map(|message| format!("\n\nPlanning:\n{message}"))
+        .unwrap_or_default();
     let loop_awareness = render_loop_awareness(history, state, settings)
         .map(|message| format!("\n\nLoop awareness:\n{message}"))
         .unwrap_or_default();
     let mut user_content = vec![ContentPart::Text {
         text: format!(
-            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}{loop_awareness}\n\nBrowser state:\n{state_json}"
+            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}{planning_context}{loop_awareness}\n\nBrowser state:\n{state_json}"
         ),
     }];
     if settings.use_vision
@@ -1961,6 +1985,48 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
     } else {
         rendered.join("\n")
     }
+}
+
+fn render_planning_context(history: &AgentHistory, settings: &AgentSettings) -> Option<String> {
+    if !settings.enable_planning {
+        return None;
+    }
+
+    let steps_without_plan_update = history
+        .items
+        .iter()
+        .rev()
+        .take_while(|item| {
+            item.model_output
+                .as_ref()
+                .and_then(|output| output.plan_update.as_ref())
+                .is_none()
+        })
+        .count();
+    let recent_failures = history
+        .items
+        .iter()
+        .rev()
+        .take_while(|item| item.result.iter().any(|result| result.error.is_some()))
+        .count();
+
+    let mut message = format!(
+        "When useful, include `current_plan_item` and `plan_update` to keep multi-step work explicit. Replan after {} stalled/error steps; avoid exploring for more than {} steps without a plan update.",
+        settings.planning_replan_on_stall, settings.planning_exploration_limit
+    );
+
+    if settings.planning_replan_on_stall > 0 && recent_failures >= settings.planning_replan_on_stall
+    {
+        message.push_str(
+            " Recent steps have failed or stalled, so revise the plan before continuing.",
+        );
+    } else if settings.planning_exploration_limit > 0
+        && steps_without_plan_update >= settings.planning_exploration_limit
+    {
+        message.push_str(" You have explored for several steps without updating the plan; provide a concise plan_update.");
+    }
+
+    Some(message)
 }
 
 fn render_loop_awareness(
@@ -2169,6 +2235,9 @@ mod tests {
         assert!(settings.loop_detection_enabled);
         assert_eq!(settings.max_history_items, None);
         assert_eq!(settings.max_clickable_elements_length, 40_000);
+        assert!(settings.enable_planning);
+        assert_eq!(settings.planning_replan_on_stall, 3);
+        assert_eq!(settings.planning_exploration_limit, 5);
         assert!(settings.include_attributes.is_empty());
     }
 
@@ -3974,6 +4043,39 @@ mod tests {
             .expect("step request");
         let request_text = serde_json::to_string(&request.messages).expect("messages json");
         assert!(!request_text.contains("Loop awareness"));
+    }
+
+    #[test]
+    fn step_request_includes_planning_context_and_replan_nudge() {
+        let state = blank_state();
+        let history = AgentHistory {
+            items: (0..3)
+                .map(|_| AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::error("stalled")],
+                    state: blank_state(),
+                    metadata: None,
+                })
+                .collect(),
+        };
+
+        let request = build_step_request("recover", &state, &history, &AgentSettings::default())
+            .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+
+        assert!(request_text.contains("Planning"));
+        assert!(request_text.contains("current_plan_item"));
+        assert!(request_text.contains("plan_update"));
+        assert!(request_text.contains("revise the plan"));
+
+        let disabled_settings = AgentSettings {
+            enable_planning: false,
+            ..AgentSettings::default()
+        };
+        let request = build_step_request("recover", &state, &history, &disabled_settings)
+            .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+        assert!(!request_text.contains("Planning"));
     }
 
     #[test]

@@ -39,10 +39,11 @@ includes:
   vision-aware browser-state capture and screenshot image prompts, compact
   page-stat prompt context, one-time extraction replay handling, step/LLM
   timeouts, max-failure handling, page-change guards, loop detection,
-  loop-awareness prompt nudges, upstream flattened planning fields, structured
-  extraction metadata, per-step timing metadata, configurable prompt-history and
-  clickable-element text limits, final-result helpers, duration/action/url
-  history accessors, and history.
+  loop-awareness prompt nudges, upstream flattened planning fields,
+  configurable planning prompt nudges, structured extraction metadata, per-step
+  timing metadata, configurable prompt-history and clickable-element text
+  limits, final-result helpers, duration/action/url history accessors, and
+  history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
