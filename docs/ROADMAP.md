@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#29 Add reconnect recovery and deeper lifecycle watchdog automation](https://github.com/evalops/browser-use-rs/issues/29)
+- [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
 
 ## Completed Tracks
 
@@ -32,6 +32,7 @@ small pushed checkpoints as each surface becomes real.
 - [#25 Expose serializable Agent checkpoint and resume API](https://github.com/evalops/browser-use-rs/issues/25)
 - [#27 Expand browser profile lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/27)
 - [#28 Expose remaining browser lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/28)
+- [#29 Add reconnect recovery and deeper lifecycle watchdog automation](https://github.com/evalops/browser-use-rs/issues/29)
 
 ## Current Checkpoint
 
@@ -189,8 +190,7 @@ Implemented:
 
 Next:
 
-1. Continue [#29](https://github.com/evalops/browser-use-rs/issues/29) by
-   wiring reconnect recovery beyond websocket-closure diagnostics, multi-origin
-   storage discovery, and active reconnect attempts into live CDP/session
-   behavior.
+1. Continue [#30](https://github.com/evalops/browser-use-rs/issues/30) by
+   wiring active reconnect attempts, session rehydration, and multi-origin
+   storage discovery into live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

@@ -59,9 +59,9 @@ records a browser-stopped lifecycle diagnostic, and direct `Page.navigate`
 timeouts plus stuck HTTP(S) requests record network-timeout lifecycle
 diagnostics.
 
-Remaining lifecycle gaps: live CDP/watchdog wiring for reconnect recovery beyond
-explicit websocket-closure diagnostics, multi-origin storage discovery, and a
-full general-purpose event bus are still lighter than upstream.
+Remaining lifecycle gaps are tracked in #30: active reconnect attempts with
+session rehydration, multi-origin storage discovery, and a full
+general-purpose event bus are still lighter than upstream.
 
 ## Drift Policy
 

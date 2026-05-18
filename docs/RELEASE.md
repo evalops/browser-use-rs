@@ -155,10 +155,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   stable event shapes for reconnect, target-crash/network-timeout, JavaScript
   dialog, download, and storage-state lifecycle diagnostics. Live CDP wiring now
   records target crash, JavaScript dialog, navigation failure, configured
-  download events, and cookie plus current-origin storage-state save/load
-  events; reconnect recovery beyond explicit websocket-closure diagnostics,
-  multi-origin storage discovery, and active reconnect attempts remain lighter
-  than upstream's full browser event bus.
+  download events, cookie plus current-origin storage-state save/load events,
+  explicit CDP websocket closure diagnostics, direct navigation timeouts, and
+  watchdog-style stuck HTTP(S) request timeouts. #30 tracks the remaining deeper
+  reconnect manager, session rehydration, multi-origin storage discovery, and
+  full general-purpose event-bus parity.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

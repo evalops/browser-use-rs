@@ -36,7 +36,9 @@ includes:
   Launch profiles can set `downloads_path` to enable Chrome download behavior
   and browser-level download lifecycle events, and `storage_state_path` to
   load/save browser cookie and current-origin local/session storage state with
-  lifecycle notifications.
+  lifecycle notifications. The deeper active reconnect manager and multi-origin
+  storage discovery work is tracked in
+  [#30](https://github.com/evalops/browser-use-rs/issues/30).
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and
