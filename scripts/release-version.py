@@ -30,6 +30,37 @@ SECTION_RE = re.compile(r"^\[.*\]\s*$")
 VERSION_LINE_RE = re.compile(
     r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>".*)$'
 )
+CONVENTIONAL_BREAKING_RE = re.compile(r"^[a-z]+(?:\([^)]+\))?!:")
+BREAKING_MARKER_RE = re.compile(r"\bBREAKING(?: |-)?CHANGE\b|^\s*BREAKING:", re.IGNORECASE | re.MULTILINE)
+FEATURE_SUBJECT_RE = re.compile(
+    r"^(add|support|expose|implement|introduce|enable|route|wire|publish)\b",
+    re.IGNORECASE,
+)
+FIX_SUBJECT_RE = re.compile(
+    r"^(fix|repair|patch|keep|harden|guard|avoid|prevent|correct|restore|stabilize|tighten)\b",
+    re.IGNORECASE,
+)
+RELEASE_COMMIT_RE = re.compile(r"^Cut browser-use-rs v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+RELEASE_WORTHY_EXACT_PATHS = {
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "rust-toolchain.toml",
+    ".github/workflows/release.yml",
+    "docs/DAEMON_SUPERVISION.md",
+    "docs/INSTALL.md",
+    "docs/RELEASE.md",
+    "packaging/homebrew/browser-use-rs.rb.template",
+    "packaging/homebrew/publish-tap.sh",
+    "scripts/release-version.py",
+}
+RELEASE_WORTHY_PREFIXES = (
+    "crates/",
+    "packaging/launchd/",
+    "packaging/systemd/",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -80,6 +111,27 @@ class Version:
         if self.prerelease and not other.prerelease:
             return True
         return compare_prerelease(self.prerelease, other.prerelease) < 0
+
+
+@dataclasses.dataclass(frozen=True)
+class Commit:
+    sha: str
+    subject: str
+    body: str
+
+    @property
+    def full_message(self) -> str:
+        return f"{self.subject}\n{self.body}"
+
+
+@dataclasses.dataclass(frozen=True)
+class ReleasePlan:
+    should_release: bool
+    release_type: str | None
+    base_ref: str | None
+    reason: str
+    commit_count: int
+    changed_files: tuple[str, ...]
 
 
 def compare_prerelease(left: tuple[str, ...], right: tuple[str, ...]) -> int:
@@ -133,6 +185,19 @@ def cargo_metadata(root: Path) -> dict:
     if result.returncode != 0:
         raise RuntimeError(f"cargo metadata failed:\n{result.stderr}")
     return json.loads(result.stdout)
+
+
+def git(root: Path, *args: str, check: bool = True) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed:\n{result.stderr}")
+    return result.stdout
 
 
 def validate_workspace(root: Path, expect_version: Version | None) -> Version:
@@ -205,6 +270,116 @@ def write_workspace_version(root: Path, new_version: Version) -> None:
     manifest_path.write_text("".join(lines), encoding="utf-8")
 
 
+def latest_stable_tag(root: Path) -> str | None:
+    tags = []
+    for raw_tag in git(root, "tag", "--list", "v[0-9]*", "--merged", "HEAD").splitlines():
+        raw_tag = raw_tag.strip()
+        if not raw_tag:
+            continue
+        try:
+            version = Version.parse(raw_tag)
+        except ValueError:
+            continue
+        if version.prerelease:
+            continue
+        tags.append((version, raw_tag))
+    if not tags:
+        return None
+    return sorted(tags, key=lambda item: item[0])[-1][1]
+
+
+def commits_since(root: Path, base_ref: str | None) -> list[Commit]:
+    range_spec = f"{base_ref}..HEAD" if base_ref else "HEAD"
+    raw = git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", range_spec)
+    commits = []
+    for entry in raw.strip("\x1e\n").split("\x1e"):
+        if not entry.strip():
+            continue
+        sha, subject, body = (entry.lstrip("\n").split("\x1f", 2) + ["", ""])[:3]
+        if RELEASE_COMMIT_RE.match(subject.strip()):
+            continue
+        commits.append(Commit(sha=sha, subject=subject.strip(), body=body.strip()))
+    return commits
+
+
+def changed_files_since(root: Path, base_ref: str | None) -> tuple[str, ...]:
+    if base_ref:
+        raw = git(root, "diff", "--name-only", f"{base_ref}..HEAD")
+    else:
+        raw = git(root, "ls-files")
+    return tuple(sorted(file for file in raw.splitlines() if file.strip()))
+
+
+def is_release_worthy_path(path: str) -> bool:
+    if path in RELEASE_WORTHY_EXACT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in RELEASE_WORTHY_PREFIXES)
+
+
+def release_worthy_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(path for path in changed_files if is_release_worthy_path(path))
+
+
+def commit_has_breaking_marker(commit: Commit) -> bool:
+    return bool(
+        CONVENTIONAL_BREAKING_RE.match(commit.subject)
+        or BREAKING_MARKER_RE.search(commit.full_message)
+    )
+
+
+def classify_auto_release(commits: list[Commit], changed_files: tuple[str, ...]) -> tuple[str, str]:
+    if any(commit_has_breaking_marker(commit) for commit in commits):
+        return "major", "breaking-change marker found in unreleased commits"
+
+    code_files = tuple(path for path in changed_files if path.startswith("crates/"))
+    feature_subjects = tuple(
+        commit.subject for commit in commits if FEATURE_SUBJECT_RE.match(commit.subject)
+    )
+    fix_only = commits and all(FIX_SUBJECT_RE.match(commit.subject) for commit in commits)
+
+    if code_files and feature_subjects and not fix_only:
+        return "minor", f"feature commit with Rust crate changes: {feature_subjects[0]}"
+    if code_files and not fix_only:
+        return "minor", "Rust crate behavior changed"
+    return "patch", "release-worthy fix, packaging, or packaged documentation changed"
+
+
+def plan_auto_release(root: Path) -> ReleasePlan:
+    base_ref = latest_stable_tag(root)
+    commits = commits_since(root, base_ref)
+    changed_files = changed_files_since(root, base_ref)
+    worthy_files = release_worthy_files(changed_files)
+
+    if not commits:
+        return ReleasePlan(
+            should_release=False,
+            release_type=None,
+            base_ref=base_ref,
+            reason=f"no unreleased commits after {base_ref or 'repository start'}",
+            commit_count=0,
+            changed_files=worthy_files,
+        )
+    if not worthy_files:
+        return ReleasePlan(
+            should_release=False,
+            release_type=None,
+            base_ref=base_ref,
+            reason=f"no release-worthy files changed after {base_ref or 'repository start'}",
+            commit_count=len(commits),
+            changed_files=worthy_files,
+        )
+
+    release_type, reason = classify_auto_release(commits, worthy_files)
+    return ReleasePlan(
+        should_release=True,
+        release_type=release_type,
+        base_ref=base_ref,
+        reason=reason,
+        commit_count=len(commits),
+        changed_files=worthy_files,
+    )
+
+
 def append_github_output(path: str | None, values: dict[str, str]) -> None:
     if not path:
         return
@@ -215,11 +390,16 @@ def append_github_output(path: str | None, values: dict[str, str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-type", choices=("major", "minor", "patch"))
+    parser.add_argument("--release-type", choices=("auto", "major", "minor", "patch"))
     parser.add_argument("--version", help="Exact SemVer version to cut, with or without v prefix.")
     parser.add_argument("--expect-version", help="Fail unless the workspace version matches this.")
     parser.add_argument("--write", action="store_true", help="Update Cargo.toml to the requested version.")
     parser.add_argument("--check", action="store_true", help="Only validate workspace version consistency.")
+    parser.add_argument(
+        "--allow-no-release",
+        action="store_true",
+        help="Allow auto mode to exit successfully when no release-worthy changes exist.",
+    )
     parser.add_argument(
         "--github-output",
         default=os.environ.get("GITHUB_OUTPUT"),
@@ -235,15 +415,51 @@ def main() -> int:
     current = validate_workspace(root, expect_version)
 
     requested: Version | None = None
+    auto_plan: ReleasePlan | None = None
     if args.version:
         requested = Version.parse(args.version)
+        selected_release_type = "exact"
+    elif args.release_type == "auto":
+        auto_plan = plan_auto_release(root)
+        selected_release_type = auto_plan.release_type
+        if not auto_plan.should_release:
+            values = {
+                "should_release": "false",
+                "previous_version": str(current),
+                "version": str(current),
+                "tag": f"v{current}",
+                "release_type": "",
+                "release_base": auto_plan.base_ref or "",
+                "release_reason": auto_plan.reason,
+                "commit_count": str(auto_plan.commit_count),
+                "changed_files_count": str(len(auto_plan.changed_files)),
+            }
+            append_github_output(args.github_output, values)
+            print(auto_plan.reason)
+            if args.allow_no_release:
+                return 0
+            return 0
+        requested = current.bump(auto_plan.release_type or "patch")
     elif args.release_type:
+        selected_release_type = args.release_type
         requested = current.bump(args.release_type)
+    else:
+        selected_release_type = ""
 
     if requested is None:
         append_github_output(
             args.github_output,
-            {"version": str(current), "tag": f"v{current}", "previous_version": str(current)},
+            {
+                "should_release": "false",
+                "version": str(current),
+                "tag": f"v{current}",
+                "previous_version": str(current),
+                "release_type": "",
+                "release_base": "",
+                "release_reason": "version check only",
+                "commit_count": "0",
+                "changed_files_count": "0",
+            },
         )
         print(f"browser-use-rs workspace version is {current}")
         return 0
@@ -261,9 +477,15 @@ def main() -> int:
     append_github_output(
         args.github_output,
         {
+            "should_release": "true",
             "previous_version": str(current),
             "version": str(requested),
             "tag": f"v{requested}",
+            "release_type": selected_release_type or "",
+            "release_base": auto_plan.base_ref if auto_plan and auto_plan.base_ref else "",
+            "release_reason": auto_plan.reason if auto_plan else "explicit release request",
+            "commit_count": str(auto_plan.commit_count if auto_plan else 0),
+            "changed_files_count": str(len(auto_plan.changed_files) if auto_plan else 0),
         },
     )
     print(f"{action} browser-use-rs workspace version from {current} to {requested}")
