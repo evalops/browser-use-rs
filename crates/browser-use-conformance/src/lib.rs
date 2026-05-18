@@ -147,6 +147,56 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             is_interactive: true,
             is_scrollable: true,
         },
+        DomElementRef {
+            index: 5,
+            target_id: "fixture-target".to_owned(),
+            backend_node_id: 105,
+            node_id: Some(205),
+            tag_name: "div".to_owned(),
+            role: None,
+            name: Some("Draft note".to_owned()),
+            text: Some("Draft body".to_owned()),
+            attributes: BTreeMap::from([
+                ("contenteditable".to_owned(), "plaintext-only".to_owned()),
+                ("id".to_owned(), "notes".to_owned()),
+            ]),
+            bounds: Some(ElementBounds {
+                x: 12,
+                y: 300,
+                width: 300,
+                height: 80,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        },
+        DomElementRef {
+            index: 6,
+            target_id: "fixture-target".to_owned(),
+            backend_node_id: 106,
+            node_id: Some(206),
+            tag_name: "audio".to_owned(),
+            role: None,
+            name: Some("Audio sample".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                (
+                    "compound_components".to_owned(),
+                    "(name=Play/Pause,role=button),(name=Progress,role=slider,min=0,max=100),(name=Mute,role=button),(name=Volume,role=slider,min=0,max=100)"
+                        .to_owned(),
+                ),
+                ("id".to_owned(), "audio-player".to_owned()),
+            ]),
+            bounds: Some(ElementBounds {
+                x: 12,
+                y: 400,
+                width: 320,
+                height: 54,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        },
     ])
 }
 

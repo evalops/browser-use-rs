@@ -1,5 +1,5 @@
 {
-  "text": "[1] <button id=submit keyshortcuts=Control+Enter busy=true live=polite> Submit request Ignored visual label\n[2] <input type=email id=email placeholder=name@example.com required=true> Email address user@example.com\n[3] <select name=plan compound_components=(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Int... multiselectable=true> Plan Enterprise\n[4] |scroll element| <div id=results> Results panel",
+  "text": "[1] <button id=submit keyshortcuts=Control+Enter busy=true live=polite> Submit request Ignored visual label\n[2] <input type=email id=email placeholder=name@example.com required=true> Email address user@example.com\n[3] <select name=plan compound_components=(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Int... multiselectable=true> Plan Enterprise\n[4] |scroll element| <div id=results> Results panel\n[5] <div id=notes contenteditable=plaintext-only> Draft note Draft body\n[6] <audio id=audio-player compound_components=(name=Play/Pause,role=button),(name=Progress,role=slider,min=0,max=100),(name=Mute,role=button),(nam...> Audio sample",
   "selector_map": {
     "1": {
       "index": 1,
@@ -94,6 +94,47 @@
       "is_visible": true,
       "is_interactive": true,
       "is_scrollable": true
+    },
+    "5": {
+      "index": 5,
+      "target_id": "fixture-target",
+      "backend_node_id": 105,
+      "node_id": 205,
+      "tag_name": "div",
+      "name": "Draft note",
+      "text": "Draft body",
+      "attributes": {
+        "contenteditable": "plaintext-only",
+        "id": "notes"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 300,
+        "width": 300,
+        "height": 80
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "6": {
+      "index": 6,
+      "target_id": "fixture-target",
+      "backend_node_id": 106,
+      "node_id": 206,
+      "tag_name": "audio",
+      "name": "Audio sample",
+      "attributes": {
+        "compound_components": "(name=Play/Pause,role=button),(name=Progress,role=slider,min=0,max=100),(name=Mute,role=button),(name=Volume,role=slider,min=0,max=100)",
+        "id": "audio-player"
+      },
+      "bounds": {
+        "x": 12,
+        "y": 400,
+        "width": 320,
+        "height": 54
+      },
+      "is_visible": true,
+      "is_interactive": true
     }
   }
 }
