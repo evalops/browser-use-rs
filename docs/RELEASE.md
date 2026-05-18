@@ -45,7 +45,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
   file upload, local text-file read/write/replace, PDF/DOCX text extraction,
   PNG/JPEG image-file reads with one-shot image prompt parts, PDF capture,
-  extraction, page search, element lookup, cached observed-node
+  extraction, page search, element lookup across Chrome OOPIF iframe targets,
+  cached observed-node
   click/input/scroll/dropdown/upload resolution, and done.
 - `screenshot` requests screenshot inclusion in the next observation by default
   and writes a local `.png` file with an attachment path when `file_name` is

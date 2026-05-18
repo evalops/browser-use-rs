@@ -52,7 +52,8 @@ includes:
   `send_keys` for text, special keys, and shortcuts, `upload_file`,
   text/PDF/DOCX read support, text-file write/replace, PNG/JPEG image-file read
   payloads, `screenshot` with optional PNG file save, `save_as_pdf` with
-  filename normalization, `extract`, `search_page`, `find_elements`, back
+  filename normalization, `extract`, `search_page`, `find_elements` including
+  Chrome OOPIF iframe targets, back
   navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
   `done` with requested text-file display attachments.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,

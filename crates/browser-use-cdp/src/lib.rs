@@ -2027,6 +2027,72 @@ impl CdpBrowserSession {
         Ok(pages)
     }
 
+    async fn page_text_for_page(&self, page: &AttachedPage) -> Result<String, BrowserError> {
+        let value = self
+            .evaluate_json_for_page(
+                page,
+                "(document.body ? document.body.innerText : document.documentElement.innerText || '')",
+                false,
+            )
+            .await?;
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| BrowserError::MissingResponseData("page text".to_owned()))
+    }
+
+    async fn find_elements_for_page(
+        &self,
+        page: &AttachedPage,
+        selector: &str,
+        attributes: &[String],
+        max_results: usize,
+        include_text: bool,
+    ) -> Result<Vec<FoundElement>, BrowserError> {
+        let selector_json = serde_json::to_string(selector)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let attributes_json = serde_json::to_string(attributes)
+            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let value = self
+            .evaluate_json_for_page(
+                page,
+                &format!(
+                    r#"
+JSON.stringify((() => {{
+  const selector = {selector_json};
+  const attributeNames = {attributes_json};
+  return Array.from(document.querySelectorAll(selector)).slice(0, {max_results}).map((el) => {{
+    const attrs = {{}};
+    for (const name of attributeNames) {{
+      const value = el.getAttribute(name);
+      if (value !== null && value !== '') attrs[name] = value;
+    }}
+    return {{
+      tag_name: el.tagName.toLowerCase(),
+      text: {text_expr},
+      attributes: attrs
+    }};
+  }});
+}})())
+"#,
+                    selector_json = selector_json,
+                    attributes_json = attributes_json,
+                    max_results = max_results,
+                    text_expr = if include_text {
+                        "(el.innerText || el.value || '').trim().slice(0, 500)"
+                    } else {
+                        "null"
+                    }
+                ),
+                false,
+            )
+            .await?;
+        let encoded = value.as_str().ok_or_else(|| {
+            BrowserError::MissingResponseData("find elements result string".to_owned())
+        })?;
+        serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
+    }
+
     async fn node_ids_by_backend_ids(
         &self,
         page: &AttachedPage,
@@ -3386,15 +3452,26 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn page_text(&self) -> Result<String, BrowserError> {
-        let value = self
-            .evaluate_json(
-                "(document.body ? document.body.innerText : document.documentElement.innerText || '')",
-            )
-            .await?;
-        value
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| BrowserError::MissingResponseData("page text".to_owned()))
+        let page = self.current_page().await;
+        let mut texts = Vec::new();
+        let root_text = self.page_text_for_page(&page).await?;
+        if !root_text.trim().is_empty() {
+            texts.push(root_text);
+        }
+        let frame_infos = self.frame_element_infos(&page).await.unwrap_or_default();
+        let child_pages = self
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .unwrap_or_default();
+        for child_page in child_pages {
+            let Ok(text) = self.page_text_for_page(&child_page.page).await else {
+                continue;
+            };
+            if !text.trim().is_empty() {
+                texts.push(text);
+            }
+        }
+        Ok(texts.join("\n"))
     }
 
     async fn find_elements(
@@ -3404,44 +3481,40 @@ impl BrowserSession for CdpBrowserSession {
         max_results: usize,
         include_text: bool,
     ) -> Result<Vec<FoundElement>, BrowserError> {
-        let selector_json = serde_json::to_string(selector)
-            .map_err(|error| BrowserError::Transport(error.to_string()))?;
-        let attributes_json = serde_json::to_string(attributes)
-            .map_err(|error| BrowserError::Transport(error.to_string()))?;
-        let value = self
-            .evaluate_json(&format!(
-                r#"
-JSON.stringify((() => {{
-  const selector = {selector_json};
-  const attributeNames = {attributes_json};
-  return Array.from(document.querySelectorAll(selector)).slice(0, {max_results}).map((el) => {{
-    const attrs = {{}};
-    for (const name of attributeNames) {{
-      const value = el.getAttribute(name);
-      if (value !== null && value !== '') attrs[name] = value;
-    }}
-    return {{
-      tag_name: el.tagName.toLowerCase(),
-      text: {text_expr},
-      attributes: attrs
-    }};
-  }});
-}})())
-"#,
-                selector_json = selector_json,
-                attributes_json = attributes_json,
-                max_results = max_results,
-                text_expr = if include_text {
-                    "(el.innerText || el.value || '').trim().slice(0, 500)"
-                } else {
-                    "null"
-                }
-            ))
+        let page = self.current_page().await;
+        let mut elements = self
+            .find_elements_for_page(&page, selector, attributes, max_results, include_text)
             .await?;
-        let encoded = value.as_str().ok_or_else(|| {
-            BrowserError::MissingResponseData("find elements result string".to_owned())
-        })?;
-        serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
+        if elements.len() >= max_results {
+            return Ok(elements);
+        }
+
+        let frame_infos = self.frame_element_infos(&page).await.unwrap_or_default();
+        let child_pages = self
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .unwrap_or_default();
+        for child_page in child_pages {
+            let remaining = max_results.saturating_sub(elements.len());
+            if remaining == 0 {
+                break;
+            }
+            let Ok(mut child_elements) = self
+                .find_elements_for_page(
+                    &child_page.page,
+                    selector,
+                    attributes,
+                    remaining,
+                    include_text,
+                )
+                .await
+            else {
+                continue;
+            };
+            elements.append(&mut child_elements);
+        }
+
+        Ok(elements)
     }
 
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
@@ -5317,6 +5390,73 @@ mod tests {
 
         assert_eq!(clicked.as_str(), Some("yes"));
         assert_eq!(input_value.as_str(), Some("EvalOps"));
+        child_server.abort();
+        parent_server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_extracts_text_and_elements_from_cross_origin_iframe_targets() {
+        let child_html = "<html><body><p>Frame only text</p><a id='child-link' href='https://example.com/frame'>Frame link</a></body></html>";
+        let (child_addr, child_server) = spawn_static_html_server(child_html.to_owned()).await;
+        let child_url = format!("http://127.0.0.1:{}/child", child_addr.port());
+        let parent_html = format!(
+            "<html><head><title>cross extract smoke</title></head><body><p>Parent only text</p><a id='parent-link' href='https://example.com/parent'>Parent link</a><iframe src='{child_url}' style='width:420px;height:180px;border:0'></iframe></body></html>"
+        );
+        let (parent_addr, parent_server) = spawn_static_html_server(parent_html).await;
+        let parent_url = format!("http://localhost:{}/parent", parent_addr.port());
+        let profile = BrowserProfile {
+            args: vec!["--site-per-process".to_owned()],
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(&parent_url, false)
+            .await
+            .expect("navigate cross-origin parent");
+        let mut page_text = String::new();
+        for _ in 0..20 {
+            page_text = session.page_text().await.expect("page text");
+            if page_text.contains("Frame only text") {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+
+        assert!(
+            page_text.contains("Parent only text"),
+            "missing parent text: {page_text}"
+        );
+        assert!(
+            page_text.contains("Frame only text"),
+            "missing child frame text: {page_text}"
+        );
+
+        let links = session
+            .find_elements("a", &["href".to_owned()], 10, true)
+            .await
+            .expect("find links");
+        assert!(
+            links.iter().any(|link| {
+                link.text.as_deref() == Some("Parent link")
+                    && link.attributes.get("href").map(String::as_str)
+                        == Some("https://example.com/parent")
+            }),
+            "missing parent link: {links:?}"
+        );
+        assert!(
+            links.iter().any(|link| {
+                link.text.as_deref() == Some("Frame link")
+                    && link.attributes.get("href").map(String::as_str)
+                        == Some("https://example.com/frame")
+            }),
+            "missing child frame link: {links:?}"
+        );
+
         child_server.abort();
         parent_server.abort();
     }
