@@ -632,6 +632,8 @@ pub enum BrowserError {
     MissingResponseData(String),
     #[error("navigation failed: {0}")]
     NavigationFailed(String),
+    #[error("navigation blocked by browser profile policy: {url} ({reason})")]
+    NavigationBlocked { url: String, reason: String },
     #[error("action failed: {0}")]
     ActionFailed(String),
     #[error("browser state unavailable: {0}")]
@@ -700,6 +702,8 @@ pub struct BrowserProfile {
     #[serde(default)]
     pub prohibited_domains: Vec<String>,
     #[serde(default)]
+    pub block_ip_addresses: bool,
+    #[serde(default)]
     pub viewport: BrowserViewport,
     #[serde(default = "default_browser_start_timeout_ms")]
     pub browser_start_timeout_ms: u64,
@@ -718,6 +722,7 @@ impl Default for BrowserProfile {
             args: Vec::new(),
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
+            block_ip_addresses: false,
             viewport: BrowserViewport::default(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
             proxy: None,
@@ -1091,10 +1096,186 @@ pub struct AttachedPage {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct UrlAccessPolicy {
+    allowed_domains: Vec<String>,
+    prohibited_domains: Vec<String>,
+    block_ip_addresses: bool,
+}
+
+impl UrlAccessPolicy {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        Self {
+            allowed_domains: profile.allowed_domains.clone(),
+            prohibited_domains: profile.prohibited_domains.clone(),
+            block_ip_addresses: profile.block_ip_addresses,
+        }
+    }
+
+    fn validate(&self, url: &str) -> Result<(), BrowserError> {
+        if self.is_allowed(url) {
+            return Ok(());
+        }
+
+        Err(BrowserError::NavigationBlocked {
+            url: url.to_owned(),
+            reason: self.block_reason(url).to_owned(),
+        })
+    }
+
+    fn is_allowed(&self, url: &str) -> bool {
+        if is_internal_browser_url(url) {
+            return true;
+        }
+
+        let Ok(parsed) = url::Url::parse(url) else {
+            return false;
+        };
+
+        if matches!(parsed.scheme(), "data" | "blob") {
+            return true;
+        }
+
+        let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+            return false;
+        };
+
+        if self.block_ip_addresses && is_ip_address(&host) {
+            return false;
+        }
+
+        if self.allowed_domains.is_empty() && self.prohibited_domains.is_empty() {
+            return true;
+        }
+
+        if !self.allowed_domains.is_empty() {
+            return self
+                .allowed_domains
+                .iter()
+                .any(|pattern| is_url_pattern_match(url, &host, parsed.scheme(), pattern));
+        }
+
+        !self
+            .prohibited_domains
+            .iter()
+            .any(|pattern| is_url_pattern_match(url, &host, parsed.scheme(), pattern))
+    }
+
+    fn block_reason(&self, url: &str) -> &'static str {
+        let Ok(parsed) = url::Url::parse(url) else {
+            return "invalid_url";
+        };
+        if self.block_ip_addresses
+            && parsed
+                .host_str()
+                .map(str::to_ascii_lowercase)
+                .is_some_and(|host| is_ip_address(&host))
+        {
+            return "ip_address_blocked";
+        }
+        if !self.allowed_domains.is_empty() {
+            return "not_in_allowed_domains";
+        }
+        "in_prohibited_domains"
+    }
+}
+
+fn is_internal_browser_url(url: &str) -> bool {
+    matches!(
+        url,
+        "about:blank"
+            | "chrome://new-tab-page/"
+            | "chrome://new-tab-page"
+            | "chrome://newtab/"
+            | "chrome://newtab"
+    )
+}
+
+fn is_ip_address(host: &str) -> bool {
+    host.trim_matches(['[', ']'])
+        .parse::<std::net::IpAddr>()
+        .is_ok()
+}
+
+fn is_url_pattern_match(url: &str, host: &str, scheme: &str, pattern: &str) -> bool {
+    let pattern = pattern.trim().to_ascii_lowercase();
+    if pattern.is_empty() {
+        return false;
+    }
+
+    let url = url.to_ascii_lowercase();
+    let full_url_pattern = format!("{scheme}://{host}");
+
+    if pattern.contains('*') {
+        if let Some(domain) = pattern.strip_prefix("*.") {
+            return matches!(scheme, "http" | "https")
+                && (host == domain || host.ends_with(&format!(".{domain}")));
+        }
+
+        if pattern.ends_with("/*") && glob_match(&url, &pattern) {
+            return true;
+        }
+
+        let value = if pattern.contains("://") {
+            full_url_pattern.as_str()
+        } else {
+            host
+        };
+        return glob_match(value, &pattern);
+    }
+
+    if pattern.contains("://") {
+        return url.starts_with(&pattern);
+    }
+
+    host == pattern || (is_root_domain(&pattern) && host == format!("www.{pattern}"))
+}
+
+fn is_root_domain(domain: &str) -> bool {
+    !domain.contains('*') && !domain.contains("://") && domain.matches('.').count() == 1
+}
+
+fn glob_match(value: &str, pattern: &str) -> bool {
+    let mut remaining = value;
+    let mut parts = pattern.split('*').peekable();
+    let anchored_start = !pattern.starts_with('*');
+    let anchored_end = !pattern.ends_with('*');
+
+    if let Some(first) = parts.next() {
+        if anchored_start {
+            let Some(rest) = remaining.strip_prefix(first) else {
+                return false;
+            };
+            remaining = rest;
+        } else if !first.is_empty() {
+            let Some(index) = remaining.find(first) else {
+                return false;
+            };
+            remaining = &remaining[index + first.len()..];
+        }
+    }
+
+    while let Some(part) = parts.next() {
+        if part.is_empty() {
+            continue;
+        }
+        let Some(index) = remaining.find(part) else {
+            return false;
+        };
+        remaining = &remaining[index + part.len()..];
+        if parts.peek().is_none() && anchored_end {
+            return remaining.is_empty();
+        }
+    }
+
+    !anchored_end || remaining.is_empty()
+}
+
 pub struct CdpBrowserSession {
     connection: CdpConnection,
     page: Mutex<AttachedPage>,
     last_dom_state: Mutex<Option<SerializedDomState>>,
+    url_policy: UrlAccessPolicy,
     _launched_browser: Option<LaunchedBrowser>,
 }
 
@@ -1107,11 +1288,13 @@ impl CdpBrowserSession {
             connection,
             page: Mutex::new(page),
             last_dom_state: Mutex::new(None),
+            url_policy: UrlAccessPolicy::default(),
             _launched_browser: None,
         })
     }
 
     pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
+        let url_policy = UrlAccessPolicy::from_profile(profile);
         let launched_browser = profile.launch_local().await?;
         let connection = CdpConnection::connect(launched_browser.endpoint()).await?;
         let page = attach_or_create_page(&connection).await?;
@@ -1120,6 +1303,7 @@ impl CdpBrowserSession {
             connection,
             page: Mutex::new(page),
             last_dom_state: Mutex::new(None),
+            url_policy,
             _launched_browser: Some(launched_browser),
         })
     }
@@ -2249,6 +2433,7 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
+        self.url_policy.validate(url)?;
         if new_tab {
             let target_id = create_target(&self.connection, url).await?;
             let page = attach_to_target(&self.connection, target_id).await?;
@@ -3032,6 +3217,156 @@ mod tests {
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn url_policy_allows_internal_data_and_default_web_urls() {
+        let policy = UrlAccessPolicy::default();
+
+        assert!(policy.is_allowed("about:blank"));
+        assert!(policy.is_allowed("chrome://newtab/"));
+        assert!(policy.is_allowed("chrome://new-tab-page"));
+        assert!(policy.is_allowed("data:text/html,<title>ok</title>"));
+        assert!(policy.is_allowed("blob:https://example.com/id"));
+        assert!(policy.is_allowed("https://example.com/page"));
+    }
+
+    #[test]
+    fn url_policy_matches_allowed_domain_variants_and_wildcards() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec![
+                "*.google.com".to_owned(),
+                "https://wiki.org".to_owned(),
+                "https://*.test.com".to_owned(),
+                "chrome://version".to_owned(),
+                "brave://*".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        });
+
+        assert!(policy.is_allowed("https://google.com"));
+        assert!(policy.is_allowed("https://www.google.com"));
+        assert!(policy.is_allowed("https://mail.google.com"));
+        assert!(!policy.is_allowed("https://evilgoogle.com"));
+        assert!(!policy.is_allowed("chrome://abc.google.com"));
+        assert!(!policy.is_allowed("http://wiki.org"));
+        assert!(policy.is_allowed("https://wiki.org/page"));
+        assert!(policy.is_allowed("https://www.test.com"));
+        assert!(!policy.is_allowed("https://www.testx.com"));
+        assert!(policy.is_allowed("chrome://version"));
+        assert!(!policy.is_allowed("chrome://settings"));
+        assert!(policy.is_allowed("brave://anything/"));
+    }
+
+    #[test]
+    fn url_policy_prevents_allowed_domain_auth_bypass() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["example.com".to_owned(), "*.google.com".to_owned()],
+            ..BrowserProfile::default()
+        });
+
+        assert!(!policy.is_allowed("https://example.com:password@malicious.com"));
+        assert!(!policy.is_allowed("https://example.com@malicious.com"));
+        assert!(!policy.is_allowed("https://example.com%20@malicious.com"));
+        assert!(!policy.is_allowed("https://sub.google.com@evil.org"));
+        assert!(policy.is_allowed("https://user:password@example.com"));
+    }
+
+    #[test]
+    fn url_policy_root_domain_www_rules_match_upstream() {
+        let simple = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["example.com".to_owned(), "test.org".to_owned()],
+            ..BrowserProfile::default()
+        });
+        assert!(simple.is_allowed("https://example.com"));
+        assert!(simple.is_allowed("https://www.example.com"));
+        assert!(!simple.is_allowed("https://mail.example.com"));
+        assert!(!simple.is_allowed("https://notexample.com"));
+
+        let country_tld = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["example.co.uk".to_owned()],
+            ..BrowserProfile::default()
+        });
+        assert!(country_tld.is_allowed("https://example.co.uk"));
+        assert!(!country_tld.is_allowed("https://www.example.co.uk"));
+
+        let full_url = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["https://example.com".to_owned()],
+            ..BrowserProfile::default()
+        });
+        assert!(full_url.is_allowed("https://example.com/path"));
+        assert!(!full_url.is_allowed("https://www.example.com"));
+    }
+
+    #[test]
+    fn url_policy_blocks_prohibited_domains_and_preserves_allowlist_precedence() {
+        let prohibited_policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            prohibited_domains: vec![
+                "example.com".to_owned(),
+                "*.ads.example".to_owned(),
+                "https://tracker.test".to_owned(),
+                "brave://*".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        });
+
+        assert!(!prohibited_policy.is_allowed("https://example.com"));
+        assert!(!prohibited_policy.is_allowed("https://www.example.com"));
+        assert!(prohibited_policy.is_allowed("https://mail.example.com"));
+        assert!(!prohibited_policy.is_allowed("https://cdn.ads.example/pixel"));
+        assert!(!prohibited_policy.is_allowed("https://tracker.test/collect?id=1"));
+        assert!(prohibited_policy.is_allowed("http://tracker.test/collect?id=1"));
+        assert!(!prohibited_policy.is_allowed("brave://anything/"));
+        assert!(prohibited_policy.is_allowed("chrome://new-tab-page/"));
+
+        let allowlist_wins = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["*.example.com".to_owned()],
+            prohibited_domains: vec!["https://example.com".to_owned()],
+            ..BrowserProfile::default()
+        });
+        assert!(allowlist_wins.is_allowed("https://example.com"));
+        assert!(allowlist_wins.is_allowed("https://api.example.com"));
+        assert!(!allowlist_wins.is_allowed("https://notexample.com"));
+    }
+
+    #[test]
+    fn url_policy_blocks_ip_addresses_when_configured() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            block_ip_addresses: true,
+            ..BrowserProfile::default()
+        });
+
+        assert!(!policy.is_allowed("http://127.0.0.1:9222/json"));
+        assert!(!policy.is_allowed("http://[::1]/"));
+        assert!(policy.is_allowed("https://example.com"));
+    }
+
+    #[test]
+    fn url_policy_validate_reports_block_reason() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["example.com".to_owned()],
+            ..BrowserProfile::default()
+        });
+
+        let error = policy
+            .validate("https://blocked.test")
+            .expect_err("navigation should be blocked");
+        assert_eq!(
+            error.to_string(),
+            "navigation blocked by browser profile policy: https://blocked.test (not_in_allowed_domains)"
+        );
+
+        let ip_policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            block_ip_addresses: true,
+            ..BrowserProfile::default()
+        });
+        let error = ip_policy
+            .validate("http://127.0.0.1/")
+            .expect_err("ip navigation should be blocked");
+        assert_eq!(
+            error.to_string(),
+            "navigation blocked by browser profile policy: http://127.0.0.1/ (ip_address_blocked)"
+        );
     }
 
     #[test]
@@ -4441,6 +4776,29 @@ mod tests {
             "plain static div should not be indexed: {}",
             state.dom_state.llm_representation()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_blocks_disallowed_profile_navigation() {
+        let profile = BrowserProfile {
+            allowed_domains: vec!["example.com".to_owned()],
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        let error = session
+            .navigate("https://blocked.test", false)
+            .await
+            .expect_err("disallowed navigation should be blocked before CDP navigation");
+
+        assert!(matches!(
+            error,
+            BrowserError::NavigationBlocked { ref reason, .. } if reason == "not_in_allowed_domains"
+        ));
     }
 
     #[tokio::test]

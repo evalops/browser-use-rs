@@ -103,6 +103,12 @@ enum Command {
         model: Option<String>,
         #[arg(long)]
         base_url: Option<String>,
+        #[arg(long = "allowed-domain")]
+        allowed_domains: Vec<String>,
+        #[arg(long = "prohibited-domain")]
+        prohibited_domains: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        block_ip_addresses: bool,
         #[arg(long, default_value_t = 10)]
         max_steps: usize,
         #[arg(long, default_value_t = false)]
@@ -332,6 +338,9 @@ async fn main() -> anyhow::Result<()> {
             api_key,
             model,
             base_url,
+            allowed_domains,
+            prohibited_domains,
+            block_ip_addresses,
             max_steps,
             no_vision,
             max_failures,
@@ -356,7 +365,16 @@ async fn main() -> anyhow::Result<()> {
             extend_system_message,
         }) => {
             let llm = configured_chat_model(provider, api_key, model, base_url)?;
-            let session = launch_and_navigate(&url).await?;
+            let session = launch_and_navigate_with_profile(
+                &url,
+                BrowserProfile {
+                    allowed_domains,
+                    prohibited_domains,
+                    block_ip_addresses,
+                    ..BrowserProfile::default()
+                },
+            )
+            .await?;
             let settings = cli_agent_settings(CliAgentSettingsArgs {
                 no_vision,
                 max_failures,
@@ -394,7 +412,14 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn launch_and_navigate(url: &str) -> anyhow::Result<CdpBrowserSession> {
-    let session = CdpBrowserSession::launch(&BrowserProfile::default()).await?;
+    launch_and_navigate_with_profile(url, BrowserProfile::default()).await
+}
+
+async fn launch_and_navigate_with_profile(
+    url: &str,
+    profile: BrowserProfile,
+) -> anyhow::Result<CdpBrowserSession> {
+    let session = CdpBrowserSession::launch(&profile).await?;
     session.navigate(url, false).await?;
     sleep(Duration::from_millis(150)).await;
     Ok(session)
@@ -1512,6 +1537,11 @@ mod tests {
             "Custom system prompt.",
             "--extend-system-message",
             "Add selector guidance.",
+            "--allowed-domain",
+            "*.example.test",
+            "--prohibited-domain",
+            "tracker.example.test",
+            "--block-ip-addresses",
         ])
         .expect("agent settings flags should parse");
 
@@ -1540,6 +1570,9 @@ mod tests {
                 sensitive_data_domains,
                 override_system_message,
                 extend_system_message,
+                allowed_domains,
+                prohibited_domains,
+                block_ip_addresses,
                 ..
             } => {
                 assert_eq!(provider, LlmProvider::OpenAiCompatible);
@@ -1590,6 +1623,9 @@ mod tests {
                     extend_system_message.as_deref(),
                     Some("Add selector guidance.")
                 );
+                assert_eq!(allowed_domains, ["*.example.test"]);
+                assert_eq!(prohibited_domains, ["tracker.example.test"]);
+                assert!(block_ip_addresses);
             }
             _ => panic!("expected agent command"),
         }

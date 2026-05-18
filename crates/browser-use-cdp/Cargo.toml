@@ -18,3 +18,4 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+url.workspace = true

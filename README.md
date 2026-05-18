@@ -18,9 +18,10 @@ includes:
 - Typed Rust contracts for browser state, DOM state, actions, action results,
   LLM requests, and agent history.
 - CDP-backed Chrome/Chromium launch/connect, tabs, navigation, screenshots,
-  PDF capture, uploads, indexed actions, and page state with browser-use-style
-  short tab ids, including cached observed-node click/input/scroll/dropdown/upload
-  resolution when available.
+  PDF capture, uploads, indexed actions, browser-profile URL access policies
+  for explicit navigation, and page state with browser-use-style short tab ids,
+  including cached observed-node click/input/scroll/dropdown/upload resolution
+  when available.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, accessibility-tree role/name enrichment, backend and

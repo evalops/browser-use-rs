@@ -24,6 +24,8 @@ browser-use-rs scroll <url> [--pages 1.0] [--down]
 browser-use-rs actions <url> <actions.json> [--screenshot]
 browser-use-rs agent <url> <task> --provider openai-compatible \
   [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
+  [--allowed-domain example.com] [--prohibited-domain tracker.example.com] \
+  [--block-ip-addresses] \
   [--max-steps 10] [--no-vision] [--max-actions-per-step 5] \
   [--no-final-response-after-failure] [--flash-mode] \
   [--include-attribute data-testid] [--available-file-path /tmp/report.pdf]
@@ -78,6 +80,14 @@ Agent runs use the same one-shot browser lifecycle and print typed
 `OLLAMA_HOST`; it does not require an API key. CLI `--api-key`, `--model`, and
 `--base-url` override the provider-specific environment values where they
 apply.
+
+Agent runs accept repeated `--allowed-domain <pattern>` and
+`--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce
+browser-profile URL access policy on explicit navigation. Allowed domains take
+precedence over prohibited domains, matching upstream browser-use. Supported
+patterns include exact hosts such as `example.com`, wildcard hosts such as
+`*.example.com`, scheme-specific URL prefixes such as `https://wiki.org`, and
+URL globs such as `chrome-extension://*`.
 
 Agent runs also expose the typed `AgentSettings` knobs used by the MCP agent
 tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
