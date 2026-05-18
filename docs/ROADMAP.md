@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#20 Align file action binary extension guards](https://github.com/evalops/browser-use-rs/issues/20)
+- Next parity track to be opened from the remaining gaps below.
 
 ## Completed Tracks
 
@@ -23,6 +23,7 @@ small pushed checkpoints as each surface becomes real.
 - [#16 Support PDF write_file artifacts](https://github.com/evalops/browser-use-rs/issues/16)
 - [#17 Paginate PDF write_file artifacts](https://github.com/evalops/browser-use-rs/issues/17)
 - [#18 Add upstream-style PDF read_file page envelopes](https://github.com/evalops/browser-use-rs/issues/18)
+- [#20 Align file action binary extension guards](https://github.com/evalops/browser-use-rs/issues/20)
 
 ## Current Checkpoint
 
