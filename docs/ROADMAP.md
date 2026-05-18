@@ -6,7 +6,7 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - None at the moment. The next parity slice should be selected from upstream
-  drift after #88 lands and CI is green.
+  drift after the latest #88 callback-control CI is green.
 
 ## Completed Tracks
 
@@ -190,8 +190,9 @@ Implemented:
   liveness status and conservative stale-record cleanup on session records.
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, `directly_open_url` task URL extraction and
-  step-zero navigation, new-step and done callbacks, callback-driven stop
-  checks, explicit programmatic stop, max-step, max-failure handling,
+  step-zero navigation, sync and async new-step/done callbacks,
+  callback-driven stop checks, explicit programmatic stop with reasoned stop
+  errors, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
   per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
   `action_timeout_seconds`, upstream-style final-step done-only guard for

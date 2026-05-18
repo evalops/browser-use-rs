@@ -117,7 +117,9 @@ includes:
   hints, one-time extraction replay handling,
   step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,
-  page-change guards, normalized repeated-action loop detection,
+  sync and async new-step/done callbacks, callback-driven stop checks,
+  reasoned programmatic stop errors, page-change guards, normalized
+  repeated-action loop detection,
   loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
   flattened planning fields,
