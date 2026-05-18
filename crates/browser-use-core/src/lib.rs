@@ -39,6 +39,7 @@ pub const INITIAL_UPSTREAM_COMMIT: &str = "f09a86671591312bbc272403a7409d56f4cec
 
 const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
 const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
+const WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct LlmScreenshotSize {
@@ -722,15 +723,7 @@ fn default_action_timeout_seconds() -> f64 {
 }
 
 fn default_wait_between_actions_seconds() -> f64 {
-    0.1
-}
-
-fn coerce_valid_wait_between_actions_seconds(value: f64) -> f64 {
-    if value.is_finite() && value >= 0.0 && Duration::try_from_secs_f64(value).is_ok() {
-        value
-    } else {
-        default_wait_between_actions_seconds()
-    }
+    WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS
 }
 
 fn parse_action_timeout_seconds(raw: Option<&str>) -> f64 {
@@ -754,18 +747,22 @@ fn coerce_valid_action_timeout_seconds(value: f64) -> f64 {
     }
 }
 
+fn coerce_valid_wait_between_actions_seconds(value: f64) -> f64 {
+    if value.is_finite() && value >= 0.0 && Duration::try_from_secs_f64(value).is_ok() {
+        value
+    } else {
+        WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS
+    }
+}
+
 fn action_timeout_duration(seconds: f64) -> Duration {
     Duration::try_from_secs_f64(coerce_valid_action_timeout_seconds(seconds))
         .unwrap_or_else(|_| Duration::from_secs(ACTION_TIMEOUT_FALLBACK_SECONDS as u64))
 }
 
-fn wait_between_actions_duration(seconds: f64) -> Option<Duration> {
-    let seconds = coerce_valid_wait_between_actions_seconds(seconds);
-    if seconds == 0.0 {
-        None
-    } else {
-        Duration::try_from_secs_f64(seconds).ok()
-    }
+fn wait_between_actions_duration(seconds: f64) -> Duration {
+    Duration::try_from_secs_f64(coerce_valid_wait_between_actions_seconds(seconds))
+        .unwrap_or_else(|_| Duration::from_millis(100))
 }
 
 fn timed_out_action_result(action: &BrowserAction, timeout_seconds: f64) -> ActionResult {
@@ -5702,18 +5699,17 @@ where
         let mut results = Vec::new();
 
         for (index, action) in actions.iter().enumerate() {
-            if index > 0 {
-                if let Some(duration) =
-                    wait_between_actions_duration(self.settings.wait_between_actions_seconds)
-                {
-                    sleep(duration).await;
-                }
-            }
-
             self.check_stop_requested().await?;
 
             if index > 0 && matches!(action, BrowserAction::Done(_)) {
                 break;
+            }
+            if index > 0 {
+                let wait_seconds = self.settings.effective_wait_between_actions_seconds();
+                if wait_seconds > 0.0 {
+                    sleep(wait_between_actions_duration(wait_seconds)).await;
+                    self.check_stop_requested().await?;
+                }
             }
 
             let needs_page_change_guard = !action.terminates_sequence();
@@ -8397,28 +8393,21 @@ mod tests {
     }
 
     #[test]
-    fn wait_between_actions_seconds_coerces_invalid_values() {
-        let mut settings = AgentSettings {
-            wait_between_actions_seconds: 0.0,
-            ..AgentSettings::default()
-        };
-        assert_eq!(settings.effective_wait_between_actions_seconds(), 0.0);
-        assert_eq!(wait_between_actions_duration(0.0), None);
-
-        settings.wait_between_actions_seconds = 2.5;
-        assert_eq!(settings.effective_wait_between_actions_seconds(), 2.5);
+    fn wait_between_actions_coerces_invalid_values_but_preserves_zero() {
+        assert_eq!(coerce_valid_wait_between_actions_seconds(0.0), 0.0);
+        assert_eq!(coerce_valid_wait_between_actions_seconds(0.25), 0.25);
         assert_eq!(
-            wait_between_actions_duration(2.5),
-            Some(Duration::from_millis(2500))
+            coerce_valid_wait_between_actions_seconds(-1.0),
+            default_wait_between_actions_seconds()
         );
-
-        for value in [f64::NAN, f64::INFINITY, -1.0] {
-            settings.wait_between_actions_seconds = value;
-            assert_eq!(
-                settings.effective_wait_between_actions_seconds(),
-                default_wait_between_actions_seconds()
-            );
-        }
+        assert_eq!(
+            coerce_valid_wait_between_actions_seconds(f64::NAN),
+            default_wait_between_actions_seconds()
+        );
+        assert_eq!(
+            coerce_valid_wait_between_actions_seconds(f64::INFINITY),
+            default_wait_between_actions_seconds()
+        );
     }
 
     #[test]
@@ -9870,6 +9859,66 @@ mod tests {
 
         assert_eq!(executor.seen, vec!["click"]);
         assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_wait_between_actions_does_not_delay_first_action() {
+        let settings = AgentSettings {
+            wait_between_actions_seconds: 5.0,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "single action",
+            settings,
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        );
+        let actions = vec![BrowserAction::Wait(WaitAction { seconds: 0 })];
+
+        let results = timeout(
+            Duration::from_millis(100),
+            agent.execute_agent_sequence(&actions),
+        )
+        .await
+        .expect("first action should not wait")
+        .expect("execute actions");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].extracted_content.as_deref(),
+            Some("Waited for 0 seconds")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_wait_between_actions_delays_second_action() {
+        let settings = AgentSettings {
+            wait_between_actions_seconds: 0.05,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "two actions",
+            settings,
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        );
+        let actions = vec![
+            BrowserAction::Wait(WaitAction { seconds: 0 }),
+            BrowserAction::Wait(WaitAction { seconds: 0 }),
+        ];
+        let started = std::time::Instant::now();
+
+        let results = agent
+            .execute_agent_sequence(&actions)
+            .await
+            .expect("execute actions");
+
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[1].extracted_content.as_deref(),
+            Some("Waited for 0 seconds")
+        );
     }
 
     #[tokio::test]
@@ -14999,95 +15048,6 @@ mod tests {
         assert!(!agent.is_paused());
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
         assert!(agent.executor.session().events().is_empty());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn agent_step_does_not_wait_before_first_action() {
-        let output = serde_json::json!({
-            "current_state": {},
-            "action": [
-                {
-                    "done": {
-                        "text": "complete",
-                        "success": true,
-                        "files_to_display": []
-                    }
-                }
-            ]
-        });
-        let mut agent = Agent::with_settings(
-            "complete without initial delay",
-            AgentSettings {
-                use_judge: false,
-                wait_between_actions_seconds: 60.0,
-                ..AgentSettings::default()
-            },
-            QueueModel::new(vec![output]),
-            MockSession::new(),
-        );
-
-        let item = timeout(Duration::from_millis(1), agent.step())
-            .await
-            .expect("first action should not wait")
-            .expect("step should complete");
-
-        assert!(item.result[0].is_done);
-        assert_eq!(
-            item.result[0].extracted_content.as_deref(),
-            Some("complete")
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn agent_step_waits_between_later_actions() {
-        let output = serde_json::json!({
-            "current_state": {},
-            "action": [
-                {
-                    "wait": {
-                        "seconds": 0
-                    }
-                },
-                {
-                    "wait": {
-                        "seconds": 0
-                    }
-                }
-            ]
-        });
-        let settings = AgentSettings {
-            use_judge: false,
-            wait_between_actions_seconds: 5.0,
-            ..AgentSettings::default()
-        };
-        let mut agent = Agent::with_settings(
-            "wait before second action",
-            settings,
-            QueueModel::new(vec![output]),
-            MockSession::new(),
-        );
-
-        let mut step = Box::pin(agent.step());
-        assert!(
-            timeout(Duration::from_millis(4999), step.as_mut())
-                .await
-                .is_err(),
-            "second action should not execute before the configured delay"
-        );
-        let item = timeout(Duration::from_millis(1), step.as_mut())
-            .await
-            .expect("delay elapsed")
-            .expect("step should complete");
-
-        assert_eq!(item.result.len(), 2);
-        assert_eq!(
-            item.result[0].extracted_content.as_deref(),
-            Some("Waited for 0 seconds")
-        );
-        assert_eq!(
-            item.result[1].extracted_content.as_deref(),
-            Some("Waited for 0 seconds")
-        );
     }
 
     #[tokio::test]
