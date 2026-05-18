@@ -113,8 +113,16 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       return false;
     }
   };
+  const isBrowserUseExcluded = (el) => {
+    const legacy = el.getAttribute('data-browser-use-exclude');
+    if (typeof legacy === 'string' && legacy.toLowerCase() === 'true') return true;
+    for (const attr of Array.from(el.attributes || [])) {
+      if (attr.name.startsWith('data-browser-use-exclude-') && String(attr.value || '').toLowerCase() === 'true') return true;
+    }
+    return false;
+  };
   const isDisabledOrHidden = (el) => {
-    return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
+    return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
   const isVisible = (el) => {
     const rect = el.getBoundingClientRect();
@@ -202,6 +210,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   };
   const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (isBrowserUseExcluded(node)) return;
     stats.total_elements += 1;
     addDirectTextStats(node);
     const tag = node.tagName ? node.tagName.toLowerCase() : '';
@@ -401,8 +410,16 @@ fn element_eval_js(index: u32, body: &str) -> String {
       return false;
     }}
   }};
+  const isBrowserUseExcluded = (el) => {{
+    const legacy = el.getAttribute('data-browser-use-exclude');
+    if (typeof legacy === 'string' && legacy.toLowerCase() === 'true') return true;
+    for (const attr of Array.from(el.attributes || [])) {{
+      if (attr.name.startsWith('data-browser-use-exclude-') && String(attr.value || '').toLowerCase() === 'true') return true;
+    }}
+    return false;
+  }};
   const isDisabledOrHidden = (el) => {{
-    return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
+    return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
   const isVisible = (el) => {{
     const rect = el.getBoundingClientRect();
@@ -437,6 +454,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   }};
   const visitNode = (node, offset) => {{
     if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (isBrowserUseExcluded(node)) return;
     if (isInteractive(node) && isVisible(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
     if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
@@ -3994,6 +4012,18 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_skips_browser_use_excluded_subtrees() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isBrowserUseExcluded"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("data-browser-use-exclude"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("data-browser-use-exclude-"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isBrowserUseExcluded"));
+        assert!(action_script.contains("data-browser-use-exclude"));
+        assert!(action_script.contains("data-browser-use-exclude-"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_javascript_click_listeners() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
@@ -4796,6 +4826,54 @@ mod tests {
             .await
             .expect("details open");
         assert_eq!(details_open.as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_skips_browser_use_excluded_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>exclude smoke</title></head><body><button id='visible' onclick=\"document.title='visible clicked'\">Visible</button><button id='legacy' data-browser-use-exclude='true'>Legacy</button><div id='scoped' data-browser-use-exclude-demo='TRUE'><button id='nested'>Nested</button></div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let visible = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "visible")
+            })
+            .expect("visible button indexed");
+
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "legacy" && id != "scoped" && id != "nested")
+        }));
+
+        session
+            .click(visible.index)
+            .await
+            .expect("click visible element by index");
+        let title = session
+            .evaluate_json("document.title")
+            .await
+            .expect("document title");
+        assert_eq!(title.as_str(), Some("visible clicked"));
     }
 
     #[tokio::test]

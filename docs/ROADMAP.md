@@ -107,7 +107,8 @@ Implemented:
   controls, detects static mouse/keyboard handler attributes, detects
   pagination affordances, carries page-shape stats for agent prompts, supports
   caller-selected prompt attributes, renders the upstream empty-DOM load hint,
-  and excludes hidden or disabled interactive elements from the selector map.
+  and excludes hidden, disabled, or `data-browser-use-exclude` subtrees from the
+  selector map.
 
 Next:
 
