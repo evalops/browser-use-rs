@@ -25,8 +25,8 @@ includes:
   upstream-style proxy-server/proxy-bypass Chrome flags,
   `disable_security` insecure-content/certificate flags, and
   `deterministic_rendering` screenshot-stability flags, typed `user_agent`
-  launch flags, plus typed Browser Use Cloud creation/stop parameters,
-  current-session
+  launch flags, typed `profile_directory` flags for persistent profiles, plus
+  typed Browser Use Cloud creation/stop parameters, current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint
   conversion that preserve upstream's omitted/null/proxy-country distinction,

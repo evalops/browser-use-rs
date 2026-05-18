@@ -13,7 +13,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   `BrowserProfile.proxy`, `BrowserProfile.disable_security` insecure-content
   and certificate flags, and `BrowserProfile.deterministic_rendering`
   screenshot-stability flags, plus `BrowserProfile.user_agent` to emit typed
-  `--user-agent` launch flags.
+  `--user-agent` launch flags and `BrowserProfile.profile_directory` to emit
+  persistent-profile `--profile-directory` flags alongside `--user-data-dir`.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
