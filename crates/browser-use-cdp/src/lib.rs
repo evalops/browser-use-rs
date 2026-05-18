@@ -315,6 +315,50 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     components.push(`(${optionParts.join(',')})`);
     return components.join(',');
   };
+  const inputCompoundComponents = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag !== 'input') return '';
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (['date', 'time', 'datetime-local', 'month', 'week'].includes(type)) return '';
+    if (type === 'range') {
+      const min = el.getAttribute('min') || '0';
+      const max = el.getAttribute('max') || '100';
+      return `(name=Value,role=slider,min=${min},max=${max})`;
+    }
+    if (type === 'number') {
+      const min = el.getAttribute('min');
+      const max = el.getAttribute('max');
+      const valueParts = ['name=Value', 'role=textbox'];
+      if (min) valueParts.push(`min=${min}`);
+      if (max) valueParts.push(`max=${max}`);
+      return `(name=Increment,role=button),(name=Decrement,role=button),(${valueParts.join(',')})`;
+    }
+    if (type === 'color') {
+      return '(name=Hex Value,role=textbox),(name=Color Picker,role=button)';
+    }
+    if (type === 'file') {
+      const current = Array.from(el.files || []).map((file) => file.name).filter(Boolean).join('|') || 'None';
+      const selectedName = el.multiple ? 'Files Selected' : 'File Selected';
+      return `(name=Browse Files,role=button),(name=${selectedName},role=textbox,current=${current})`;
+    }
+    return '';
+  };
+  const staticCompoundComponents = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'details') {
+      return '(name=Toggle Disclosure,role=button),(name=Content Area,role=region)';
+    }
+    if (tag === 'audio') {
+      return '(name=Play/Pause,role=button),(name=Progress,role=slider,min=0,max=100),(name=Mute,role=button),(name=Volume,role=slider,min=0,max=100)';
+    }
+    if (tag === 'video') {
+      return '(name=Play/Pause,role=button),(name=Progress,role=slider,min=0,max=100),(name=Mute,role=button),(name=Volume,role=slider,min=0,max=100),(name=Fullscreen,role=button)';
+    }
+    return '';
+  };
+  const compoundComponentsFor = (el) => {
+    return selectCompoundComponents(el) || inputCompoundComponents(el) || staticCompoundComponents(el);
+  };
   const elements = [];
   const stats = {
     links: 0,
@@ -389,7 +433,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (controlText && type !== 'password') attrs.value = controlText;
     if ((tag === 'input' || tag === 'option') && 'checked' in el) attrs.checked = String(el.checked);
     if (tag === 'option' && 'selected' in el) attrs.selected = String(el.selected);
-    const compoundComponents = selectCompoundComponents(el);
+    const compoundComponents = compoundComponentsFor(el);
     if (compoundComponents) attrs.compound_components = compoundComponents;
     const text = (controlText || el.innerText || altText || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
@@ -4025,6 +4069,17 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("count=${options.length}"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("format=${formatHint}"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("... ${options.length - 4} more options..."));
+    }
+
+    #[test]
+    fn interactive_snapshot_summarizes_compound_controls() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("inputCompoundComponents"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("compoundComponentsFor"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Browse Files"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Files Selected"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Color Picker"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Toggle Disclosure"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Fullscreen"));
     }
 
     #[test]
