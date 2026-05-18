@@ -18,8 +18,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
-  element metadata, automation-friendly data/ARIA/value attributes,
-  validation patterns, `data-state`, static history-matching attributes,
+  element metadata, automation-friendly data/ARIA/value attributes, read-only
+  state, validation patterns, `data-state`, static history-matching attributes,
   accessibility-tree role/name/state/value enrichment with backend/frontend node
   ids, hidden-element and `data-browser-use-exclude` subtree filtering, and
   topmost/occlusion filtering, while keeping hidden file-input upload targets,

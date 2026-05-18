@@ -29,7 +29,7 @@ includes:
   backend and frontend node ids, accessible labels, image-alt control names,
   selected dropdown values, compound control metadata, compact select option
   summaries, bounds, automation-friendly data/ARIA/value attributes,
-  validation patterns, `data-state`,
+  read-only state, validation patterns, `data-state`,
   input mask/autocomplete/date-format hints, static history-matching
   attributes, hidden-element and `data-browser-use-exclude` subtree filtering,
   non-content `head`/`script`/`style` tag pruning, occluded-element filtering,

@@ -338,6 +338,7 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
     "pressed",
     "disabled",
     "invalid",
+    "readonly",
     "valuemin",
     "valuemax",
     "valuenow",
@@ -403,7 +404,13 @@ fn render_element_attributes_with_attribute_names(
             }
             if matches!(
                 *attribute,
-                "required" | "checked" | "selected" | "expanded" | "pressed" | "disabled"
+                "required"
+                    | "checked"
+                    | "selected"
+                    | "expanded"
+                    | "pressed"
+                    | "disabled"
+                    | "readonly"
             ) && matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
             {
                 return None;
@@ -466,6 +473,7 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
         "invalid" => "aria-invalid",
         "keyshortcuts" => "aria-keyshortcuts",
         "pressed" => "aria-pressed",
+        "readonly" => "aria-readonly",
         "required" => "aria-required",
         "selected" => "aria-selected",
         "valuetext" => "aria-valuetext",
@@ -872,6 +880,49 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "keyshortcuts=Control+Enter");
+    }
+
+    #[test]
+    fn rendered_attributes_alias_aria_readonly_to_ax_shape() {
+        let read_only = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Invoice id".to_owned()),
+            text: Some("INV-123".to_owned()),
+            attributes: BTreeMap::from([("aria-readonly".to_owned(), "true".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let writable = DomElementRef {
+            index: 2,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Notes".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("aria-readonly".to_owned(), "false".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let state = SerializedDomState::from_elements(vec![read_only, writable]);
+
+        assert!(
+            state
+                .llm_representation()
+                .contains("[1] <input readonly=true> Invoice id INV-123")
+        );
+        assert!(state.llm_representation().contains("[2] <input> Notes"));
     }
 
     #[test]

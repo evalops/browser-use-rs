@@ -78,6 +78,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             text: Some("user@example.com".to_owned()),
             attributes: BTreeMap::from([
                 ("aria-required".to_owned(), "true".to_owned()),
+                ("readonly".to_owned(), "true".to_owned()),
                 ("id".to_owned(), "email".to_owned()),
                 ("placeholder".to_owned(), "name@example.com".to_owned()),
                 ("type".to_owned(), "email".to_owned()),

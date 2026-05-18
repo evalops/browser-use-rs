@@ -1,5 +1,5 @@
 {
-  "text": "[1] <button id=submit keyshortcuts=Control+Enter> Submit request Ignored visual label\n[2] <input type=email id=email placeholder=name@example.com required=true> Email address user@example.com\n[3] <select name=plan compound_components=(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Int...> Plan Enterprise\n[4] |scroll element| <div id=results> Results panel",
+  "text": "[1] <button id=submit keyshortcuts=Control+Enter> Submit request Ignored visual label\n[2] <input type=email id=email placeholder=name@example.com readonly=true required=true> Email address user@example.com\n[3] <select name=plan compound_components=(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Int...> Plan Enterprise\n[4] |scroll element| <div id=results> Results panel",
   "selector_map": {
     "1": {
       "index": 1,
@@ -35,6 +35,7 @@
       "text": "user@example.com",
       "attributes": {
         "aria-required": "true",
+        "readonly": "true",
         "id": "email",
         "placeholder": "name@example.com",
         "type": "email"
