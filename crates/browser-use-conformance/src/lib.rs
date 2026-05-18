@@ -52,8 +52,10 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             name: Some("Submit request".to_owned()),
             text: Some("Ignored visual label".to_owned()),
             attributes: BTreeMap::from([
+                ("aria-busy".to_owned(), "true".to_owned()),
                 ("aria-keyshortcuts".to_owned(), "Control+Enter".to_owned()),
                 ("aria-labelledby".to_owned(), "submit-name".to_owned()),
+                ("aria-live".to_owned(), "polite".to_owned()),
                 ("data-testid".to_owned(), "submit-request".to_owned()),
                 ("id".to_owned(), "submit".to_owned()),
             ]),
@@ -103,6 +105,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             name: Some("Plan".to_owned()),
             text: Some("Enterprise".to_owned()),
             attributes: BTreeMap::from([
+                ("aria-multiselectable".to_owned(), "true".to_owned()),
                 (
                     "compound_components".to_owned(),
                     "(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Internal)"
