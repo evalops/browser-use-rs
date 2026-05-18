@@ -86,7 +86,7 @@ Implemented:
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
   install guide, and generated platform-aware Homebrew formula scaffold.
-- Frozen upstream target: `browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd`.
+- Frozen upstream target: `browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
@@ -119,6 +119,10 @@ Implemented:
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
+- Browser Use Cloud creation request/response contracts, including
+  `BROWSER_USE_API_KEY`/explicit-key client support, `cdpUrl` to CDP endpoint
+  conversion, and upstream-compatible omitted/null/country proxy-country
+  serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass

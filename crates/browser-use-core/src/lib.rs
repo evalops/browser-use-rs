@@ -30,7 +30,7 @@ pub use browser_use_llm::{
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
 /// Version of the upstream browser-use source that this crate initially targets.
-pub const INITIAL_UPSTREAM_COMMIT: &str = "933e28c599ddd74c15a48568f159da95547e40dd";
+pub const INITIAL_UPSTREAM_COMMIT: &str = "f09a86671591312bbc272403a7409d56f4cec668";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSettings {

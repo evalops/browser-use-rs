@@ -3,12 +3,15 @@
 This release targets:
 
 ```text
-browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
+browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
 ```
 
 ## Supported
 
 - Local Chrome/Chromium launch and CDP attach.
+- Browser Use Cloud creation request/response contracts, including conversion
+  of `cdpUrl` responses into CDP endpoints and upstream-compatible
+  omitted/null/country proxy-country serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass

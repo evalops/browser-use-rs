@@ -4,10 +4,10 @@
 [`browser-use`](https://github.com/browser-use/browser-use), designed as a
 behavioral conformance implementation rather than a line-by-line translation.
 
-The first frozen upstream target is:
+The current frozen upstream target is:
 
 ```text
-browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
+browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
 ```
 
 ## Status
@@ -22,6 +22,8 @@ includes:
   for navigation, blocked-navigation preflight diagnostics,
   navigation-capable actions, redirects, and newly observed tabs, and page
   state with browser-use-style short tab ids,
+  plus typed Browser Use Cloud creation parameters and response-to-CDP endpoint
+  conversion that preserve upstream's omitted/null/proxy-country distinction,
   including cached observed-node click/input/scroll/dropdown/upload resolution
   and target-aware stale-node fallback for cached iframe actions when
   available. CDP sessions expose a bounded public lifecycle event history for

@@ -5,10 +5,9 @@ Python internals with smaller typed Rust boundaries.
 
 ## Compatibility Target
 
-The initial target is `browser-use/browser-use` commit
-`933e28c599ddd74c15a48568f159da95547e40dd`, observed with release `0.12.6` as
-the latest published release. Future upstream bumps should land as explicit
-conformance updates, not silent rewrites.
+The current target is `browser-use/browser-use` commit
+`f09a86671591312bbc272403a7409d56f4cec668`. Upstream bumps should land as
+explicit conformance updates, not silent rewrites.
 
 ## Layers
 

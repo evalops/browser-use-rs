@@ -5,7 +5,7 @@ browser-use where compatibility is claimed.
 
 ## Inputs
 
-- Upstream source at `933e28c599ddd74c15a48568f159da95547e40dd`.
+- Upstream source at `f09a86671591312bbc272403a7409d56f4cec668`.
 - Upstream docs for quickstart, CLI, browser configuration, custom tools, and
   supported models.
 - Upstream test intent from `tests/ci` and task fixtures.
