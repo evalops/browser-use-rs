@@ -1,13 +1,30 @@
 class BrowserUseRs < Formula
   desc "Rust behavioral conformance port of browser-use"
   homepage "https://github.com/evalops/browser-use-rs"
-  url "https://github.com/evalops/browser-use-rs/releases/download/v__VERSION__/browser-use-rs-v__VERSION__-x86_64-unknown-linux-gnu.tar.gz"
-  sha256 "__SHA256__"
+  version "__VERSION__"
   license "MIT"
 
-  depends_on :linux
+  on_macos do
+    url "https://github.com/evalops/browser-use-rs/releases/download/__TAG__/__MACOS_ARCHIVE__"
+    sha256 "__MACOS_SHA256__"
+  end
+
+  on_linux do
+    url "https://github.com/evalops/browser-use-rs/releases/download/__TAG__/__LINUX_ARCHIVE__"
+    sha256 "__LINUX_SHA256__"
+  end
 
   def install
+    if OS.mac? && unsupported_macos_arch?
+      odie <<~EOS
+        This generated formula targets __MACOS_TRIPLE__. Use source install or
+        the matching release tarball for this Homebrew host architecture.
+      EOS
+    end
+    if OS.linux? && !Hardware::CPU.intel?
+      odie "This generated formula currently targets x86_64 Linux."
+    end
+
     bin.install "browser-use-rs"
     doc.install "README.md", "INSTALL.md", "RELEASE.md", "DAEMON_SUPERVISION.md"
     prefix.install "packaging"
@@ -15,5 +32,10 @@ class BrowserUseRs < Formula
 
   test do
     assert_match "browser-use/browser-use@", shell_output("#{bin}/browser-use-rs version-target")
+  end
+
+  def unsupported_macos_arch?
+    ("__MACOS_TRIPLE__".start_with?("aarch64") && !Hardware::CPU.arm?) ||
+      ("__MACOS_TRIPLE__".start_with?("x86_64") && !Hardware::CPU.intel?)
   end
 end

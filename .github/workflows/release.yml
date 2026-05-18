@@ -101,12 +101,25 @@ jobs:
       - name: Generate Homebrew formula
         run: |
           mkdir -p dist/homebrew
+          tag="${GITHUB_REF_NAME}"
           version="${GITHUB_REF_NAME#v}"
-          linux_archive="dist/browser-use-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-          sha256="$(sha256sum "${linux_archive}" | cut -d ' ' -f 1)"
+          linux_archive="browser-use-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
+          macos_archive="$(find dist -maxdepth 1 -type f -name "browser-use-rs-${GITHUB_REF_NAME}-*-apple-darwin.tar.gz" -exec basename {} \; | LC_ALL=C sort | head -n 1)"
+          test -n "${macos_archive}"
+          linux_sha256="$(awk -v file="${linux_archive}" '$2 == file { print $1 }' dist/SHA256SUMS)"
+          macos_sha256="$(awk -v file="${macos_archive}" '$2 == file { print $1 }' dist/SHA256SUMS)"
+          test -n "${linux_sha256}"
+          test -n "${macos_sha256}"
+          macos_triple="${macos_archive#browser-use-rs-${GITHUB_REF_NAME}-}"
+          macos_triple="${macos_triple%.tar.gz}"
           sed \
+            -e "s/__TAG__/${tag}/g" \
             -e "s/__VERSION__/${version}/g" \
-            -e "s/__SHA256__/${sha256}/g" \
+            -e "s/__LINUX_ARCHIVE__/${linux_archive}/g" \
+            -e "s/__LINUX_SHA256__/${linux_sha256}/g" \
+            -e "s/__MACOS_ARCHIVE__/${macos_archive}/g" \
+            -e "s/__MACOS_SHA256__/${macos_sha256}/g" \
+            -e "s/__MACOS_TRIPLE__/${macos_triple}/g" \
             packaging/homebrew/browser-use-rs.rb.template \
             > dist/homebrew/browser-use-rs.rb
           ruby -c dist/homebrew/browser-use-rs.rb

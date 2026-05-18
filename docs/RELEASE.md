@@ -173,8 +173,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Release tarballs include daemon supervision docs plus systemd and launchd
   templates alongside the binary and license files. Tagged releases publish a
   Linux x86_64 tarball, a macOS host-triple tarball, one `SHA256SUMS` manifest
-  covering all tarballs, and a generated Linux Homebrew formula artifact pinned
-  to the Linux tarball checksum.
+  covering all tarballs, and a generated Homebrew formula artifact pinned to
+  the Linux and macOS tarball checksums.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -216,10 +216,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   running sessions unless forced through normal stop semantics; the daemon does
   not automatically restart stale browser processes.
 - The packaged daemon service files are local user-service templates; distro
-  packages, maintained Homebrew tap publication, Homebrew macOS asset
-  selection, and installer-managed secret stores are not implemented. Tagged
-  releases now emit Linux and macOS tarballs, cross-tarball checksums, and a
-  generated Linux Homebrew formula artifact.
+  packages, maintained Homebrew tap publication, additional macOS
+  architectures, and installer-managed secret stores are not implemented.
+  Tagged releases now emit Linux and macOS tarballs, cross-tarball checksums,
+  and a generated Homebrew formula artifact for the published triples.
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
@@ -228,4 +228,4 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   context, extracted-content numbering, prior history, and initial-action
   execution state.
 - Package publishing is limited to GitHub release artifacts and the generated
-  Linux Homebrew formula scaffold.
+  Homebrew formula scaffold.

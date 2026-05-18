@@ -41,15 +41,15 @@ tar -xzf "${archive}"
 
 ## Homebrew
 
-Tagged releases generate a Linux Homebrew formula artifact:
+Tagged releases generate a Homebrew formula artifact:
 
 ```sh
 brew install ./browser-use-rs.rb
 browser-use-rs version-target
 ```
 
-The formula points at the Linux release tarball and pins its SHA-256 checksum.
-macOS users should use the macOS tarball or source install until the Homebrew
-formula learns to select macOS release assets. Maintained tap publication,
-distro packages, and installer-managed secret stores are still future packaging
-work.
+The formula points at the Linux and macOS release tarballs and pins their
+SHA-256 checksums. It supports the macOS host triple emitted by the release
+runner and refuses unsupported host architectures rather than installing the
+wrong binary. Maintained tap publication, distro packages, and
+installer-managed secret stores are still future packaging work.

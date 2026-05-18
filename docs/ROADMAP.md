@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#58 Teach Homebrew formula to select macOS release assets](https://github.com/evalops/browser-use-rs/issues/58)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -59,6 +59,7 @@ small pushed checkpoints as each surface becomes real.
 - [#55 Pin replay recapture in conformance fixtures](https://github.com/evalops/browser-use-rs/issues/55)
 - [#56 Add package release install surfaces](https://github.com/evalops/browser-use-rs/issues/56)
 - [#57 Publish macOS release artifacts](https://github.com/evalops/browser-use-rs/issues/57)
+- [#58 Teach Homebrew formula to select macOS release assets](https://github.com/evalops/browser-use-rs/issues/58)
 
 ## Current Checkpoint
 
@@ -68,7 +69,7 @@ Implemented:
 - Published `v0.1.0` public conformance release with tag-triggered GitHub
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
-  install guide, and generated Linux Homebrew formula scaffold.
+  install guide, and generated platform-aware Homebrew formula scaffold.
 - Frozen upstream target: `browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.

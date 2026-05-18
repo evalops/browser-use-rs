@@ -9,7 +9,7 @@ publisher should copy the generated formula into `evalops/homebrew-tap` (or a
 successor tap), review the version, URL, and SHA-256, then tag or publish from
 that tap.
 
-The current generated formula installs the Linux x86_64 release tarball. macOS
-tarballs are published separately; Homebrew macOS support should be added only
-after the formula template can select the macOS asset and checksum for the
-active Homebrew runner.
+The generated formula installs the Linux x86_64 release tarball on Linux and
+the macOS release tarball on matching macOS Homebrew hosts. Maintained tap
+publication still lives outside this repository; until a tap is wired, the
+release asset is the handoff artifact.
