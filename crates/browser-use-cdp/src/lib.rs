@@ -4824,7 +4824,7 @@ mod tests {
     }
 
     #[test]
-    fn dom_state_parser_renders_native_boolean_attributes() {
+    fn dom_state_parser_preserves_native_boolean_attributes() {
         let state = dom_state_from_interactive_value(
             "target-1",
             &json!({
@@ -4849,8 +4849,15 @@ mod tests {
 
         let llm = state.llm_representation();
         assert!(
-            llm.contains("[1] <input id=invoice multiple=true readonly=true required=true> Invoice id INV-123"),
-            "DOM state did not render native boolean attributes: {llm}"
+            llm.contains("[1] <input id=invoice multiple=true required=true> Invoice id INV-123"),
+            "DOM state did not render default native boolean attributes: {llm}"
+        );
+        assert_eq!(
+            state.selector_map[&1]
+                .attributes
+                .get("readonly")
+                .map(String::as_str),
+            Some("true")
         );
     }
 

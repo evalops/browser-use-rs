@@ -339,7 +339,6 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
     "pressed",
     "disabled",
     "invalid",
-    "readonly",
     "valuemin",
     "valuemax",
     "valuenow",
@@ -406,16 +405,8 @@ fn render_element_attributes_with_attribute_names(
             {
                 return None;
             }
-            if matches!(
-                *attribute,
-                "required"
-                    | "checked"
-                    | "selected"
-                    | "expanded"
-                    | "pressed"
-                    | "disabled"
-                    | "readonly"
-            ) && matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
+            if *attribute == "required"
+                && matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
             {
                 return None;
             }
@@ -951,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn rendered_attributes_alias_aria_readonly_to_ax_shape() {
+    fn rendered_attributes_omit_readonly_by_default_but_allow_custom_include() {
         let read_only = DomElementRef {
             index: 1,
             target_id: "target".to_owned(),
@@ -983,14 +974,53 @@ mod tests {
             is_scrollable: false,
         };
 
-        let state = SerializedDomState::from_elements(vec![read_only, writable]);
+        let state = SerializedDomState::from_elements(vec![read_only.clone(), writable.clone()]);
 
         assert!(
             state
                 .llm_representation()
-                .contains("[1] <input readonly=true> Invoice id INV-123")
+                .contains("[1] <input> Invoice id INV-123")
         );
         assert!(state.llm_representation().contains("[2] <input> Notes"));
+        assert_eq!(
+            render_element_attributes_with_attributes(&read_only, &["readonly".to_owned()]),
+            "readonly=true"
+        );
+        assert_eq!(
+            render_element_attributes_with_attributes(&writable, &["readonly".to_owned()]),
+            "readonly=false"
+        );
+    }
+
+    #[test]
+    fn rendered_attributes_keep_false_ax_states_except_required_and_invalid() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Toggle filters".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("disabled".to_owned(), "false".to_owned()),
+                ("expanded".to_owned(), "false".to_owned()),
+                ("invalid".to_owned(), "false".to_owned()),
+                ("pressed".to_owned(), "false".to_owned()),
+                ("required".to_owned(), "false".to_owned()),
+                ("selected".to_owned(), "false".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        assert_eq!(
+            render_element_attributes(&element),
+            "selected=false expanded=false pressed=false disabled=false"
+        );
     }
 
     #[test]
