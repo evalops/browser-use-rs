@@ -6,10 +6,11 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - None at the moment. The next parity slice should be selected from upstream
-  drift after #80 lands and CI is green.
+  drift after #81 lands and CI is green.
 
 ## Completed Tracks
 
+- [#81 Add Browser Use Cloud error context parity](https://github.com/evalops/browser-use-rs/issues/81)
 - [#80 Add Browser Use Cloud extra headers and timeout parity](https://github.com/evalops/browser-use-rs/issues/80)
 - [#79 Add Browser Use Cloud auth config fallback](https://github.com/evalops/browser-use-rs/issues/79)
 - [#78 Add Browser Use Cloud stop session contract](https://github.com/evalops/browser-use-rs/issues/78)
@@ -129,9 +130,10 @@ Implemented:
   API-token fallback, 30-second request timeout, extra request headers merged
   after default auth/content-type headers, current-session tracking after
   create, explicit or current-session stop requests, auth errors,
-  missing-session errors, current-session cleanup on successful stop or 404,
-  `cdpUrl` to CDP endpoint conversion, and upstream-compatible
-  omitted/null/country proxy-country serialization.
+  missing-session errors, action-specific create/stop Cloud error context,
+  current-session cleanup on successful stop or 404, `cdpUrl` to CDP endpoint
+  conversion, and upstream-compatible omitted/null/country proxy-country
+  serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
