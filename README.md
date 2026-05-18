@@ -116,7 +116,8 @@ includes:
   flattened planning fields,
   configurable planning prompt nudges, upstream-style excluded-action schema
   controls and pre-execution enforcement, opt-in recent browser events,
-  upstream-style vision detail levels, thinking/flash output-schema controls,
+  upstream-style vision detail levels, upstream-style `done` file-display
+  controls, thinking/flash output-schema controls,
   upstream-style flattened required output fields, structured extraction
   metadata, per-step timing metadata, upstream-style prompt-history inclusion
   and limits, clickable-element text limits, upstream-style one-time read-state

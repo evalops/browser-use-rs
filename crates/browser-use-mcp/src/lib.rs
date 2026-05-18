@@ -469,6 +469,7 @@ mod tests {
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("include_recent_events"));
+        assert!(schema_text.contains("display_files_in_done_text"));
         assert!(schema_text.contains("available_file_paths"));
         assert!(schema_text.contains("initial_actions"));
         assert!(schema_text.contains("excluded_actions"));
@@ -500,7 +501,8 @@ mod tests {
             "settings": {
                 "vision_detail_level": "high",
                 "excluded_actions": ["search", "scroll"],
-                "include_recent_events": true
+                "include_recent_events": true,
+                "display_files_in_done_text": false
             }
         }))
         .expect("agent input");
@@ -511,6 +513,7 @@ mod tests {
         );
         assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
         assert!(input.settings.include_recent_events);
+        assert!(!input.settings.display_files_in_done_text);
     }
 
     #[test]

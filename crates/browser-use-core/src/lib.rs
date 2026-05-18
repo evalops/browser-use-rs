@@ -46,6 +46,8 @@ pub struct AgentSettings {
     pub step_timeout_seconds: u64,
     #[serde(default = "default_final_response_after_failure")]
     pub final_response_after_failure: bool,
+    #[serde(default = "default_display_files_in_done_text")]
+    pub display_files_in_done_text: bool,
     #[serde(default = "default_loop_detection_window")]
     pub loop_detection_window: usize,
     #[serde(default = "default_loop_detection_enabled")]
@@ -92,6 +94,7 @@ impl Default for AgentSettings {
             llm_timeout_seconds: default_llm_timeout_seconds(),
             step_timeout_seconds: default_step_timeout_seconds(),
             final_response_after_failure: default_final_response_after_failure(),
+            display_files_in_done_text: default_display_files_in_done_text(),
             loop_detection_window: default_loop_detection_window(),
             loop_detection_enabled: default_loop_detection_enabled(),
             max_history_items: None,
@@ -138,6 +141,10 @@ fn default_step_timeout_seconds() -> u64 {
 }
 
 fn default_final_response_after_failure() -> bool {
+    true
+}
+
+fn default_display_files_in_done_text() -> bool {
     true
 }
 
@@ -927,6 +934,7 @@ pub trait ActionExecutor {
 pub struct BrowserActionExecutor<S> {
     session: S,
     file_system: ManagedFileSystem,
+    display_files_in_done_text: bool,
 }
 
 impl<S> BrowserActionExecutor<S> {
@@ -943,6 +951,7 @@ impl<S> BrowserActionExecutor<S> {
         Self {
             session,
             file_system,
+            display_files_in_done_text: true,
         }
     }
 
@@ -958,6 +967,10 @@ impl<S> BrowserActionExecutor<S> {
 
     pub fn file_system_mut(&mut self) -> &mut ManagedFileSystem {
         &mut self.file_system
+    }
+
+    pub fn set_display_files_in_done_text(&mut self, display_files_in_done_text: bool) {
+        self.display_files_in_done_text = display_files_in_done_text;
     }
 }
 
@@ -1229,7 +1242,14 @@ where
     S: BrowserSession + Send + Sync,
 {
     async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
-        match execute_browser_action(&self.session, &mut self.file_system, action).await {
+        match execute_browser_action(
+            &self.session,
+            &mut self.file_system,
+            action,
+            self.display_files_in_done_text,
+        )
+        .await
+        {
             Ok(result) => result,
             Err(error) => ActionResult::error(error.to_string()),
         }
@@ -1240,6 +1260,7 @@ async fn execute_browser_action<S>(
     session: &S,
     file_system: &mut ManagedFileSystem,
     action: &BrowserAction,
+    display_files_in_done_text: bool,
 ) -> Result<ActionResult, BrowserError>
 where
     S: BrowserSession + Send + Sync,
@@ -1436,7 +1457,11 @@ where
                 })
             }
         }
-        BrowserAction::Done(params) => Ok(done_action_result(params, Some(file_system))),
+        BrowserAction::Done(params) => Ok(done_action_result(
+            params,
+            Some(file_system),
+            display_files_in_done_text,
+        )),
         BrowserAction::Extract(params) => {
             let text = session.page_text().await?;
             let source_url = session.state(false).await.ok().map(|state| state.url);
@@ -1622,6 +1647,7 @@ fn is_file_input_click_validation_error(error: &BrowserError) -> bool {
 fn done_action_result(
     params: &browser_use_tools::DoneAction,
     file_system: Option<&ManagedFileSystem>,
+    display_files_in_done_text: bool,
 ) -> ActionResult {
     let mut user_message = params.text.clone();
     let mut file_sections = Vec::new();
@@ -1632,7 +1658,9 @@ fn done_action_result(
             .and_then(|file_system| file_system.display_done_file(file_name))
             .or_else(|| display_done_file(file_name));
         if let Some((section, attachment)) = displayed_file {
-            file_sections.push(section);
+            if display_files_in_done_text {
+                file_sections.push(section);
+            }
             attachments.push(attachment);
         }
     }
@@ -4013,11 +4041,13 @@ where
         session: S,
         file_system: ManagedFileSystem,
     ) -> Self {
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+        executor.set_display_files_in_done_text(settings.display_files_in_done_text);
         Self {
             task: task.into(),
             settings,
             llm,
-            executor: BrowserActionExecutor::with_file_system(session, file_system),
+            executor,
             history: AgentHistory::default(),
             initial_actions_executed: false,
         }
@@ -4029,11 +4059,13 @@ where
         session: S,
     ) -> Result<Self, BrowserError> {
         let file_system = ManagedFileSystem::from_state(checkpoint.file_system_state)?;
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+        executor.set_display_files_in_done_text(checkpoint.settings.display_files_in_done_text);
         Ok(Self {
             task: checkpoint.task,
             settings: checkpoint.settings,
             llm,
-            executor: BrowserActionExecutor::with_file_system(session, file_system),
+            executor,
             history: checkpoint.history,
             initial_actions_executed: checkpoint.initial_actions_executed,
         })
@@ -5688,6 +5720,7 @@ mod tests {
         assert_eq!(settings.llm_timeout_seconds, 60);
         assert_eq!(settings.step_timeout_seconds, 180);
         assert!(settings.final_response_after_failure);
+        assert!(settings.display_files_in_done_text);
         assert_eq!(settings.loop_detection_window, 20);
         assert!(settings.loop_detection_enabled);
         assert_eq!(settings.max_history_items, None);
@@ -8927,6 +8960,38 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn browser_executor_done_can_attach_without_displaying_file_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.md");
+        std::fs::write(&path, "alpha\nbeta").expect("seed report");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+        executor.set_display_files_in_done_text(false);
+
+        let result = executor
+            .execute(&BrowserAction::Done(DoneAction {
+                text: "Complete".to_owned(),
+                success: true,
+                files_to_display: vec![file_name],
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert!(result.is_done);
+        assert_eq!(result.extracted_content.as_deref(), Some("Complete"));
+        assert_eq!(
+            result.attachments,
+            vec![
+                std::fs::canonicalize(&path)
+                    .expect("canonical report path")
+                    .display()
+                    .to_string()
+            ]
+        );
+    }
+
     fn write_minimal_docx(path: &std::path::Path, document_xml: &str) {
         let file = std::fs::File::create(path).expect("docx file");
         let mut archive = zip::ZipWriter::new(file);
@@ -10353,6 +10418,50 @@ mod tests {
 
         assert_eq!(history.items.len(), 1);
         assert_eq!(history.final_result(), Some("complete"));
+    }
+
+    #[tokio::test]
+    async fn agent_setting_can_attach_done_files_without_displaying_text() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "Complete",
+                        "success": true,
+                        "files_to_display": ["report.md"]
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            display_files_in_done_text: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "finish with report attachment",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+        agent
+            .file_system_mut()
+            .write_file(&WriteFileAction {
+                file_name: "report.md".to_owned(),
+                content: "alpha\nbeta".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            })
+            .expect("write report");
+
+        let history = agent.run(1).await.expect("agent run");
+
+        assert_eq!(history.final_result(), Some("Complete"));
+        let result = &history.items[0].result[0];
+        assert_eq!(result.extracted_content.as_deref(), Some("Complete"));
+        assert_eq!(result.attachments.len(), 1);
+        assert!(result.attachments[0].ends_with("browseruse_agent_data/report.md"));
     }
 
     #[tokio::test]

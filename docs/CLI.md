@@ -31,7 +31,8 @@ browser-use-rs agent <url> <task> --provider openai-compatible \
   [--block-ip-addresses] \
   [--max-steps 10] [--no-vision] [--vision-detail-level auto|low|high] \
   [--max-actions-per-step 5] \
-  [--no-final-response-after-failure] [--flash-mode] \
+  [--no-final-response-after-failure] [--no-display-files-in-done-text] \
+  [--flash-mode] \
   [--include-recent-events] \
   [--include-attribute data-testid] [--available-file-path /tmp/report.pdf] \
   [--exclude-action search]
@@ -130,9 +131,10 @@ Agent runs also expose the typed `AgentSettings` knobs used by the MCP agent
 tool: `--no-vision`, `--vision-detail-level <auto|low|high>` for screenshot
 and read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--llm-timeout-seconds`, `--step-timeout-seconds`,
-`--no-final-response-after-failure`, `--no-loop-detection`,
-`--loop-detection-window`, `--no-thinking`, `--flash-mode`,
-`--no-planning`, `--planning-replan-on-stall`,
+`--no-final-response-after-failure`, `--no-display-files-in-done-text` for
+attaching requested `done.files_to_display` paths without expanding their text
+into the final answer, `--no-loop-detection`, `--loop-detection-window`,
+`--no-thinking`, `--flash-mode`, `--no-planning`, `--planning-replan-on-stall`,
 `--planning-exploration-limit`, `--max-history-items`,
 `--max-clickable-elements-length`, `--include-recent-events` for opting recent
 browser event diagnostics into the agent prompt, repeated
