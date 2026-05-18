@@ -2451,6 +2451,9 @@ fn url_policy_watchdog_action_for_event(
                 return None;
             }
             let url = event.params.get("frame")?.get("url")?.as_str()?;
+            if url.is_empty() {
+                return None;
+            }
             if policy.is_allowed(url) {
                 return None;
             }
@@ -2474,6 +2477,9 @@ fn url_policy_watchdog_action_for_target_info(
     }
 
     let url = target_info.get("url")?.as_str()?;
+    if url.is_empty() {
+        return None;
+    }
     if policy.is_allowed(url) {
         return None;
     }
@@ -4762,6 +4768,43 @@ mod tests {
                 url: "https://evil.test/popup".to_owned(),
                 reason: "in_prohibited_domains".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn url_policy_watchdog_ignores_empty_target_urls() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            prohibited_domains: vec!["evil.test".to_owned()],
+            ..BrowserProfile::default()
+        });
+        let current_page = AttachedPage {
+            target_id: "current-target".to_owned(),
+            session_id: "current-session".to_owned(),
+        };
+        let target_event = CdpEvent {
+            method: "Target.targetCreated".to_owned(),
+            params: json!({
+                "targetInfo": {
+                    "type": "page",
+                    "targetId": "popup-target",
+                    "url": ""
+                }
+            }),
+            session_id: None,
+        };
+        let frame_event = CdpEvent {
+            method: "Page.frameNavigated".to_owned(),
+            params: json!({ "frame": { "id": "frame-1", "url": "" } }),
+            session_id: Some("current-session".to_owned()),
+        };
+
+        assert_eq!(
+            url_policy_watchdog_action_for_event(&policy, &current_page, &target_event),
+            None
+        );
+        assert_eq!(
+            url_policy_watchdog_action_for_event(&policy, &current_page, &frame_event),
+            None
         );
     }
 
@@ -7462,17 +7505,20 @@ mod tests {
             .await
             .expect_err("state observation should report watchdog-blocked tab");
 
-        assert!(matches!(
-            error,
-            BrowserError::NavigationBlocked { ref url, ref reason }
-                if url.starts_with("http://127.0.0.1:1/popup")
-                    && reason == "ip_address_blocked"
-        ));
+        assert!(
+            matches!(
+                error,
+                BrowserError::NavigationBlocked { ref url, ref reason }
+                    if url.starts_with("http://127.0.0.1:1/popup")
+                        && reason == "ip_address_blocked"
+            ),
+            "unexpected blocked popup policy error: {error:?}"
+        );
     }
 
     #[tokio::test]
     #[ignore = "requires Chrome/Chromium installed on the local machine"]
-    async fn cdp_session_rejects_disallowed_new_tab_from_click_action() {
+    async fn cdp_session_rejects_disallowed_new_tab_from_coordinate_click_action() {
         let profile = BrowserProfile {
             block_ip_addresses: true,
             browser_start_timeout_ms: 30_000,
@@ -7484,37 +7530,27 @@ mod tests {
 
         session
             .navigate(
-                "data:text/html,<html><head><title>blocked click</title></head><body><a id='blocked' target='_blank' href='http://127.0.0.1:1/popup'>Blocked popup</a></body></html>",
+                "data:text/html,<html><head><title>blocked click</title></head><body style='margin:0'><button id='blocked' onclick=\"window.open('http://127.0.0.1:1/popup')\" style='position:absolute;left:20px;top:20px;width:180px;height:44px'>Blocked popup</button></body></html>",
                 false,
             )
             .await
             .expect("navigate allowed data page");
         sleep(Duration::from_millis(100)).await;
-        let state = session.state(false).await.expect("initial state");
-        let index = state
-            .dom_state
-            .selector_map
-            .values()
-            .find(|element| {
-                element
-                    .attributes
-                    .get("id")
-                    .is_some_and(|id| id == "blocked")
-            })
-            .expect("blocked link")
-            .index;
 
         let error = session
-            .click(index)
+            .click_coordinates(40, 40)
             .await
-            .expect_err("click should enforce blocked popup policy");
+            .expect_err("coordinate click should enforce blocked popup policy");
 
-        assert!(matches!(
-            error,
-            BrowserError::NavigationBlocked { ref url, ref reason }
-                if url.starts_with("http://127.0.0.1:1/popup")
-                    && reason == "ip_address_blocked"
-        ));
+        assert!(
+            matches!(
+                error,
+                BrowserError::NavigationBlocked { ref url, ref reason }
+                    if url.starts_with("http://127.0.0.1:1/popup")
+                        && reason == "ip_address_blocked"
+            ),
+            "unexpected blocked popup policy error: {error:?}"
+        );
     }
 
     #[tokio::test]
