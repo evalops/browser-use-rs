@@ -1,6 +1,6 @@
 //! Golden fixtures and parity utilities for browser-use-rs.
 
-use browser_use_dom::{DomElementRef, ElementBounds, SerializedDomState};
+use browser_use_dom::{DomElementRef, DomEvalNode, ElementBounds, SerializedDomState};
 use std::collections::BTreeMap;
 
 #[must_use]
@@ -275,6 +275,49 @@ pub fn frame_shadow_state() -> SerializedDomState {
     ])
 }
 
+#[must_use]
+pub fn eval_tree_state() -> SerializedDomState {
+    let root = DomEvalNode::element("html").with_children(vec![
+        DomEvalNode::element("body").with_children(vec![
+            DomEvalNode::element("main").with_children(vec![
+                DomEvalNode::element("h1").with_children(vec![DomEvalNode::text("Checkout")]),
+                DomEvalNode::element("form").with_children(vec![
+                    DomEvalNode::element("label")
+                        .with_attribute("for", "email")
+                        .with_children(vec![DomEvalNode::text("Email")]),
+                    DomEvalNode::element("input")
+                        .with_attribute("id", "email")
+                        .with_attribute("name", "email")
+                        .with_attribute("type", "email")
+                        .with_attribute("placeholder", "agent@example.com")
+                        .with_attribute("required", "true")
+                        .interactive(901),
+                    DomEvalNode::element("button")
+                        .with_attribute("data-testid", "checkout-submit")
+                        .with_children(vec![DomEvalNode::text("Pay now")])
+                        .interactive(902),
+                ]),
+                DomEvalNode::document_fragment(vec![
+                    DomEvalNode::element("button")
+                        .with_attribute("id", "shadow-help")
+                        .with_children(vec![DomEvalNode::text("Help")])
+                        .interactive(903),
+                ]),
+                DomEvalNode::element("iframe")
+                    .with_attribute("title", "Receipt")
+                    .with_children(vec![
+                        DomEvalNode::element("a")
+                            .with_attribute("href", "/receipt")
+                            .with_children(vec![DomEvalNode::text("Receipt link")])
+                            .interactive(904),
+                    ]),
+            ]),
+        ]),
+    ]);
+
+    SerializedDomState::default().with_eval_root(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +385,14 @@ mod tests {
         assert_matches_fixture(
             actual,
             include_str!("../fixtures/browser_state_summary_schema.json"),
+        );
+    }
+
+    #[test]
+    fn eval_tree_state_matches_golden_fixture() {
+        assert_eq!(
+            eval_tree_state().eval_representation(),
+            include_str!("../fixtures/eval_tree_state.txt").trim_end_matches('\n')
         );
     }
 

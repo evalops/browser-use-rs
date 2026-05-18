@@ -128,6 +128,10 @@ Implemented:
   human-readable value text, prunes non-content
   `head`/`script`/`style`/metadata tags, and excludes hidden, disabled, or
   `data-browser-use-exclude` subtrees from the selector map.
+- `browser-use-dom` now also exposes a tree-shaped eval/judge representation
+  that mirrors upstream `DOMEvalSerializer` markers for backend-node
+  interactives, shadow roots, iframe contents, compact key attributes, scroll
+  context, and collapsed SVG contents.
 
 Next:
 

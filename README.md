@@ -31,12 +31,13 @@ includes:
   selected dropdown values, compound control metadata, compact select option
   summaries, bounds, automation-friendly data/ARIA/value attributes,
   native boolean/read-only state, validation patterns, `data-state`,
-      input mask/autocomplete/date-format datepicker hints, live-region and
-      hierarchy metadata, static history-matching
-  attributes, hidden-element and `data-browser-use-exclude` subtree filtering,
-  non-content `head`/`script`/`style` tag pruning, occluded-element filtering,
-  hidden file-input upload targets, plain scroll-container indexing, and
-  scrollable element metadata with prompt-visible pages-above/below context,
+  input mask/autocomplete/date-format datepicker hints, live-region and
+  hierarchy metadata, static history-matching attributes, plus a tree-shaped
+  eval/judge DOM representation with upstream-style backend-node markers,
+  hidden-element and `data-browser-use-exclude` subtree filtering, non-content
+  `head`/`script`/`style` tag pruning, occluded-element filtering, hidden
+  file-input upload targets, plain scroll-container indexing, and scrollable
+  element metadata with prompt-visible pages-above/below context,
   plus href-less anchor tags, common ARIA widget roles, search affordance
   signals, ARIA required/autocomplete/keyshortcut interactivity signals with
   prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,

@@ -169,6 +169,137 @@ impl DomPageStats {
     }
 }
 
+/// Node kind used by the evaluation-focused DOM tree serializer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DomEvalNodeType {
+    DocumentFragment,
+    Element,
+    Text,
+}
+
+/// Tree-shaped DOM node used for browser-use's evaluation/judge representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DomEvalNode {
+    pub node_type: DomEvalNodeType,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tag_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub node_value: String,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub children: Vec<DomEvalNode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_node_id: Option<BackendNodeId>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub should_display: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub excluded_by_parent: bool,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub is_visible: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_interactive: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_scrollable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_info: Option<String>,
+}
+
+impl DomEvalNode {
+    #[must_use]
+    pub fn element(tag_name: impl Into<String>) -> Self {
+        Self {
+            node_type: DomEvalNodeType::Element,
+            tag_name: tag_name.into(),
+            node_value: String::new(),
+            attributes: BTreeMap::new(),
+            children: Vec::new(),
+            backend_node_id: None,
+            should_display: true,
+            excluded_by_parent: false,
+            is_visible: true,
+            is_interactive: false,
+            is_scrollable: false,
+            scroll_info: None,
+        }
+    }
+
+    #[must_use]
+    pub fn text(node_value: impl Into<String>) -> Self {
+        Self {
+            node_type: DomEvalNodeType::Text,
+            tag_name: String::new(),
+            node_value: node_value.into(),
+            attributes: BTreeMap::new(),
+            children: Vec::new(),
+            backend_node_id: None,
+            should_display: true,
+            excluded_by_parent: false,
+            is_visible: true,
+            is_interactive: false,
+            is_scrollable: false,
+            scroll_info: None,
+        }
+    }
+
+    #[must_use]
+    pub fn document_fragment(children: Vec<DomEvalNode>) -> Self {
+        Self {
+            node_type: DomEvalNodeType::DocumentFragment,
+            tag_name: String::new(),
+            node_value: String::new(),
+            attributes: BTreeMap::new(),
+            children,
+            backend_node_id: None,
+            should_display: true,
+            excluded_by_parent: false,
+            is_visible: true,
+            is_interactive: false,
+            is_scrollable: false,
+            scroll_info: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_attribute(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attributes.insert(name.into(), value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_children(mut self, children: Vec<DomEvalNode>) -> Self {
+        self.children = children;
+        self
+    }
+
+    #[must_use]
+    pub fn interactive(mut self, backend_node_id: BackendNodeId) -> Self {
+        self.backend_node_id = Some(backend_node_id);
+        self.is_interactive = true;
+        self
+    }
+
+    #[must_use]
+    pub fn hidden(mut self) -> Self {
+        self.is_visible = false;
+        self
+    }
+
+    #[must_use]
+    pub fn excluded_by_parent(mut self) -> Self {
+        self.excluded_by_parent = true;
+        self
+    }
+
+    #[must_use]
+    pub fn scrollable(mut self, scroll_info: impl Into<String>) -> Self {
+        self.is_scrollable = true;
+        self.scroll_info = Some(scroll_info.into());
+        self
+    }
+}
+
 /// Serialized DOM state in the form the agent consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SerializedDomState {
@@ -178,6 +309,8 @@ pub struct SerializedDomState {
     pub selector_map: BTreeMap<u32, DomElementRef>,
     #[serde(default, skip_serializing_if = "DomPageStats::is_empty")]
     pub page_stats: DomPageStats,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_root: Option<DomEvalNode>,
 }
 
 impl SerializedDomState {
@@ -195,12 +328,19 @@ impl SerializedDomState {
             text: lines.join("\n"),
             selector_map,
             page_stats: DomPageStats::default(),
+            eval_root: None,
         }
     }
 
     #[must_use]
     pub fn with_page_stats(mut self, page_stats: DomPageStats) -> Self {
         self.page_stats = page_stats;
+        self
+    }
+
+    #[must_use]
+    pub fn with_eval_root(mut self, eval_root: DomEvalNode) -> Self {
+        self.eval_root = Some(eval_root);
         self
     }
 
@@ -232,6 +372,312 @@ impl SerializedDomState {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    #[must_use]
+    pub fn eval_representation(&self) -> String {
+        self.eval_representation_with_attributes(&[])
+    }
+
+    #[must_use]
+    pub fn eval_representation_with_attributes(&self, _include_attributes: &[String]) -> String {
+        self.eval_root
+            .as_ref()
+            .map(|root| serialize_eval_tree(root, 0))
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| EMPTY_DOM_TREE_MESSAGE.to_owned())
+    }
+}
+
+const EVAL_KEY_ATTRIBUTES: &[&str] = &[
+    "id",
+    "class",
+    "name",
+    "type",
+    "placeholder",
+    "aria-label",
+    "role",
+    "value",
+    "data-testid",
+    "alt",
+    "title",
+    "checked",
+    "selected",
+    "disabled",
+    "required",
+    "readonly",
+    "aria-expanded",
+    "aria-pressed",
+    "aria-checked",
+    "aria-selected",
+    "aria-invalid",
+    "pattern",
+    "min",
+    "max",
+    "minlength",
+    "maxlength",
+    "step",
+    "aria-valuemin",
+    "aria-valuemax",
+    "aria-valuenow",
+];
+
+const EVAL_CONTAINER_ELEMENTS: &[&str] = &[
+    "html", "body", "div", "main", "section", "article", "aside", "header", "footer", "nav",
+];
+
+const EVAL_SVG_CHILD_ELEMENTS: &[&str] = &[
+    "path", "rect", "g", "circle", "ellipse", "line", "polyline", "polygon", "use", "defs",
+    "clippath", "mask", "pattern", "image", "text", "tspan",
+];
+
+fn serialize_eval_tree(node: &DomEvalNode, depth: usize) -> String {
+    if node.excluded_by_parent || !node.should_display {
+        return serialize_eval_children(node, depth);
+    }
+
+    match node.node_type {
+        DomEvalNodeType::Element => serialize_eval_element(node, depth),
+        DomEvalNodeType::Text => String::new(),
+        DomEvalNodeType::DocumentFragment => serialize_eval_document_fragment(node, depth),
+    }
+}
+
+fn serialize_eval_element(node: &DomEvalNode, depth: usize) -> String {
+    let tag = node.tag_name.to_ascii_lowercase();
+
+    if !node.is_visible
+        && !EVAL_CONTAINER_ELEMENTS.contains(&tag.as_str())
+        && !matches!(tag.as_str(), "iframe" | "frame")
+    {
+        return serialize_eval_children(node, depth);
+    }
+
+    if matches!(tag.as_str(), "iframe" | "frame") {
+        return serialize_eval_iframe(node, depth);
+    }
+
+    if tag == "svg" {
+        let mut line = eval_depth_prefix(depth);
+        if node.is_interactive
+            && let Some(backend_node_id) = node.backend_node_id
+        {
+            line.push_str(&format!("[i_{backend_node_id}] "));
+        }
+        line.push_str("<svg");
+        let attributes = build_eval_attributes(node);
+        if !attributes.is_empty() {
+            line.push(' ');
+            line.push_str(&attributes);
+        }
+        line.push_str(" /> <!-- SVG content collapsed -->");
+        return line;
+    }
+
+    if EVAL_SVG_CHILD_ELEMENTS.contains(&tag.as_str()) {
+        return String::new();
+    }
+
+    let attributes = build_eval_attributes(node);
+    let inline_text = eval_inline_text(node);
+    let is_container = EVAL_CONTAINER_ELEMENTS.contains(&tag.as_str());
+
+    let mut output = Vec::new();
+    let mut line = eval_depth_prefix(depth);
+    if node.is_interactive
+        && let Some(backend_node_id) = node.backend_node_id
+    {
+        line.push_str(&format!("[i_{backend_node_id}] "));
+    }
+    line.push('<');
+    line.push_str(&tag);
+    if !attributes.is_empty() {
+        line.push(' ');
+        line.push_str(&attributes);
+    }
+    if node.is_scrollable
+        && let Some(scroll_info) = node
+            .scroll_info
+            .as_deref()
+            .filter(|value| !value.is_empty())
+    {
+        line.push_str(" scroll=\"");
+        line.push_str(scroll_info);
+        line.push('"');
+    }
+    if inline_text.is_empty() || is_container {
+        line.push_str(" />");
+    } else {
+        line.push('>');
+        line.push_str(&inline_text);
+    }
+    output.push(line);
+
+    if !node.children.is_empty() && (is_container || inline_text.is_empty()) {
+        let children = serialize_eval_children(node, depth + 1);
+        if !children.is_empty() {
+            output.push(children);
+        }
+    }
+
+    output.join("\n")
+}
+
+fn serialize_eval_document_fragment(node: &DomEvalNode, depth: usize) -> String {
+    if node.children.is_empty() {
+        return String::new();
+    }
+    let children = serialize_eval_children(node, depth + 1);
+    if children.is_empty() {
+        return String::new();
+    }
+    format!("{}#shadow\n{children}", eval_depth_prefix(depth))
+}
+
+fn serialize_eval_iframe(node: &DomEvalNode, depth: usize) -> String {
+    let tag = node.tag_name.to_ascii_lowercase();
+    let mut output = Vec::new();
+    let mut line = eval_depth_prefix(depth);
+    line.push('<');
+    line.push_str(&tag);
+
+    let attributes = build_eval_attributes(node);
+    if !attributes.is_empty() {
+        line.push(' ');
+        line.push_str(&attributes);
+    }
+    if node.is_scrollable
+        && let Some(scroll_info) = node
+            .scroll_info
+            .as_deref()
+            .filter(|value| !value.is_empty())
+    {
+        line.push_str(" scroll=\"");
+        line.push_str(scroll_info);
+        line.push('"');
+    }
+    line.push_str(" />");
+    output.push(line);
+
+    let children = serialize_eval_children(node, depth + 2);
+    if !children.is_empty() {
+        output.push(format!("{}\t#iframe-content", eval_depth_prefix(depth)));
+        output.push(children);
+    }
+
+    output.join("\n")
+}
+
+fn serialize_eval_children(node: &DomEvalNode, depth: usize) -> String {
+    let is_list_container = node.node_type == DomEvalNodeType::Element
+        && matches!(node.tag_name.to_ascii_lowercase().as_str(), "ul" | "ol");
+    let mut children_output = Vec::new();
+    let mut li_count = 0_u32;
+    let max_list_items = 50_u32;
+    let mut consecutive_link_count = 0_u32;
+    let max_consecutive_links = 50_u32;
+    let mut total_links_skipped = 0_u32;
+
+    for child in &node.children {
+        let current_tag = (child.node_type == DomEvalNodeType::Element)
+            .then(|| child.tag_name.to_ascii_lowercase());
+
+        if is_list_container && current_tag.as_deref() == Some("li") {
+            li_count += 1;
+            if li_count > max_list_items {
+                continue;
+            }
+        }
+
+        if current_tag.as_deref() == Some("a") {
+            consecutive_link_count += 1;
+            if consecutive_link_count > max_consecutive_links {
+                total_links_skipped += 1;
+                continue;
+            }
+        } else {
+            if total_links_skipped > 0 {
+                children_output.push(format!(
+                    "{}... ({total_links_skipped} more links in this list)",
+                    eval_depth_prefix(depth)
+                ));
+                total_links_skipped = 0;
+            }
+            consecutive_link_count = 0;
+        }
+
+        let child_text = serialize_eval_tree(child, depth);
+        if !child_text.is_empty() {
+            children_output.push(child_text);
+        }
+    }
+
+    if is_list_container && li_count > max_list_items {
+        children_output.push(format!(
+            "{}... ({} more items in this list (truncated) use evaluate to get more.",
+            eval_depth_prefix(depth),
+            li_count - max_list_items
+        ));
+    }
+    if total_links_skipped > 0 {
+        children_output.push(format!(
+            "{}... ({total_links_skipped} more links in this list) (truncated) use evaluate to get more.",
+            eval_depth_prefix(depth)
+        ));
+    }
+
+    children_output.join("\n")
+}
+
+fn build_eval_attributes(node: &DomEvalNode) -> String {
+    EVAL_KEY_ATTRIBUTES
+        .iter()
+        .filter_map(|attribute| {
+            let value = node.attributes.get(*attribute)?.trim();
+            if value.is_empty() {
+                return None;
+            }
+            let value = if *attribute == "class" {
+                value
+                    .split_whitespace()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                cap_eval_text(value, 80)
+            };
+            Some(format!("{attribute}=\"{value}\""))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn eval_inline_text(node: &DomEvalNode) -> String {
+    let text_parts = node
+        .children
+        .iter()
+        .filter(|child| child.node_type == DomEvalNodeType::Text)
+        .map(|child| child.node_value.trim())
+        .filter(|text| text.chars().count() > 1)
+        .collect::<Vec<_>>();
+
+    if text_parts.is_empty() {
+        return String::new();
+    }
+
+    cap_eval_text(&text_parts.join(" "), 80)
+}
+
+fn eval_depth_prefix(depth: usize) -> String {
+    "\t".repeat(depth)
+}
+
+fn cap_eval_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let mut capped = value.chars().take(max_chars).collect::<String>();
+    capped.push_str("...");
+    capped
 }
 
 #[must_use]
@@ -611,6 +1057,14 @@ fn cap_attribute_value(value: &str) -> String {
     capped
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -694,6 +1148,79 @@ mod tests {
         assert_eq!(
             dom.llm_representation_with_attributes(&["data-testid".to_owned()]),
             EMPTY_DOM_TREE_MESSAGE
+        );
+        assert_eq!(dom.eval_representation(), EMPTY_DOM_TREE_MESSAGE);
+    }
+
+    #[test]
+    fn eval_representation_preserves_tree_structure_without_action_indexes() {
+        let root = DomEvalNode::element("html").with_children(vec![
+            DomEvalNode::element("body").with_children(vec![
+                DomEvalNode::element("main").with_children(vec![
+                    DomEvalNode::element("h1")
+                        .with_children(vec![DomEvalNode::text("Account setup")]),
+                    DomEvalNode::element("form").with_children(vec![
+                        DomEvalNode::element("label")
+                            .with_attribute("for", "email")
+                            .with_children(vec![DomEvalNode::text("Email")]),
+                        DomEvalNode::element("input")
+                            .with_attribute("id", "email")
+                            .with_attribute("name", "email")
+                            .with_attribute("type", "email")
+                            .with_attribute("placeholder", "you@example.com")
+                            .with_attribute("required", "true")
+                            .interactive(42),
+                        DomEvalNode::element("button")
+                            .with_attribute("data-testid", "submit-account")
+                            .with_children(vec![DomEvalNode::text("Continue")])
+                            .interactive(43),
+                    ]),
+                ]),
+            ]),
+        ]);
+        let state = SerializedDomState::default().with_eval_root(root);
+
+        assert_eq!(
+            state.eval_representation(),
+            "<html />\n\t<body />\n\t\t<main />\n\t\t\t<h1>Account setup\n\t\t\t<form />\n\t\t\t\t<label>Email\n\t\t\t\t[i_42] <input id=\"email\" name=\"email\" type=\"email\" placeholder=\"you@example.com\" required=\"true\" />\n\t\t\t\t[i_43] <button data-testid=\"submit-account\">Continue"
+        );
+    }
+
+    #[test]
+    fn eval_representation_handles_shadow_iframe_svg_and_scroll_markers() {
+        let root = DomEvalNode::element("body").with_children(vec![
+            DomEvalNode::element("section")
+                .scrollable("0.0 pages above, 2.0 pages below")
+                .with_children(vec![
+                    DomEvalNode::element("button")
+                        .with_attribute("aria-expanded", "false")
+                        .with_children(vec![DomEvalNode::text("Open menu")])
+                        .interactive(51),
+                ]),
+            DomEvalNode::document_fragment(vec![
+                DomEvalNode::element("button")
+                    .with_attribute("id", "shadow-save")
+                    .with_children(vec![DomEvalNode::text("Save")])
+                    .interactive(52),
+            ]),
+            DomEvalNode::element("iframe")
+                .with_attribute("title", "Checkout")
+                .with_children(vec![
+                    DomEvalNode::element("button")
+                        .with_children(vec![DomEvalNode::text("Pay now")])
+                        .interactive(53),
+                ]),
+            DomEvalNode::element("svg")
+                .with_attribute("aria-label", "Decorative chart")
+                .with_children(vec![
+                    DomEvalNode::element("path").with_attribute("d", "M0 0"),
+                ]),
+        ]);
+        let state = SerializedDomState::default().with_eval_root(root);
+
+        assert_eq!(
+            state.eval_representation(),
+            "<body />\n\t<section scroll=\"0.0 pages above, 2.0 pages below\" />\n\t\t[i_51] <button aria-expanded=\"false\">Open menu\n\t#shadow\n\t\t[i_52] <button id=\"shadow-save\">Save\n\t<iframe title=\"Checkout\" />\n\t\t#iframe-content\n\t\t\t[i_53] <button>Pay now\n\t<svg aria-label=\"Decorative chart\" /> <!-- SVG content collapsed -->"
         );
     }
 

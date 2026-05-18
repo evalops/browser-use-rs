@@ -1,376 +1,27 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
-    "DomElementRef": {
-      "description": "A compact node reference addressable by an action index.",
-      "properties": {
-        "attributes": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "type": "object"
-        },
-        "backend_node_id": {
-          "format": "uint64",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "bounds": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ElementBounds"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "index": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "is_interactive": {
-          "default": false,
-          "type": "boolean"
-        },
-        "is_scrollable": {
-          "type": "boolean"
-        },
-        "is_visible": {
-          "default": false,
-          "type": "boolean"
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "node_id": {
-          "format": "uint64",
-          "minimum": 0.0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "role": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tag_name": {
-          "type": "string"
-        },
-        "target_id": {
-          "type": "string"
-        },
-        "text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "backend_node_id",
-        "index",
-        "tag_name",
-        "target_id"
-      ],
-      "type": "object"
-    },
-    "DomPageStats": {
-      "description": "Compact page-shape statistics rendered into the agent prompt.",
-      "properties": {
-        "iframes": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "images": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "interactive_elements": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "links": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "scroll_containers": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "shadow_closed": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "shadow_open": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "text_chars": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "total_elements": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
-    "ElementBounds": {
-      "description": "Viewport-relative integer bounds for an indexed element.",
-      "properties": {
-        "height": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "width": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "x": {
-          "format": "int32",
-          "type": "integer"
-        },
-        "y": {
-          "format": "int32",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "height",
-        "width",
-        "x",
-        "y"
-      ],
-      "type": "object"
-    },
-    "NetworkRequest": {
-      "description": "A network request that is still in flight when browser state is captured.",
-      "properties": {
-        "loading_duration_ms": {
-          "default": 0.0,
-          "format": "double",
-          "type": "number"
-        },
-        "method": {
-          "default": "GET",
-          "type": "string"
-        },
-        "resource_type": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "url"
-      ],
-      "type": "object"
-    },
-    "PageInfo": {
-      "description": "Viewport and scroll metrics used to help the agent reason about page shape.",
-      "properties": {
-        "page_height": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "page_width": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "pixels_above": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "pixels_below": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "pixels_left": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "pixels_right": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "scroll_x": {
-          "format": "int32",
-          "type": "integer"
-        },
-        "scroll_y": {
-          "format": "int32",
-          "type": "integer"
-        },
-        "viewport_height": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "viewport_width": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "page_height",
-        "page_width",
-        "pixels_above",
-        "pixels_below",
-        "pixels_left",
-        "pixels_right",
-        "scroll_x",
-        "scroll_y",
-        "viewport_height",
-        "viewport_width"
-      ],
-      "type": "object"
-    },
-    "PaginationButton": {
-      "description": "Pagination affordance detected from the current page.",
-      "properties": {
-        "backend_node_id": {
-          "format": "uint64",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "button_type": {
-          "$ref": "#/definitions/PaginationButtonType"
-        },
-        "is_disabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "selector": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "backend_node_id",
-        "button_type",
-        "selector",
-        "text"
-      ],
-      "type": "object"
-    },
-    "PaginationButtonType": {
-      "enum": [
-        "next",
-        "prev",
-        "first",
-        "last",
-        "page_number"
-      ],
-      "type": "string"
-    },
-    "SerializedDomState": {
-      "description": "Serialized DOM state in the form the agent consumes.",
-      "properties": {
-        "page_stats": {
-          "$ref": "#/definitions/DomPageStats"
-        },
-        "selector_map": {
-          "additionalProperties": {
-            "$ref": "#/definitions/DomElementRef"
-          },
-          "default": {},
-          "type": "object"
-        },
-        "text": {
-          "default": "",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "TabInfo": {
-      "description": "Information about an open tab or page target.",
-      "properties": {
-        "parent_target_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tab_id": {
-          "type": "string"
-        },
-        "target_id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "target_id",
-        "title",
-        "url"
-      ],
-      "type": "object"
-    }
-  },
+  "title": "BrowserStateSummary",
   "description": "Browser state summary compatible with the browser-use agent step contract.",
+  "type": "object",
+  "required": [
+    "dom_state",
+    "title",
+    "url"
+  ],
   "properties": {
     "browser_errors": {
       "default": [],
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "closed_popup_messages": {
       "default": [],
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "dom_state": {
       "$ref": "#/definitions/SerializedDomState"
@@ -391,29 +42,29 @@
     },
     "pagination_buttons": {
       "default": [],
+      "type": "array",
       "items": {
         "$ref": "#/definitions/PaginationButton"
-      },
-      "type": "array"
+      }
     },
     "pending_network_requests": {
       "default": [],
+      "type": "array",
       "items": {
         "$ref": "#/definitions/NetworkRequest"
-      },
-      "type": "array"
+      }
     },
     "pixels_above": {
       "default": 0,
+      "type": "integer",
       "format": "uint32",
-      "minimum": 0.0,
-      "type": "integer"
+      "minimum": 0.0
     },
     "pixels_below": {
       "default": 0,
+      "type": "integer",
       "format": "uint32",
-      "minimum": 0.0,
-      "type": "integer"
+      "minimum": 0.0
     },
     "recent_events": {
       "type": [
@@ -429,10 +80,10 @@
     },
     "tabs": {
       "default": [],
+      "type": "array",
       "items": {
         "$ref": "#/definitions/TabInfo"
-      },
-      "type": "array"
+      }
     },
     "title": {
       "type": "string"
@@ -441,11 +92,440 @@
       "type": "string"
     }
   },
-  "required": [
-    "dom_state",
-    "title",
-    "url"
-  ],
-  "title": "BrowserStateSummary",
-  "type": "object"
+  "definitions": {
+    "DomElementRef": {
+      "description": "A compact node reference addressable by an action index.",
+      "type": "object",
+      "required": [
+        "backend_node_id",
+        "index",
+        "tag_name",
+        "target_id"
+      ],
+      "properties": {
+        "attributes": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "backend_node_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ElementBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "is_interactive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "is_scrollable": {
+          "type": "boolean"
+        },
+        "is_visible": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag_name": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "DomEvalNode": {
+      "description": "Tree-shaped DOM node used for browser-use's evaluation/judge representation.",
+      "type": "object",
+      "required": [
+        "node_type"
+      ],
+      "properties": {
+        "attributes": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "backend_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "children": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DomEvalNode"
+          }
+        },
+        "excluded_by_parent": {
+          "type": "boolean"
+        },
+        "is_interactive": {
+          "type": "boolean"
+        },
+        "is_scrollable": {
+          "type": "boolean"
+        },
+        "is_visible": {
+          "type": "boolean"
+        },
+        "node_type": {
+          "$ref": "#/definitions/DomEvalNodeType"
+        },
+        "node_value": {
+          "type": "string"
+        },
+        "scroll_info": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "should_display": {
+          "type": "boolean"
+        },
+        "tag_name": {
+          "type": "string"
+        }
+      }
+    },
+    "DomEvalNodeType": {
+      "description": "Node kind used by the evaluation-focused DOM tree serializer.",
+      "type": "string",
+      "enum": [
+        "document_fragment",
+        "element",
+        "text"
+      ]
+    },
+    "DomPageStats": {
+      "description": "Compact page-shape statistics rendered into the agent prompt.",
+      "type": "object",
+      "properties": {
+        "iframes": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "images": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "interactive_elements": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "links": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "scroll_containers": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "shadow_closed": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "shadow_open": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "text_chars": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "total_elements": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ElementBounds": {
+      "description": "Viewport-relative integer bounds for an indexed element.",
+      "type": "object",
+      "required": [
+        "height",
+        "width",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "x": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "NetworkRequest": {
+      "description": "A network request that is still in flight when browser state is captured.",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "loading_duration_ms": {
+          "default": 0.0,
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "default": "GET",
+          "type": "string"
+        },
+        "resource_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "PageInfo": {
+      "description": "Viewport and scroll metrics used to help the agent reason about page shape.",
+      "type": "object",
+      "required": [
+        "page_height",
+        "page_width",
+        "pixels_above",
+        "pixels_below",
+        "pixels_left",
+        "pixels_right",
+        "scroll_x",
+        "scroll_y",
+        "viewport_height",
+        "viewport_width"
+      ],
+      "properties": {
+        "page_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "page_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_above": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_below": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_left": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "pixels_right": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "scroll_x": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "scroll_y": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "viewport_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "viewport_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "PaginationButton": {
+      "description": "Pagination affordance detected from the current page.",
+      "type": "object",
+      "required": [
+        "backend_node_id",
+        "button_type",
+        "selector",
+        "text"
+      ],
+      "properties": {
+        "backend_node_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "button_type": {
+          "$ref": "#/definitions/PaginationButtonType"
+        },
+        "is_disabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "PaginationButtonType": {
+      "type": "string",
+      "enum": [
+        "next",
+        "prev",
+        "first",
+        "last",
+        "page_number"
+      ]
+    },
+    "SerializedDomState": {
+      "description": "Serialized DOM state in the form the agent consumes.",
+      "type": "object",
+      "properties": {
+        "eval_root": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DomEvalNode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "page_stats": {
+          "$ref": "#/definitions/DomPageStats"
+        },
+        "selector_map": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/DomElementRef"
+          }
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        }
+      }
+    },
+    "TabInfo": {
+      "description": "Information about an open tab or page target.",
+      "type": "object",
+      "required": [
+        "target_id",
+        "title",
+        "url"
+      ],
+      "properties": {
+        "parent_target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    }
+  }
 }

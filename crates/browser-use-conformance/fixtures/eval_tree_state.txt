@@ -1,0 +1,13 @@
+<html />
+	<body />
+		<main />
+			<h1>Checkout
+			<form />
+				<label>Email
+				[i_901] <input id="email" name="email" type="email" placeholder="agent@example.com" required="true" />
+				[i_902] <button data-testid="checkout-submit">Pay now
+			#shadow
+				[i_903] <button id="shadow-help">Help
+			<iframe title="Receipt" />
+				#iframe-content
+					[i_904] <a>Receipt link

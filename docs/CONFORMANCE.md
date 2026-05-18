@@ -16,7 +16,7 @@ browser-use where compatibility is claimed.
 1. Schema snapshots: action JSON schemas, browser state JSON, and agent output.
 2. DOM fixtures: numbered clickable elements, text representation, configurable
    prompt attributes, selector maps, iframes, hidden elements, dropdowns, ARIA
-   widget roles, and accessibility names.
+   widget roles, accessibility names, and eval/judge DOM tree output.
 3. Browser actions: navigation, URL access policy guards for explicit
    navigation, action boundaries, redirects, and new tabs, search, click,
    input, scroll, keyboard, tab switching, downloads, screenshots, and PDF
@@ -49,6 +49,9 @@ Upstream bumps must include:
   media controls.
 - `frame_shadow_state.json`: selector-map fixture for iframe target identity,
   merged child-frame bounds, and open-shadow-style indexed controls.
+- `eval_tree_state.txt`: tree-shaped eval representation fixture covering
+  structural tags, backend-node `[i_*]` markers, shadow-root markers, and
+  iframe-content markers.
 - `browser_action_schema.json`: JSON Schema snapshot for the implemented
   one-key browser action contract.
 - `browser_state_summary_schema.json`: JSON Schema snapshot for serialized
