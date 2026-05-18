@@ -153,8 +153,8 @@ includes:
   systemd/launchd templates, persistent session registry for explicit and
   implicit `session_id` MCP calls with liveness status and stale-record
   cleanup, MCP input/output schemas, typed MCP/CLI agent settings including
-  available-file-path and sensitive-data placeholder context plus system-message
-  control, and conformance fixtures.
+  conversation transcript saving, available-file-path and sensitive-data
+  placeholder context plus system-message control, and conformance fixtures.
 
 ## Design Rules
 
