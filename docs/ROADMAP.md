@@ -51,10 +51,10 @@ Implemented:
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
   resistance, optional IP-address blocking, post-navigation redirect reset to
-  `about:blank`, navigation-capable action-boundary checks, newly observed
-  disallowed tab closure, and event-driven target/frame navigation watchdog
-  enforcement with bounded success and failure diagnostics while a session is
-  active.
+  `about:blank`, blocked-navigation preflight diagnostics,
+  navigation-capable action-boundary checks, newly observed disallowed tab
+  closure, and event-driven target/frame navigation watchdog enforcement with
+  bounded success and failure diagnostics while a session is active.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut

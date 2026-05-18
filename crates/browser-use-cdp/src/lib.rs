@@ -1904,6 +1904,21 @@ impl CdpBrowserSession {
         Ok(())
     }
 
+    async fn validate_url_policy_before_navigation(&self, url: &str) -> Result<(), BrowserError> {
+        match self.url_policy.validate(url) {
+            Ok(()) => Ok(()),
+            Err(BrowserError::NavigationBlocked { url, reason }) => {
+                self.record_security_event(BrowserSecurityEvent::prevented_navigation(
+                    url.clone(),
+                    reason.clone(),
+                ))
+                .await;
+                Err(BrowserError::NavigationBlocked { url, reason })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     async fn record_security_event(&self, event: BrowserSecurityEvent) {
         let mut events = self.security_events.lock().await;
         push_security_event(&mut events, event);
@@ -2485,6 +2500,16 @@ struct BrowserSecurityEvent {
 }
 
 impl BrowserSecurityEvent {
+    fn prevented_navigation(url: String, reason: String) -> Self {
+        Self {
+            message: format!(
+                "Blocked navigation to {url} ({reason}); no browser navigation was started"
+            ),
+            browser_error_message: None,
+            closed_popup_message: None,
+        }
+    }
+
     fn reset_current(url: String, reason: String) -> Self {
         Self {
             message: format!(
@@ -3891,7 +3916,7 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
-        self.url_policy.validate(url)?;
+        self.validate_url_policy_before_navigation(url).await?;
         if new_tab {
             let target_id = create_target(&self.connection, url).await?;
             let page = attach_to_target(&self.connection, target_id).await?;
@@ -4993,6 +5018,13 @@ mod tests {
         let mut events = VecDeque::new();
         push_security_event(
             &mut events,
+            BrowserSecurityEvent::prevented_navigation(
+                "https://blocked.test/direct".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+            ),
+        );
+        push_security_event(
+            &mut events,
             BrowserSecurityEvent::closed_popup(
                 "https://evil.test/popup".to_owned(),
                 "in_prohibited_domains".to_owned(),
@@ -5018,6 +5050,7 @@ mod tests {
             security_event_state_fields(&events);
         let recent_events = recent_events.expect("recent security events");
 
+        assert!(recent_events.contains("no browser navigation was started"));
         assert!(recent_events.contains("Closed popup https://evil.test/popup"));
         assert!(recent_events.contains("reset current tab to about:blank"));
         assert!(recent_events.contains("Failed to close popup https://stuck.test/popup"));
@@ -7648,6 +7681,18 @@ mod tests {
             error,
             BrowserError::NavigationBlocked { ref reason, .. } if reason == "not_in_allowed_domains"
         ));
+
+        let state = session
+            .state(false)
+            .await
+            .expect("state after blocked preflight navigation");
+        assert!(
+            state
+                .recent_events
+                .as_deref()
+                .is_some_and(|events| events.contains("no browser navigation was started")),
+            "blocked preflight diagnostics missing from state: {state:?}"
+        );
     }
 
     #[tokio::test]
