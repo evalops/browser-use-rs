@@ -23,17 +23,17 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   accessibility-tree role/name/state/value enrichment with backend/frontend node
   ids, hidden-element and `data-browser-use-exclude` subtree filtering, and
   topmost/occlusion filtering, while keeping hidden file-input upload targets,
-  plain scroll-container indexing, and non-content tag pruning, plus basic
-  accessible names from labels, ARIA references, and image alt text, plus
-  selected dropdown values, compound control metadata, and compact select option
-  summaries, common ARIA widget roles, search affordance signals, small icon
-  controls,
+  plain scroll-container indexing, non-content tag pruning, and prompt-visible
+  pages-above/below context for indexed scroll containers, plus accessible names
+  from labels, ARIA references, and image alt text, selected dropdown values,
+  compound control metadata, compact select option summaries, common ARIA widget
+  roles, search affordance signals, small icon controls,
   input mask/autocomplete/date-format hints, JavaScript click/pointer
-  listener-backed controls, cursor-pointer controls, decorative
-  SVG child pruning, static
-  mouse/keyboard handler attributes, contained duplicate-descendant pruning for
-  action containers, pagination affordance detection, configurable
-  prompt-visible attributes, and the upstream empty-DOM load hint.
+  listener-backed controls, cursor-pointer controls, decorative SVG child
+  pruning, static mouse/keyboard handler attributes, contained
+  duplicate-descendant pruning for action containers, pagination affordance
+  detection, configurable prompt-visible attributes, and the upstream empty-DOM
+  load hint.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and

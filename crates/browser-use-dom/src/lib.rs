@@ -267,10 +267,18 @@ fn render_element_line_with_attribute_names(
     } else {
         format!("[{}]", element.index)
     };
-    if text.is_empty() {
-        format!("{prefix} {tag}")
-    } else {
-        format!("{prefix} {tag} {text}")
+    let scroll_info = element
+        .attributes
+        .get("scroll")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" ({value})"))
+        .unwrap_or_default();
+    match (scroll_info.is_empty(), text.is_empty()) {
+        (true, true) => format!("{prefix} {tag}"),
+        (true, false) => format!("{prefix} {tag} {text}"),
+        (false, true) => format!("{prefix} {tag}{scroll_info}"),
+        (false, false) => format!("{prefix} {tag}{scroll_info} {text}"),
     }
 }
 
@@ -954,6 +962,38 @@ mod tests {
         assert_eq!(
             state.llm_representation(),
             "[7] |scroll element| <section id=results> Results"
+        );
+    }
+
+    #[test]
+    fn serialized_state_renders_scroll_context_for_agent() {
+        let element = DomElementRef {
+            index: 7,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "section".to_owned(),
+            role: None,
+            name: Some("Results".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "results".to_owned()),
+                (
+                    "scroll".to_owned(),
+                    "0.0 pages above, 5.7 pages below".to_owned(),
+                ),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: true,
+        };
+
+        let state = SerializedDomState::from_elements(vec![element]);
+
+        assert_eq!(
+            state.llm_representation(),
+            "[7] |scroll element| <section id=results> (0.0 pages above, 5.7 pages below) Results"
         );
     }
 

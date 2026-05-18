@@ -115,7 +115,8 @@ Implemented:
   agent prompts, supports caller-selected prompt attributes, renders the
   upstream empty-DOM load hint, filters occluded elements with a topmost-center
   check, keeps hidden file-input upload targets, indexes plain scroll containers
-  without interactive descendants, prunes non-content
+  without interactive descendants, renders pages-above/below scroll context for
+  indexed scroll containers, prunes non-content
   `head`/`script`/`style`/metadata tags, and excludes hidden, disabled, or
   `data-browser-use-exclude` subtrees from the selector map.
 

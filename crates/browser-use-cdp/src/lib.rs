@@ -221,6 +221,25 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
     return /(auto|scroll|overlay)/.test(overflow) && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
   };
+  const scrollInfoText = (el) => {
+    if (!isScrollable(el)) return '';
+    const visibleHeight = el.clientHeight || 0;
+    const visibleWidth = el.clientWidth || 0;
+    const scrollableHeight = el.scrollHeight || 0;
+    const scrollableWidth = el.scrollWidth || 0;
+    const parts = [];
+    if (visibleHeight > 0 && scrollableHeight > visibleHeight + 1) {
+      const pagesAbove = Math.max(0, el.scrollTop || 0) / visibleHeight;
+      const pagesBelow = Math.max(0, scrollableHeight - visibleHeight - (el.scrollTop || 0)) / visibleHeight;
+      parts.push(`${pagesAbove.toFixed(1)} pages above, ${pagesBelow.toFixed(1)} pages below`);
+    }
+    if (visibleWidth > 0 && scrollableWidth > visibleWidth + 1) {
+      const maxScrollLeft = Math.max(1, scrollableWidth - visibleWidth);
+      const pct = Math.round((Math.max(0, el.scrollLeft || 0) / maxScrollLeft) * 100);
+      parts.push(`horizontal ${pct}%`);
+    }
+    return parts.join(' ');
+  };
   const isDropdownContainer = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     const role = String(el.getAttribute('role') || '').toLowerCase();
@@ -435,6 +454,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (tag === 'option' && 'selected' in el) attrs.selected = String(el.selected);
     const compoundComponents = compoundComponentsFor(el);
     if (compoundComponents) attrs.compound_components = compoundComponents;
+    const scroll = scrollInfoText(el);
+    if (scroll) attrs.scroll = scroll;
     const text = (controlText || el.innerText || altText || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
     return {
@@ -4438,6 +4459,8 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("shouldIndexScrollable"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasInteractiveDescendant"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("isDropdownContainer"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("scrollInfoText"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.scroll = scroll"));
 
         let action_script = element_action_js(1, "el.scrollBy(0, el.clientHeight);");
         assert!(action_script.contains("shouldIndexScrollable"));
@@ -5808,6 +5831,18 @@ mod tests {
         assert!(
             plain_pane.is_scrollable,
             "plain pane was not marked scrollable: {plain_pane:?}"
+        );
+        assert!(
+            plain_pane
+                .attributes
+                .get("scroll")
+                .is_some_and(|value| value.contains("pages below")),
+            "plain pane was missing scroll context: {plain_pane:?}"
+        );
+        assert!(
+            state.dom_state.llm_representation().contains("pages below"),
+            "DOM state did not render scroll context: {}",
+            state.dom_state.llm_representation()
         );
         assert!(state.dom_state.selector_map.values().any(|element| {
             element
