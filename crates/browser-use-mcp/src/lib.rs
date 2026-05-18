@@ -466,6 +466,9 @@ mod tests {
         assert!(schema_text.contains("settings"));
         assert!(schema_text.contains("use_vision"));
         assert!(schema_text.contains("max_actions_per_step"));
+        assert!(schema_text.contains("generate_gif"));
+        assert!(schema_text.contains("calculate_cost"));
+        assert!(schema_text.contains("include_tool_call_examples"));
         assert!(schema_text.contains("vision_detail_level"));
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("use_judge"));
@@ -510,6 +513,9 @@ mod tests {
                 "available_file_paths": ["/tmp/report.pdf"],
                 "include_recent_events": true,
                 "display_files_in_done_text": false,
+                "generate_gif": "/tmp/trace.gif",
+                "calculate_cost": true,
+                "include_tool_call_examples": true,
                 "use_judge": false,
                 "ground_truth": "Must include a receipt.",
                 "save_conversation_path": "/tmp/conversations",
@@ -530,6 +536,12 @@ mod tests {
         assert_eq!(input.settings.available_file_paths, ["/tmp/report.pdf"]);
         assert!(input.settings.include_recent_events);
         assert!(!input.settings.display_files_in_done_text);
+        assert_eq!(
+            input.settings.generate_gif,
+            browser_use_core::GenerateGif::Path("/tmp/trace.gif".to_owned())
+        );
+        assert!(input.settings.calculate_cost);
+        assert!(input.settings.include_tool_call_examples);
         assert!(!input.settings.use_judge);
         assert_eq!(
             input.settings.ground_truth.as_deref(),
