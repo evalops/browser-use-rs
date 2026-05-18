@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- No active tracked slice. The next compatibility gap should be opened as a
-  GitHub issue before implementation starts.
+- [#66 Add display_files_in_done_text setting](https://github.com/evalops/browser-use-rs/issues/66)
 
 ## Completed Tracks
 
