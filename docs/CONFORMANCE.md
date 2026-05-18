@@ -34,6 +34,32 @@ browser-use where compatibility is claimed.
 7. Browser/profile lifecycle: public lifecycle event JSON shape, bounded event
    buffers, and security-watchdog diagnostics for target/page transitions.
 
+## Accessibility Snapshot Boundary
+
+The Rust port keeps accessibility data in the compact numbered DOM contract
+rather than exposing raw full AX snapshots to the model. Indexed elements are
+joined to Chrome `Accessibility.getFullAXTree` nodes through temporary DOM
+markers and backend node ids. The supported AX surface now includes role, name,
+common state/value properties, top-level AX `value` and `description` fields,
+backend/frontend node ids, and the upstream clickability veto for AX
+`hidden=true` or `disabled=true`.
+
+Prompt rendering stays intentionally small. Default DOM text includes
+automation-relevant aliases such as `expanded`, `pressed`, `selected`,
+`keyshortcuts`, `valuemin`, `valuemax`, `valuenow`, `valuetext`, live-region
+metadata, hierarchy metadata, multiselect metadata, and form values where
+safe. Longer or lower-frequency metadata such as AX `description`, `focusable`,
+`editable`, and `settable` is preserved in selector-map attributes and can be
+rendered through `include_attributes`, but is not emitted by default. Password
+fields continue to suppress `value` and `valuetext`.
+
+This boundary is deliberately narrower than a full browser-use AX object graph.
+The port does not currently serialize AX child-id relationships, ignored
+reasons, related-node source chains, or raw AX snapshots into normal prompts.
+Those fields should only be added when they improve action selection,
+evaluation, or deterministic conformance fixtures without destabilizing compact
+DOM rendering.
+
 ## Browser/Profile Lifecycle Audit
 
 The frozen upstream target exposes a broad browser event bus with
@@ -119,9 +145,10 @@ Upstream bumps must include:
 
 - `simple_interactive_state.json`: compact DOM text and selector-map fixture.
 - `mixed_interactive_state.json`: selector-map fixture for accessible labels,
-  attributes, prompt-visible ARIA state aliases, bounds, dropdown current
-  values, compound control metadata, scrollable metadata, rich-text editors, and
-  media controls.
+  attributes, prompt-visible ARIA state aliases, top-level AX values,
+  opt-in AX descriptions, quiet AX clickability metadata, bounds, dropdown
+  current values, compound control metadata, scrollable metadata, rich-text
+  editors, and media controls.
 - `frame_shadow_state.json`: selector-map fixture for iframe target identity,
   merged child-frame bounds, and open-shadow-style indexed controls.
 - `eval_tree_state.txt`: tree-shaped eval representation fixture covering
