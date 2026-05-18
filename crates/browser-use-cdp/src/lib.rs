@@ -34,6 +34,7 @@ const MAX_LIFECYCLE_EVENTS: usize = 32;
 const CDP_RECONNECT_MAX_ATTEMPTS: u32 = 3;
 const CDP_RECONNECT_DELAYS_MS: [u64; 3] = [1_000, 2_000, 4_000];
 const CDP_CONNECT_TIMEOUT_MS: u64 = 15_000;
+const CLOUD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -1256,7 +1257,7 @@ impl CloudBrowserClient {
             api_base_url: "https://api.browser-use.com".to_owned(),
             api_key: None,
             auth_config_path: None,
-            client: reqwest::Client::new(),
+            client: cloud_http_client(),
             current_session_id: Arc::new(Mutex::new(None)),
         }
     }
@@ -1294,14 +1295,30 @@ impl CloudBrowserClient {
         &self,
         request: &CloudBrowserCreateRequest,
     ) -> Result<CloudBrowserResponse, BrowserError> {
+        self.create_browser_with_headers(request, std::iter::empty::<(&str, &str)>())
+            .await
+    }
+
+    pub async fn create_browser_with_headers<K, V, I>(
+        &self,
+        request: &CloudBrowserCreateRequest,
+        extra_headers: I,
+    ) -> Result<CloudBrowserResponse, BrowserError>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+        I: IntoIterator<Item = (K, V)>,
+    {
         let api_key = self.api_key()?;
         let url = format!("{}/api/v2/browsers", self.api_base_url);
+        let headers = cloud_request_headers(api_key, extra_headers)?;
+        let body =
+            serde_json::to_vec(request).map_err(|error| BrowserError::Cloud(error.to_string()))?;
         let response = self
             .client
             .post(url)
-            .header("X-Browser-Use-API-Key", api_key)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .json(request)
+            .headers(headers)
+            .body(body)
             .send()
             .await
             .map_err(|error| BrowserError::Cloud(error.to_string()))?;
@@ -1337,6 +1354,20 @@ impl CloudBrowserClient {
         &self,
         session_id: Option<&str>,
     ) -> Result<CloudBrowserResponse, BrowserError> {
+        self.stop_browser_with_headers(session_id, std::iter::empty::<(&str, &str)>())
+            .await
+    }
+
+    pub async fn stop_browser_with_headers<K, V, I>(
+        &self,
+        session_id: Option<&str>,
+        extra_headers: I,
+    ) -> Result<CloudBrowserResponse, BrowserError>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+        I: IntoIterator<Item = (K, V)>,
+    {
         let session_id = match session_id {
             Some(session_id) if !session_id.trim().is_empty() => session_id.to_owned(),
             _ => self.current_session_id().await.ok_or_else(|| {
@@ -1347,12 +1378,14 @@ impl CloudBrowserClient {
         };
         let api_key = self.api_key()?;
         let url = format!("{}/api/v2/browsers/{session_id}", self.api_base_url);
+        let headers = cloud_request_headers(api_key, extra_headers)?;
+        let body = serde_json::to_vec(&serde_json::json!({ "action": "stop" }))
+            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
         let response = self
             .client
             .patch(url)
-            .header("X-Browser-Use-API-Key", api_key)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .json(&serde_json::json!({ "action": "stop" }))
+            .headers(headers)
+            .body(body)
             .send()
             .await
             .map_err(|error| BrowserError::Cloud(error.to_string()))?;
@@ -1408,6 +1441,47 @@ impl CloudBrowserClient {
             *current_session_id = None;
         }
     }
+}
+
+fn cloud_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(CLOUD_HTTP_TIMEOUT)
+        .build()
+        .expect("valid Browser Use Cloud HTTP client")
+}
+
+fn cloud_request_headers<K, V, I>(
+    api_key: String,
+    extra_headers: I,
+) -> Result<reqwest::header::HeaderMap, BrowserError>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+    I: IntoIterator<Item = (K, V)>,
+{
+    let mut headers = reqwest::header::HeaderMap::new();
+    let api_key = reqwest::header::HeaderValue::from_str(&api_key)
+        .map_err(|error| BrowserError::Cloud(format!("Invalid cloud API key header: {error}")))?;
+    headers.insert("X-Browser-Use-API-Key", api_key);
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    for (name, value) in extra_headers {
+        let name = name.as_ref();
+        let header_name =
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                BrowserError::Cloud(format!("Invalid cloud extra header name {name:?}: {error}"))
+            })?;
+        let value = value.as_ref();
+        let header_value = reqwest::header::HeaderValue::from_str(value).map_err(|error| {
+            BrowserError::Cloud(format!(
+                "Invalid cloud extra header value for {header_name}: {error}"
+            ))
+        })?;
+        headers.insert(header_name, header_value);
+    }
+    Ok(headers)
 }
 
 fn resolve_cloud_api_key(
@@ -7649,6 +7723,14 @@ mod tests {
         serde_json::from_str(body).expect("request body json")
     }
 
+    fn request_header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+        request.lines().find_map(|line| {
+            line.split_once(':').and_then(|(header_name, value)| {
+                header_name.eq_ignore_ascii_case(name).then(|| value.trim())
+            })
+        })
+    }
+
     #[test]
     fn default_profile_uses_headless_chrome_args() {
         let profile = BrowserProfile::default();
@@ -7767,10 +7849,9 @@ mod tests {
         let requests = server.await.expect("cloud server task");
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("POST /api/v2/browsers "));
-        assert!(
-            requests[0]
-                .to_ascii_lowercase()
-                .contains("x-browser-use-api-key: test-key")
+        assert_eq!(
+            request_header(&requests[0], "x-browser-use-api-key"),
+            Some("test-key")
         );
         assert_eq!(
             request_body(&requests[0]),
@@ -7778,6 +7859,76 @@ mod tests {
         );
         assert!(requests[1].starts_with("PATCH /api/v2/browsers/browser-123 "));
         assert_eq!(request_body(&requests[1]), json!({ "action": "stop" }));
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_sends_extra_headers_on_create_and_stop() {
+        let (base_url, server) = cloud_test_server(vec![
+            (200, cloud_browser_response_json("browser-extra", "running")),
+            (200, cloud_browser_response_json("browser-extra", "stopped")),
+        ])
+        .await;
+        let client = CloudBrowserClient::with_api_key("test-key").with_base_url(base_url);
+
+        client
+            .create_browser_with_headers(
+                &CloudBrowserCreateRequest::default(),
+                [
+                    ("X-Trace-Id", "trace-create"),
+                    ("X-Browser-Use-API-Key", "override-key"),
+                ],
+            )
+            .await
+            .expect("create cloud browser with extra headers");
+        client
+            .stop_browser_with_headers(Some("browser-extra"), [("X-Trace-Id", "trace-stop")])
+            .await
+            .expect("stop cloud browser with extra headers");
+
+        let requests = server.await.expect("cloud server task");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            request_header(&requests[0], "x-trace-id"),
+            Some("trace-create")
+        );
+        assert_eq!(
+            request_header(&requests[0], "x-browser-use-api-key"),
+            Some("override-key")
+        );
+        assert_eq!(
+            request_header(&requests[1], "x-trace-id"),
+            Some("trace-stop")
+        );
+        assert_eq!(
+            request_header(&requests[1], "x-browser-use-api-key"),
+            Some("test-key")
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_rejects_invalid_extra_headers_before_request() {
+        let error = CloudBrowserClient::with_api_key("test-key")
+            .create_browser_with_headers(
+                &CloudBrowserCreateRequest::default(),
+                [("bad header", "value")],
+            )
+            .await
+            .expect_err("invalid extra header name");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid cloud extra header name")
+        );
+
+        let error = CloudBrowserClient::with_api_key("test-key")
+            .stop_browser_with_headers(Some("browser-extra"), [("X-Trace-Id", "bad\nvalue")])
+            .await
+            .expect_err("invalid extra header value");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid cloud extra header value")
+        );
     }
 
     #[tokio::test]
