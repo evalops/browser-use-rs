@@ -414,11 +414,14 @@ mod tests {
         FoundElement, Pdf, Screenshot, browser_lifecycle_adapter_events,
     };
     use browser_use_core::{
-        ActionExecutor, ActionResult, Agent, AgentRunError, AgentSettings, ChatCompletion,
-        ChatModel, ChatRequest, ContentPart, FileSystemState, LlmError, ManagedFileSystem,
-        MessageRole, execute_action_sequence,
+        ActionExecutor, ActionReplayRematch, ActionResult, Agent, AgentHistoryReplayExecution,
+        AgentHistoryReplayExecutionItem, AgentHistoryReplayPlan, AgentHistoryReplayPlanItem,
+        AgentHistoryReplayRun, AgentHistoryReplayStop, AgentHistoryReplayStopReason, AgentRunError,
+        AgentSettings, ChatCompletion, ChatModel, ChatRequest, ContentPart, FileSystemState,
+        LlmError, ManagedFileSystem, MessageRole, execute_action_sequence,
     };
-    use browser_use_tools::{BrowserAction, WaitAction};
+    use browser_use_dom::{DomInteractedElementMatch, DomInteractedElementMatchLevel};
+    use browser_use_tools::{BrowserAction, ClickElementAction, WaitAction};
     use schemars::schema_for;
     use serde_json::{Value, json};
     use std::{
@@ -539,6 +542,34 @@ mod tests {
             actual,
             include_str!("../fixtures/rich_browser_state_summary.json"),
         );
+    }
+
+    #[test]
+    fn agent_history_replay_run_matches_golden_fixture() {
+        let actual =
+            serde_json::to_value(agent_history_replay_run_fixture()).expect("serialize replay run");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/agent_history_replay_run.json"),
+        );
+    }
+
+    #[test]
+    fn agent_history_replay_run_schema_exposes_stop_diagnostics() {
+        let schema =
+            serde_json::to_value(schema_for!(AgentHistoryReplayRun)).expect("serialize schema");
+        let schema_text = serde_json::to_string(&schema).expect("schema text");
+
+        for field in [
+            "current_state",
+            "plan",
+            "execution",
+            "diagnostic",
+            "page_changed",
+        ] {
+            assert!(schema_text.contains(field), "schema missing {field}");
+        }
     }
 
     #[test]
@@ -789,6 +820,61 @@ mod tests {
         let expected: Value = serde_json::from_str(expected_json).expect("golden fixture");
 
         assert_eq!(actual, expected);
+    }
+
+    fn agent_history_replay_run_fixture() -> AgentHistoryReplayRun {
+        let original_action = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let remapped_action = BrowserAction::Click(ClickElementAction {
+            index: Some(2),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let rematch = ActionReplayRematch {
+            action: remapped_action.clone(),
+            original_index: Some(1),
+            rematched_index: Some(2),
+            match_result: Some(DomInteractedElementMatch {
+                index: 2,
+                level: DomInteractedElementMatchLevel::Exact,
+                attribute: None,
+            }),
+            changed: true,
+        };
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![AgentHistoryReplayPlanItem {
+                step_index: 1,
+                action_index: 0,
+                original_action: original_action.clone(),
+                remapped_action: remapped_action.clone(),
+                rematch: rematch.clone(),
+            }],
+        };
+        let execution = AgentHistoryReplayExecution {
+            items: vec![AgentHistoryReplayExecutionItem {
+                step_index: 1,
+                action_index: 0,
+                original_action,
+                executed_action: remapped_action,
+                rematch,
+                result: ActionResult::extracted("Clicked element 2"),
+            }],
+            stop: Some(AgentHistoryReplayStop {
+                step_index: 1,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::PageChanged,
+                diagnostic: None,
+            }),
+        };
+
+        AgentHistoryReplayRun {
+            current_state: fixture_browser_state(),
+            plan,
+            execution,
+        }
     }
 
     struct FixtureExecutor;

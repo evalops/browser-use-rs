@@ -1,0 +1,117 @@
+{
+  "current_state": {
+    "dom_state": {
+      "text": "[1] <button> Run\n[2] <input> Name EvalOps",
+      "selector_map": {
+        "1": {
+          "index": 1,
+          "target_id": "fixture-target",
+          "backend_node_id": 0,
+          "tag_name": "button",
+          "name": "Run",
+          "text": "Run",
+          "attributes": {},
+          "is_visible": true,
+          "is_interactive": true
+        },
+        "2": {
+          "index": 2,
+          "target_id": "fixture-target",
+          "backend_node_id": 0,
+          "tag_name": "input",
+          "name": "Name",
+          "text": "EvalOps",
+          "attributes": {},
+          "is_visible": true,
+          "is_interactive": true
+        }
+      }
+    },
+    "url": "https://example.test/form",
+    "title": "Fixture",
+    "tabs": [],
+    "pixels_above": 0,
+    "pixels_below": 0,
+    "browser_errors": [],
+    "is_pdf_viewer": false,
+    "pending_network_requests": [],
+    "pagination_buttons": [],
+    "closed_popup_messages": []
+  },
+  "plan": {
+    "actions": [
+      {
+        "step_index": 1,
+        "action_index": 0,
+        "original_action": {
+          "click": {
+            "index": 1
+          }
+        },
+        "remapped_action": {
+          "click": {
+            "index": 2
+          }
+        },
+        "rematch": {
+          "action": {
+            "click": {
+              "index": 2
+            }
+          },
+          "original_index": 1,
+          "rematched_index": 2,
+          "match_result": {
+            "index": 2,
+            "level": "exact"
+          },
+          "changed": true
+        }
+      }
+    ]
+  },
+  "execution": {
+    "items": [
+      {
+        "step_index": 1,
+        "action_index": 0,
+        "original_action": {
+          "click": {
+            "index": 1
+          }
+        },
+        "executed_action": {
+          "click": {
+            "index": 2
+          }
+        },
+        "rematch": {
+          "action": {
+            "click": {
+              "index": 2
+            }
+          },
+          "original_index": 1,
+          "rematched_index": 2,
+          "match_result": {
+            "index": 2,
+            "level": "exact"
+          },
+          "changed": true
+        },
+        "result": {
+          "extracted_content": "Clicked element 2",
+          "long_term_memory": "Clicked element 2",
+          "include_extracted_content_only_once": false,
+          "include_in_memory": false,
+          "is_done": false
+        }
+      }
+    ],
+    "stop": {
+      "step_index": 1,
+      "action_index": 0,
+      "reason": "page_changed"
+    }
+  }
+}
