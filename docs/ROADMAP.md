@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- No active GitHub issue. Next track should be opened from the remaining gaps below.
+- [#25 Expose serializable Agent checkpoint and resume API](https://github.com/evalops/browser-use-rs/issues/25)
 
 ## Completed Tracks
 
@@ -173,9 +173,9 @@ Implemented:
 
 Next:
 
-1. Expand the restored managed `FileSystem` work into a stable full-agent
-   checkpoint/resume API if callers need durable agent progress outside the
-   current `FileSystemState` replay surface.
+1. Implement the active full-agent checkpoint/resume API so callers can persist
+   task, settings, history, initial-action state, and managed filesystem state
+   together.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
 3. Expand agent planning depth and replay coverage for longer multi-step tasks.
