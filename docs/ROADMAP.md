@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#97 Add upstream judge_llm routing](https://github.com/evalops/browser-use-rs/issues/97)
+- Next upstream parity slice after #97 lands and CI is green.
 
 ## Completed Tracks
 
+- [#97 Add upstream judge_llm routing](https://github.com/evalops/browser-use-rs/issues/97)
 - [#94 Add upstream page_extraction_llm routing](https://github.com/evalops/browser-use-rs/issues/94)
 - [#93 Add upstream fallback LLM switching](https://github.com/evalops/browser-use-rs/issues/93)
 - [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
@@ -239,8 +240,9 @@ Implemented:
   TOTP generation, system-message override/extension controls, upstream-style
   last-result completion helpers, upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation,
-  upstream-style judge trace validation and judgement results, per-step error
-  slots, runtime `generate_gif` GIF artifact output from recorded screenshots,
+  upstream-style judge trace validation, judgement results, and dedicated
+  judge LLM routing, per-step error slots, runtime `generate_gif` GIF artifact
+  output from recorded screenshots,
   contract-preserved `calculate_cost` and `include_tool_call_examples` settings,
   upstream-style message compaction
   settings with non-fatal summary requests, compacted-memory prompt blocks, and

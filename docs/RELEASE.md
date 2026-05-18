@@ -156,8 +156,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   placeholder context with `bu_2fa_code` TOTP generation, system-message
   override/extension controls, upstream-style prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results, runtime `generate_gif`
-  GIF artifact output from recorded screenshots, contract-preserved
+  action-result success validation, judgement results with dedicated judge LLM
+  routing, runtime `generate_gif` GIF artifact output from recorded
+  screenshots, contract-preserved
   `calculate_cost` and `include_tool_call_examples` settings, and step-error,
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit
