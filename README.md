@@ -114,7 +114,9 @@ includes:
   vision-aware browser-state capture, upstream-style `sample_images` prompt
   parts, screenshot action next-observation image prompts, action-result image
   prompt parts, upstream-style page-stat prompt context with loading/skeleton
-  hints, one-time extraction replay handling,
+  hints, validated `llm_screenshot_size` prompt-only PNG resizing with
+  coordinate-click scaling back to the observed viewport, one-time extraction
+  replay handling,
   step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,

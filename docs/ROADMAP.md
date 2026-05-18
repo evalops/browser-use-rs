@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#89 Add upstream llm_screenshot_size resizing and coordinate scaling](https://github.com/evalops/browser-use-rs/issues/89)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #89 lands and CI is green.
 
 ## Completed Tracks
 
+- [#89 Add upstream llm_screenshot_size resizing and coordinate scaling](https://github.com/evalops/browser-use-rs/issues/89)
 - [#88 Add upstream agent callback and stop-control hooks](https://github.com/evalops/browser-use-rs/issues/88)
 - [#87 Add upstream sample_images prompt support](https://github.com/evalops/browser-use-rs/issues/87)
 - [#86 Add upstream directly_open_url initial navigation](https://github.com/evalops/browser-use-rs/issues/86)
@@ -194,7 +196,9 @@ Implemented:
   errors, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
   per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
-  `action_timeout_seconds`, upstream-style final-step done-only guard for
+  `action_timeout_seconds`, validated `llm_screenshot_size` prompt-only PNG
+  resizing with coordinate-click scaling back to the observed viewport,
+  upstream-style final-step done-only guard for
   `max_steps`, upstream-style 75% step-budget warning before finalization,
   upstream-style page-stat prompt context with loading/skeleton hints,
   upstream-compatible
