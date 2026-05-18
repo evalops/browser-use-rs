@@ -111,7 +111,8 @@ Implemented:
   renders keyboard shortcuts as `keyshortcuts`, detects search affordance
   signals and small icon controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
-  controls, prunes decorative SVG child elements, detects static mouse/keyboard
+  controls, prunes duplicate long attribute values, prunes decorative SVG child
+  elements, detects static mouse/keyboard
   handler attributes, prunes contained duplicate descendants inside action
   containers, detects pagination affordances, carries page-shape stats for
   agent prompts, supports caller-selected prompt attributes, renders the

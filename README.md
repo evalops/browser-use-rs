@@ -40,7 +40,8 @@ includes:
   prompt-visible `keyshortcuts`, small icon controls, cursor-pointer controls,
   decorative SVG child pruning, contained duplicate descendant pruning for
   action containers, static mouse/keyboard handler attributes, pagination
-  affordances, and configurable prompt-visible attributes.
+  affordances, duplicate long-attribute pruning, and configurable
+  prompt-visible attributes.
 - DOM indexing recognizes controls backed only by JavaScript click/pointer
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed

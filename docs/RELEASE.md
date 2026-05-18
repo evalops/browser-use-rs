@@ -32,7 +32,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   prompt-visible `keyshortcuts`,
   input mask/autocomplete/date-format hints, JavaScript click/pointer
   listener-backed controls, cursor-pointer controls, decorative SVG child
-  pruning, static mouse/keyboard handler attributes, contained
+  pruning, duplicate long-attribute pruning, static mouse/keyboard handler
+  attributes, contained
   duplicate-descendant pruning for action containers, pagination affordance
   detection, configurable prompt-visible attributes, and the upstream empty-DOM
   load hint.

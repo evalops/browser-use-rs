@@ -380,7 +380,7 @@ fn render_element_attributes_with_attribute_names(
             .is_some_and(|value| value.eq_ignore_ascii_case("password"));
     let text = render_element_text(element);
 
-    include_attributes
+    let rendered_attributes = include_attributes
         .iter()
         .filter_map(|attribute| {
             let value = render_attribute_value(element, attribute)?;
@@ -414,10 +414,39 @@ fn render_element_attributes_with_attribute_names(
             {
                 return None;
             }
-            Some(format!("{attribute}={}", cap_attribute_value(&value)))
+            Some((*attribute, value))
         })
+        .collect::<Vec<_>>();
+
+    remove_duplicate_attribute_values(rendered_attributes)
+        .into_iter()
+        .map(|(attribute, value)| format!("{attribute}={}", cap_attribute_value(&value)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn remove_duplicate_attribute_values(attributes: Vec<(&str, String)>) -> Vec<(&str, String)> {
+    let mut seen_values = BTreeMap::new();
+    attributes
+        .into_iter()
+        .filter(|(attribute, value)| {
+            if value.chars().count() <= 5 {
+                return true;
+            }
+            if seen_values.contains_key(value) && !is_duplicate_protected_attribute(attribute) {
+                return false;
+            }
+            seen_values.insert(value.clone(), ());
+            true
+        })
+        .collect()
+}
+
+fn is_duplicate_protected_attribute(attribute: &str) -> bool {
+    matches!(
+        attribute,
+        "format" | "expected_format" | "placeholder" | "value" | "aria-label" | "title"
+    )
 }
 
 fn render_attribute_value(element: &DomElementRef, attribute: &str) -> Option<String> {
@@ -845,6 +874,36 @@ mod tests {
     }
 
     #[test]
+    fn rendered_attributes_drop_duplicate_long_values() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Checkout".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "customer-checkout-button".to_owned()),
+                ("name".to_owned(), "customer-checkout-button".to_owned()),
+                ("value".to_owned(), "customer-checkout-button".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(
+            attributes,
+            "id=customer-checkout-button value=customer-checkout-button"
+        );
+    }
+
+    #[test]
     fn rendered_attributes_add_native_input_format_hints() {
         let date = DomElementRef {
             index: 1,
@@ -954,7 +1013,7 @@ mod tests {
         ]);
 
         assert!(state.llm_representation().contains(
-            "[1] <input type=text placeholder=dd/mm/yyyy data-date-format=dd/mm/yyyy format=dd/mm/yyyy> Travel date"
+            "[1] <input type=text placeholder=dd/mm/yyyy format=dd/mm/yyyy> Travel date"
         ));
         assert!(
             state
