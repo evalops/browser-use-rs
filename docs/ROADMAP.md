@@ -36,8 +36,8 @@ Implemented:
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
   events, native/ARIA dropdown actions, scroll, and compact DOM-indexed browser
-  actions, including indexed element scrolling and cached observed-node click
-  resolution.
+  actions, including indexed element scrolling and cached observed-node
+  click/input resolution.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across

@@ -2227,6 +2227,16 @@ impl BrowserSession for CdpBrowserSession {
                 "el.focus(); el.value = (el.value || '') + {text_json}; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }}));"
             )
         };
+        if let Some(element) = self.cached_element(index).await {
+            match self
+                .call_element_function(&element, element_action_function_js(&action))
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
         self.evaluate_effect(element_action_js(index, &action))
             .await
     }
@@ -3536,6 +3546,58 @@ mod tests {
             .await
             .expect("title");
         assert_eq!(title.as_str(), Some("target clicked"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_input_uses_cached_observed_node_after_dom_reorder() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>stable input smoke</title></head><body><input id='target' placeholder='Target'><script>function insertBeforeTarget(){const input=document.createElement('input');input.id='inserted';input.placeholder='Inserted';document.body.insertBefore(input, document.getElementById('target'));}</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let target_index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "target")
+            })
+            .expect("target input")
+            .index;
+
+        session
+            .evaluate_json("insertBeforeTarget(); true")
+            .await
+            .expect("insert input before observed target");
+        session
+            .input_text(target_index, "EvalOps", true)
+            .await
+            .expect("input cached target");
+
+        let values = session
+            .evaluate_json(
+                "JSON.stringify({ target: document.getElementById('target').value, inserted: document.getElementById('inserted').value })",
+            )
+            .await
+            .expect("values");
+        let values: Value =
+            serde_json::from_str(values.as_str().expect("encoded values")).expect("values json");
+        assert_eq!(values["target"].as_str(), Some("EvalOps"));
+        assert_eq!(values["inserted"].as_str(), Some(""));
     }
 
     #[tokio::test]
