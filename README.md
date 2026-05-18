@@ -66,7 +66,7 @@ includes:
   truncation, upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, step-error,
   model-output/action/thought, duration, action, truncated action-history, and
-  URL history accessors.
+  screenshot/URL history accessors.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional

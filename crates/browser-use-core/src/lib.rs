@@ -508,6 +508,33 @@ impl AgentHistory {
     }
 
     #[must_use]
+    pub fn screenshots(
+        &self,
+        n_last: Option<usize>,
+        return_none_if_not_screenshot: bool,
+    ) -> Vec<Option<&str>> {
+        if n_last == Some(0) {
+            return Vec::new();
+        }
+
+        let items = if let Some(n_last) = n_last {
+            let start = self.items.len().saturating_sub(n_last);
+            &self.items[start..]
+        } else {
+            &self.items
+        };
+
+        items
+            .iter()
+            .filter_map(|item| match item.state.screenshot.as_deref() {
+                Some(screenshot) if !screenshot.is_empty() => Some(Some(screenshot)),
+                _ if return_none_if_not_screenshot => Some(None),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[must_use]
     pub fn action_results(&self) -> Vec<&ActionResult> {
         self.items
             .iter()
@@ -4093,6 +4120,52 @@ mod tests {
             })
         );
         assert!((history.total_duration_seconds() - 3.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn history_screenshots_match_browser_use_accessor() {
+        let mut first_state = blank_state();
+        first_state.screenshot = Some("first-shot".to_owned());
+        let second_state = blank_state();
+        let mut third_state = blank_state();
+        third_state.screenshot = Some("third-shot".to_owned());
+
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: Vec::new(),
+                    state: first_state,
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: Vec::new(),
+                    state: second_state,
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: Vec::new(),
+                    state: third_state,
+                    metadata: None,
+                },
+            ],
+        };
+
+        assert_eq!(
+            history.screenshots(None, true),
+            vec![Some("first-shot"), None, Some("third-shot")]
+        );
+        assert_eq!(
+            history.screenshots(None, false),
+            vec![Some("first-shot"), Some("third-shot")]
+        );
+        assert_eq!(
+            history.screenshots(Some(2), true),
+            vec![None, Some("third-shot")]
+        );
+        assert!(history.screenshots(Some(0), true).is_empty());
     }
 
     #[test]
