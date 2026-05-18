@@ -13,8 +13,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
   resistance, and optional IP-address blocking, plus post-navigation redirect
-  checks, navigation-capable action-boundary checks, and newly observed tab
-  closure for disallowed URLs.
+  checks, navigation-capable action-boundary checks, newly observed tab closure
+  for disallowed URLs, and event-driven target/frame navigation watchdog
+  enforcement while a session is active.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -115,9 +116,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 
 - Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
   sessions; stale-node fallback still searches the current main-frame DOM.
-- Browser profile URL access policies use CDP observation rather than
-  upstream's event-bus watchdog, so very short-lived disallowed targets may only
-  be caught at the next navigation, action, or state boundary.
+- Browser profile URL access policies now include a CDP event watchdog for
+  active sessions, but diagnostics are still lighter than upstream's full
+  browser event bus.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

@@ -1,6 +1,6 @@
 //! Chrome DevTools Protocol browser-session layer.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -22,7 +22,7 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -1033,7 +1033,7 @@ fn scroll_to_text_js(text: &str) -> Result<String, BrowserError> {
     ))
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum BrowserError {
     #[error("browser is not connected")]
     NotConnected,
@@ -1434,20 +1434,43 @@ pub async fn wait_for_devtools_endpoint(
 type CdpSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 pub struct CdpConnection {
-    socket: Mutex<CdpSocket>,
+    request_tx: mpsc::Sender<CdpRequest>,
+    event_tx: broadcast::Sender<CdpEvent>,
     next_id: AtomicU64,
 }
 
+struct CdpRequest {
+    id: u64,
+    method: String,
+    payload: Value,
+    response_tx: oneshot::Sender<Result<Value, BrowserError>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CdpEvent {
+    method: String,
+    params: Value,
+    session_id: Option<String>,
+}
+
 impl CdpConnection {
-    pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Self, BrowserError> {
+    pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Arc<Self>, BrowserError> {
         let (socket, _) = connect_async(&endpoint.websocket_url)
             .await
             .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let (request_tx, request_rx) = mpsc::channel(64);
+        let (event_tx, _) = broadcast::channel(256);
+        tokio::spawn(cdp_connection_actor(socket, request_rx, event_tx.clone()));
 
-        Ok(Self {
-            socket: Mutex::new(socket),
+        Ok(Arc::new(Self {
+            request_tx,
+            event_tx,
             next_id: AtomicU64::new(1),
-        })
+        }))
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<CdpEvent> {
+        self.event_tx.subscribe()
     }
 
     pub async fn command(
@@ -1467,45 +1490,112 @@ impl CdpConnection {
             request["sessionId"] = Value::String(session_id.to_owned());
         }
 
-        let mut socket = self.socket.lock().await;
-        socket
-            .send(Message::Text(request.to_string().into()))
+        let (response_tx, response_rx) = oneshot::channel();
+        self.request_tx
+            .send(CdpRequest {
+                id,
+                method: method.to_owned(),
+                payload: request,
+                response_tx,
+            })
             .await
             .map_err(|error| BrowserError::Transport(error.to_string()))?;
 
-        while let Some(message) = socket.next().await {
-            let message = message.map_err(|error| BrowserError::Transport(error.to_string()))?;
-            let Message::Text(text) = message else {
-                continue;
-            };
-            let payload: Value = serde_json::from_str(&text)
-                .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        response_rx
+            .await
+            .map_err(|_| BrowserError::Transport("CDP command actor stopped".to_owned()))?
+    }
+}
 
-            if payload.get("id").and_then(Value::as_u64) != Some(id) {
-                continue;
+async fn cdp_connection_actor(
+    mut socket: CdpSocket,
+    mut request_rx: mpsc::Receiver<CdpRequest>,
+    event_tx: broadcast::Sender<CdpEvent>,
+) {
+    let mut pending: HashMap<u64, (String, oneshot::Sender<Result<Value, BrowserError>>)> =
+        HashMap::new();
+
+    loop {
+        tokio::select! {
+            Some(request) = request_rx.recv() => {
+                let text = request.payload.to_string();
+                match socket.send(Message::Text(text.into())).await {
+                    Ok(()) => {
+                        pending.insert(request.id, (request.method, request.response_tx));
+                    }
+                    Err(error) => {
+                        let _ = request.response_tx.send(Err(BrowserError::Transport(error.to_string())));
+                    }
+                }
             }
+            message = socket.next() => {
+                let Some(message) = message else {
+                    break;
+                };
+                let payload = match message {
+                    Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            let _ = event_tx.send(CdpEvent {
+                                method: "browser-use-rs.invalid-json".to_owned(),
+                                params: json!({ "error": error.to_string() }),
+                                session_id: None,
+                            });
+                            continue;
+                        }
+                    },
+                    Ok(_) => continue,
+                    Err(error) => {
+                        let transport_error = BrowserError::Transport(error.to_string());
+                        for (_, (_, response_tx)) in pending.drain() {
+                            let _ = response_tx.send(Err(transport_error.clone()));
+                        }
+                        break;
+                    }
+                };
 
-            if let Some(error) = payload.get("error") {
-                let message = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown CDP error")
-                    .to_owned();
-                return Err(BrowserError::CommandFailed {
-                    method: method.to_owned(),
-                    message,
-                });
+                if let Some(id) = payload.get("id").and_then(Value::as_u64) {
+                    let Some((method, response_tx)) = pending.remove(&id) else {
+                        continue;
+                    };
+                    let result = if let Some(error) = payload.get("error") {
+                        let message = error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown CDP error")
+                            .to_owned();
+                        Err(BrowserError::CommandFailed { method, message })
+                    } else {
+                        payload
+                            .get("result")
+                            .cloned()
+                            .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} result")))
+                    };
+                    let _ = response_tx.send(result);
+                    continue;
+                }
+
+                if let Some(method) = payload.get("method").and_then(Value::as_str) {
+                    let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
+                    let session_id = payload
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    let _ = event_tx.send(CdpEvent {
+                        method: method.to_owned(),
+                        params,
+                        session_id,
+                    });
+                }
             }
-
-            return payload
-                .get("result")
-                .cloned()
-                .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} result")));
+            else => break,
         }
+    }
 
-        Err(BrowserError::Transport(
+    for (_, (_, response_tx)) in pending {
+        let _ = response_tx.send(Err(BrowserError::Transport(
             "CDP websocket closed while waiting for response".to_owned(),
-        ))
+        )));
     }
 }
 
@@ -1721,10 +1811,12 @@ fn glob_match(value: &str, pattern: &str) -> bool {
 }
 
 pub struct CdpBrowserSession {
-    connection: CdpConnection,
-    page: Mutex<AttachedPage>,
-    last_dom_state: Mutex<Option<SerializedDomState>>,
+    connection: Arc<CdpConnection>,
+    page: Arc<Mutex<AttachedPage>>,
+    last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
+    pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
     url_policy: UrlAccessPolicy,
+    _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
 }
 
@@ -1732,12 +1824,17 @@ impl CdpBrowserSession {
     pub async fn connect(endpoint: DevToolsEndpoint) -> Result<Self, BrowserError> {
         let connection = CdpConnection::connect(&endpoint).await?;
         let page = attach_or_create_page(&connection).await?;
+        let page = Arc::new(Mutex::new(page));
+        let last_dom_state = Arc::new(Mutex::new(None));
+        let pending_url_policy_error = Arc::new(Mutex::new(None));
 
         Ok(Self {
             connection,
-            page: Mutex::new(page),
-            last_dom_state: Mutex::new(None),
+            page,
+            last_dom_state,
+            pending_url_policy_error,
             url_policy: UrlAccessPolicy::default(),
+            _security_watchdog: None,
             _launched_browser: None,
         })
     }
@@ -1747,12 +1844,25 @@ impl CdpBrowserSession {
         let launched_browser = profile.launch_local().await?;
         let connection = CdpConnection::connect(launched_browser.endpoint()).await?;
         let page = attach_or_create_page(&connection).await?;
+        let page = Arc::new(Mutex::new(page));
+        let last_dom_state = Arc::new(Mutex::new(None));
+        let pending_url_policy_error = Arc::new(Mutex::new(None));
+        let security_watchdog = BrowserSecurityWatchdog::start(
+            connection.clone(),
+            page.clone(),
+            last_dom_state.clone(),
+            pending_url_policy_error.clone(),
+            url_policy.clone(),
+        )
+        .await?;
 
         Ok(Self {
             connection,
-            page: Mutex::new(page),
-            last_dom_state: Mutex::new(None),
+            page,
+            last_dom_state,
+            pending_url_policy_error,
             url_policy,
+            _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
         })
     }
@@ -1778,6 +1888,13 @@ impl CdpBrowserSession {
 
     async fn clear_cached_dom_state(&self) {
         *self.last_dom_state.lock().await = None;
+    }
+
+    async fn take_pending_url_policy_error(&self) -> Result<(), BrowserError> {
+        if let Some(error) = self.pending_url_policy_error.lock().await.take() {
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -2203,6 +2320,7 @@ JSON.stringify((() => {{
         if self.url_policy.is_unrestricted() {
             return Ok(());
         }
+        self.take_pending_url_policy_error().await?;
 
         let tabs = page_tabs(&self.connection).await?;
         let current_page = self.current_page().await;
@@ -2247,6 +2365,179 @@ JSON.stringify((() => {{
         }
 
         Ok(())
+    }
+}
+
+struct BrowserSecurityWatchdog {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl BrowserSecurityWatchdog {
+    async fn start(
+        connection: Arc<CdpConnection>,
+        page: Arc<Mutex<AttachedPage>>,
+        last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
+        pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
+        url_policy: UrlAccessPolicy,
+    ) -> Result<Option<Self>, BrowserError> {
+        if url_policy.is_unrestricted() {
+            return Ok(None);
+        }
+
+        let mut events = connection.subscribe_events();
+        connection
+            .command(
+                "Target.setDiscoverTargets",
+                json!({ "discover": true }),
+                None,
+            )
+            .await?;
+
+        let handle = tokio::spawn(async move {
+            while let Ok(event) = events.recv().await {
+                let current_page = page.lock().await.clone();
+                let Some(action) =
+                    url_policy_watchdog_action_for_event(&url_policy, &current_page, &event)
+                else {
+                    continue;
+                };
+                apply_url_policy_watchdog_action(
+                    &connection,
+                    &last_dom_state,
+                    &pending_url_policy_error,
+                    action,
+                )
+                .await;
+            }
+        });
+
+        Ok(Some(Self { handle }))
+    }
+}
+
+impl Drop for BrowserSecurityWatchdog {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UrlPolicyWatchdogAction {
+    ResetCurrent {
+        session_id: String,
+        url: String,
+        reason: String,
+    },
+    CloseTarget {
+        target_id: String,
+        url: String,
+        reason: String,
+    },
+}
+
+fn url_policy_watchdog_action_for_event(
+    policy: &UrlAccessPolicy,
+    current_page: &AttachedPage,
+    event: &CdpEvent,
+) -> Option<UrlPolicyWatchdogAction> {
+    match event.method.as_str() {
+        "Target.targetCreated" | "Target.targetInfoChanged" => {
+            let target_info = event.params.get("targetInfo")?;
+            url_policy_watchdog_action_for_target_info(policy, current_page, target_info)
+        }
+        "Page.frameNavigated" => {
+            let session_id = event.session_id.as_deref()?;
+            if session_id != current_page.session_id {
+                return None;
+            }
+            let url = event.params.get("frame")?.get("url")?.as_str()?;
+            if policy.is_allowed(url) {
+                return None;
+            }
+            Some(UrlPolicyWatchdogAction::ResetCurrent {
+                session_id: current_page.session_id.clone(),
+                url: url.to_owned(),
+                reason: policy.block_reason(url).to_owned(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn url_policy_watchdog_action_for_target_info(
+    policy: &UrlAccessPolicy,
+    current_page: &AttachedPage,
+    target_info: &Value,
+) -> Option<UrlPolicyWatchdogAction> {
+    if target_info.get("type").and_then(Value::as_str) != Some("page") {
+        return None;
+    }
+
+    let url = target_info.get("url")?.as_str()?;
+    if policy.is_allowed(url) {
+        return None;
+    }
+
+    let target_id = target_info.get("targetId")?.as_str()?;
+    let reason = policy.block_reason(url).to_owned();
+    if target_id == current_page.target_id {
+        Some(UrlPolicyWatchdogAction::ResetCurrent {
+            session_id: current_page.session_id.clone(),
+            url: url.to_owned(),
+            reason,
+        })
+    } else {
+        Some(UrlPolicyWatchdogAction::CloseTarget {
+            target_id: target_id.to_owned(),
+            url: url.to_owned(),
+            reason,
+        })
+    }
+}
+
+async fn apply_url_policy_watchdog_action(
+    connection: &CdpConnection,
+    last_dom_state: &Arc<Mutex<Option<SerializedDomState>>>,
+    pending_url_policy_error: &Arc<Mutex<Option<BrowserError>>>,
+    action: UrlPolicyWatchdogAction,
+) {
+    let (url, reason, outcome) = match &action {
+        UrlPolicyWatchdogAction::ResetCurrent {
+            session_id,
+            url,
+            reason,
+        } => (
+            url.clone(),
+            reason.clone(),
+            connection
+                .command(
+                    "Page.navigate",
+                    json!({ "url": "about:blank" }),
+                    Some(session_id),
+                )
+                .await,
+        ),
+        UrlPolicyWatchdogAction::CloseTarget {
+            target_id,
+            url,
+            reason,
+        } => (
+            url.clone(),
+            reason.clone(),
+            connection
+                .command("Target.closeTarget", json!({ "targetId": target_id }), None)
+                .await,
+        ),
+    };
+
+    if outcome.is_err() {
+        return;
+    }
+
+    *last_dom_state.lock().await = None;
+    let mut pending = pending_url_policy_error.lock().await;
+    if pending.is_none() {
+        *pending = Some(BrowserError::NavigationBlocked { url, reason });
     }
 }
 
@@ -4436,6 +4727,69 @@ mod tests {
         assert!(policy.is_allowed("data:text/html,<title>ok</title>"));
         assert!(policy.is_allowed("blob:https://example.com/id"));
         assert!(policy.is_allowed("https://example.com/page"));
+    }
+
+    #[test]
+    fn url_policy_watchdog_closes_disallowed_new_target_events() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            prohibited_domains: vec!["evil.test".to_owned()],
+            ..BrowserProfile::default()
+        });
+        let current_page = AttachedPage {
+            target_id: "current-target".to_owned(),
+            session_id: "current-session".to_owned(),
+        };
+        let event = CdpEvent {
+            method: "Target.targetCreated".to_owned(),
+            params: json!({
+                "targetInfo": {
+                    "type": "page",
+                    "targetId": "popup-target",
+                    "url": "https://evil.test/popup"
+                }
+            }),
+            session_id: None,
+        };
+
+        assert_eq!(
+            url_policy_watchdog_action_for_event(&policy, &current_page, &event),
+            Some(UrlPolicyWatchdogAction::CloseTarget {
+                target_id: "popup-target".to_owned(),
+                url: "https://evil.test/popup".to_owned(),
+                reason: "in_prohibited_domains".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn url_policy_watchdog_resets_current_page_navigation_events() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            allowed_domains: vec!["safe.test".to_owned()],
+            ..BrowserProfile::default()
+        });
+        let current_page = AttachedPage {
+            target_id: "current-target".to_owned(),
+            session_id: "current-session".to_owned(),
+        };
+        let event = CdpEvent {
+            method: "Page.frameNavigated".to_owned(),
+            params: json!({
+                "frame": {
+                    "id": "frame-1",
+                    "url": "https://blocked.test/redirect"
+                }
+            }),
+            session_id: Some("current-session".to_owned()),
+        };
+
+        assert_eq!(
+            url_policy_watchdog_action_for_event(&policy, &current_page, &event),
+            Some(UrlPolicyWatchdogAction::ResetCurrent {
+                session_id: "current-session".to_owned(),
+                url: "https://blocked.test/redirect".to_owned(),
+                reason: "not_in_allowed_domains".to_owned(),
+            })
+        );
     }
 
     #[test]
@@ -7077,7 +7431,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires Chrome/Chromium installed on the local machine"]
-    async fn cdp_session_closes_disallowed_unsolicited_new_tab() {
+    async fn cdp_session_watchdog_closes_disallowed_unsolicited_new_tab_before_state() {
         let profile = BrowserProfile {
             block_ip_addresses: true,
             browser_start_timeout_ms: 30_000,
@@ -7090,11 +7444,19 @@ mod tests {
             .await
             .expect("create blocked tab");
 
-        sleep(Duration::from_millis(250)).await;
+        sleep(Duration::from_millis(500)).await;
+        let tabs = page_tabs(&session.connection)
+            .await
+            .expect("tabs after watchdog enforcement");
+        assert!(
+            tabs.iter().all(|tab| tab.target_id != blocked_target_id),
+            "blocked tab still open before state/action boundary: {tabs:?}"
+        );
+
         let error = session
             .state(false)
             .await
-            .expect_err("state observation should close the blocked tab");
+            .expect_err("state observation should report watchdog-blocked tab");
 
         assert!(matches!(
             error,
@@ -7102,15 +7464,6 @@ mod tests {
                 if url.starts_with("http://127.0.0.1:1/popup")
                     && reason == "ip_address_blocked"
         ));
-
-        sleep(Duration::from_millis(150)).await;
-        let tabs = page_tabs(&session.connection)
-            .await
-            .expect("tabs after policy enforcement");
-        assert!(
-            tabs.iter().all(|tab| tab.target_id != blocked_target_id),
-            "blocked tab still open: {tabs:?}"
-        );
     }
 
     #[tokio::test]

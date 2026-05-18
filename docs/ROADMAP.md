@@ -44,8 +44,9 @@ Implemented:
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
   resistance, optional IP-address blocking, post-navigation redirect reset to
-  `about:blank`, navigation-capable action-boundary checks, and newly observed
-  disallowed tab closure.
+  `about:blank`, navigation-capable action-boundary checks, newly observed
+  disallowed tab closure, and event-driven target/frame navigation watchdog
+  enforcement while a session is active.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -140,8 +141,8 @@ Implemented:
 
 Next:
 
-1. Continue browser-profile security parity toward an event-driven watchdog
-   when the CDP layer grows background event dispatch.
+1. Expand browser-profile security parity with deeper watchdog diagnostics and
+   more provider-style lifecycle hooks.
 2. Expand agent planning depth, replay coverage, and deeper provider-specific
    structured-output fallbacks for model families that need tool-calling or
    provider-routing hints.
