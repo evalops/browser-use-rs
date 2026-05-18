@@ -68,9 +68,11 @@ The bounded history and `subscribe_lifecycle_events` subscription facade are
 both kept out of normal agent replies unless an integration explicitly reads
 them. The facade exposes `recv`/`try_recv` with typed lag and closed-stream
 errors so downstream integrations do not need to depend on Tokio broadcast
-receiver details. #32 tracks the next adapter layer that maps these diagnostics
-into richer upstream-style event concepts for CLI, MCP, daemon, and other
-subscriber surfaces.
+receiver details. `BrowserLifecycleAdapterEvent` maps those diagnostics into
+upstream-style subscriber concepts such as tab created/closed, agent focus
+changed, navigation started/complete, browser errors, storage state, downloads,
+dialogs, reconnects, and browser diagnostics; its JSON shape is locked by a
+conformance fixture.
 
 ## Profile-Wide Storage Boundary
 
@@ -142,3 +144,6 @@ Upstream bumps must include:
 - `browser_lifecycle_events.json`: public lifecycle event JSON fixture covering
   browser connection, target creation, navigation completion, and URL-policy
   popup failure diagnostics.
+- `browser_lifecycle_adapter_events.json`: public upstream-style lifecycle
+  adapter JSON fixture covering tab, focus, navigation, security diagnostic,
+  browser error, and storage-state mappings.

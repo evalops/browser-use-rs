@@ -29,7 +29,9 @@ includes:
   diagnostics, reconnect, JavaScript dialog, download, and storage-state
   diagnostics plus a `BrowserLifecycleEventSubscription` returned by
   `subscribe_lifecycle_events`, with `recv`/`try_recv` lag and closed-stream
-  handling that does not add the full event stream to normal agent replies.
+  handling, and a `BrowserLifecycleAdapterEventSubscription` that maps the
+  diagnostics into upstream-style adapter categories without adding the full
+  event stream to normal agent replies.
   CDP websocket closure is recorded as a browser-stopped lifecycle diagnostic,
   and unexpected websocket drops trigger bounded actor-level reconnect attempts
   with reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP

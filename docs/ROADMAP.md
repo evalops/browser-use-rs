@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
+- [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
 
 ## Completed Tracks
 
@@ -35,6 +35,7 @@ small pushed checkpoints as each surface becomes real.
 - [#29 Add reconnect recovery and deeper lifecycle watchdog automation](https://github.com/evalops/browser-use-rs/issues/29)
 - [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
 - [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
+- [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
 
 ## Current Checkpoint
 
@@ -100,6 +101,9 @@ Implemented:
   it. `subscribe_lifecycle_events` exposes the lifecycle stream through
   `BrowserLifecycleEventSubscription` without adding it to normal agent replies
   or forcing integrations to handle Tokio broadcast receiver details directly.
+  `BrowserLifecycleAdapterEventSubscription` maps the same diagnostics into
+  upstream-style subscriber categories for tab, focus, navigation, browser
+  error, download, storage-state, dialog, reconnect, and diagnostic events.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -200,7 +204,6 @@ Implemented:
 
 Next:
 
-1. Continue [#32](https://github.com/evalops/browser-use-rs/issues/32) by
-   mapping the typed lifecycle subscription facade into upstream-style adapter
-   concepts for CLI/MCP/daemon consumers.
-2. Expand agent planning depth and replay coverage for longer multi-step tasks.
+1. Continue [#33](https://github.com/evalops/browser-use-rs/issues/33) by
+   expanding agent planning depth and replay coverage for longer multi-step
+   tasks.

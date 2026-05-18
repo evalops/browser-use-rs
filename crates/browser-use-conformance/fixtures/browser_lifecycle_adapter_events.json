@@ -1,0 +1,54 @@
+[
+  {
+    "kind": "browser_connected",
+    "message": "Browser connected at http://127.0.0.1:9222",
+    "source_kind": "browser_connected",
+    "url": "http://127.0.0.1:9222"
+  },
+  {
+    "kind": "tab_created",
+    "message": "Target target-1 created for https://example.test/report",
+    "source_kind": "target_created",
+    "target_id": "target-1",
+    "url": "https://example.test/report"
+  },
+  {
+    "kind": "agent_focus_changed",
+    "message": "Agent focus switched to target target-1",
+    "source_kind": "target_switched",
+    "target_id": "target-1"
+  },
+  {
+    "kind": "navigation_complete",
+    "message": "Navigation completed on target target-1 to https://example.test/report",
+    "source_kind": "navigation_completed",
+    "target_id": "target-1",
+    "url": "https://example.test/report"
+  },
+  {
+    "kind": "browser_diagnostic",
+    "message": "Blocked navigation to https://blocked.test (not_in_allowed_domains); reset current tab to about:blank",
+    "reason": "not_in_allowed_domains",
+    "source_kind": "current_target_reset",
+    "url": "https://blocked.test"
+  },
+  {
+    "error": "No target with given id found",
+    "kind": "browser_error",
+    "message": "Failed to close popup https://blocked.test/popup (in_prohibited_domains): No target with given id found",
+    "reason": "in_prohibited_domains",
+    "source_kind": "popup_close_failed",
+    "url": "https://blocked.test/popup"
+  },
+  {
+    "details": {
+      "cookies_count": "4",
+      "origins_count": "2",
+      "path": "/tmp/storage.json"
+    },
+    "kind": "storage_state",
+    "message": "Storage state saved to /tmp/storage.json (4 cookies, 2 origins)",
+    "reason": "storage_state",
+    "source_kind": "storage_state_saved"
+  }
+]

@@ -396,7 +396,7 @@ mod tests {
     use async_trait::async_trait;
     use browser_use_cdp::{
         BrowserError, BrowserLifecycleEvent, BrowserLifecycleEventKind, BrowserSession,
-        FoundElement, Pdf, Screenshot,
+        FoundElement, Pdf, Screenshot, browser_lifecycle_adapter_events,
     };
     use browser_use_core::{
         ActionExecutor, ActionResult, Agent, AgentRunError, AgentSettings, ChatCompletion,
@@ -608,6 +608,49 @@ mod tests {
         assert_matches_fixture(
             actual,
             include_str!("../fixtures/browser_lifecycle_exception_events.json"),
+        );
+    }
+
+    #[test]
+    fn browser_lifecycle_adapter_events_match_golden_fixture() {
+        let lifecycle_events = vec![
+            BrowserLifecycleEvent::browser_connected("http://127.0.0.1:9222"),
+            BrowserLifecycleEvent::target_created("target-1", "https://example.test/report"),
+            BrowserLifecycleEvent::target_switched("target-1"),
+            BrowserLifecycleEvent::navigation_completed(
+                "target-1",
+                "https://example.test/report",
+            ),
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::CurrentTargetReset,
+                target_id: None,
+                url: Some("https://blocked.test".to_owned()),
+                reason: Some("not_in_allowed_domains".to_owned()),
+                error: None,
+                details: BTreeMap::new(),
+                message:
+                    "Blocked navigation to https://blocked.test (not_in_allowed_domains); reset current tab to about:blank"
+                        .to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::PopupCloseFailed,
+                target_id: None,
+                url: Some("https://blocked.test/popup".to_owned()),
+                reason: Some("in_prohibited_domains".to_owned()),
+                error: Some("No target with given id found".to_owned()),
+                details: BTreeMap::new(),
+                message:
+                    "Failed to close popup https://blocked.test/popup (in_prohibited_domains): No target with given id found"
+                        .to_owned(),
+            },
+            BrowserLifecycleEvent::storage_state_saved("/tmp/storage.json", 4, 2),
+        ];
+        let actual = serde_json::to_value(browser_lifecycle_adapter_events(&lifecycle_events))
+            .expect("serialize lifecycle adapter events");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/browser_lifecycle_adapter_events.json"),
         );
     }
 
