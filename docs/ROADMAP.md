@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#108 Add BrowserProfile chromium_sandbox launch parity](https://github.com/evalops/browser-use-rs/issues/108)
+- Next upstream parity slice after #108 lands and CI is green.
 
 ## Completed Tracks
 
+- [#108 Add BrowserProfile chromium_sandbox launch parity](https://github.com/evalops/browser-use-rs/issues/108)
 - [#107 Add BrowserProfile profile_directory launch parity](https://github.com/evalops/browser-use-rs/issues/107)
 - [#106 Add BrowserProfile user_agent launch flag parity](https://github.com/evalops/browser-use-rs/issues/106)
 - [#105 Add BrowserProfile disable_security and deterministic_rendering launch parity](https://github.com/evalops/browser-use-rs/issues/105)
