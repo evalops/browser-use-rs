@@ -124,7 +124,9 @@ includes:
   screenshot/URL history accessors. Agents can export a serializable
   `AgentCheckpoint` and resume it with a new model/session while preserving
   task settings, history, initial-action execution state, and managed
-  filesystem state.
+  filesystem state. Conformance fixtures include a longer multi-step replay for
+  planning nudges, recovery after a failed browser action, prompt-history
+  limits, stagnant-page loop-awareness, file artifacts, and final `done`.
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output

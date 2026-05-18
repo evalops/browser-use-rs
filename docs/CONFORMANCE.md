@@ -131,6 +131,10 @@ Upstream bumps must include:
   action execution, `done`, and serialized history. Runtime step timing
   metadata is asserted semantically before dynamic timestamps are stripped for
   golden comparison.
+- `long_task_agent_replay.json`: deterministic longer scripted-agent replay
+  fixture covering planning guidance, revised plans after a failed browser
+  action, prompt-history limits, stagnant-page loop-awareness, managed report
+  file write/read/display behavior, and final `done`.
 - `managed_file_system_replay.json`: deterministic managed `FileSystemState`
   replay fixture covering normalized serialized filesystem state, restored
   agent prompt context for `<file_system>` and `<todo_contents>`, restored

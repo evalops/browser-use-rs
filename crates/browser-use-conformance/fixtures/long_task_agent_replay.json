@@ -1,0 +1,51 @@
+{
+  "final_result_checks": {
+    "contains_done_text": true,
+    "displays_report_body": true,
+    "displays_report_heading": true
+  },
+  "history_summary": {
+    "action_names": [
+      [
+        "click"
+      ],
+      [
+        "find_text"
+      ],
+      [
+        "write_file"
+      ],
+      [
+        "read_file"
+      ],
+      [
+        "write_file"
+      ],
+      [
+        "read_file"
+      ],
+      [
+        "done"
+      ]
+    ],
+    "clicked_indices": [
+      1
+    ],
+    "final_file_names": [
+      "report.md",
+      "todo.md"
+    ],
+    "is_done": true,
+    "is_successful": true,
+    "steps": 7
+  },
+  "prompt_checks": {
+    "first_prompt_has_planning_guidance": true,
+    "seventh_prompt_keeps_recent_report_read": true,
+    "seventh_prompt_omits_recovered_find_error": true,
+    "seventh_prompt_preserves_initial_click_result": true,
+    "seventh_prompt_reports_stagnant_page": true,
+    "sixth_prompt_requests_plan_update": true,
+    "third_prompt_requests_recovery_replan": true
+  }
+}

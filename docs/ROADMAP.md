@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
+- [#34 Improve stale-node fallback across iframe target sessions](https://github.com/evalops/browser-use-rs/issues/34)
 
 ## Completed Tracks
 
@@ -36,6 +36,7 @@ small pushed checkpoints as each surface becomes real.
 - [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
 - [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
 - [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
+- [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
 
 ## Current Checkpoint
 
@@ -160,11 +161,12 @@ Implemented:
   paths, environment, lifecycle files, and health-check smokes.
 - Conformance fixtures cover scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`,
-  serialized history, and managed `FileSystemState` replay through restored
-  prompts, todo context, restored `read_file`, extracted-content numbering, and
-  full `AgentCheckpoint` resume with prior history and initial-action state,
-  public browser lifecycle event JSON shape, plus semantic step timing metadata
-  checks.
+  serialized history, longer multi-step planning/recovery replay with
+  prompt-history limits and stagnant-page loop-awareness, and managed
+  `FileSystemState` replay through restored prompts, todo context, restored
+  `read_file`, extracted-content numbering, and full `AgentCheckpoint` resume
+  with prior history and initial-action state, public browser lifecycle event
+  and adapter JSON shapes, plus semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,
@@ -204,6 +206,5 @@ Implemented:
 
 Next:
 
-1. Continue [#33](https://github.com/evalops/browser-use-rs/issues/33) by
-   expanding agent planning depth and replay coverage for longer multi-step
-   tasks.
+1. Continue [#34](https://github.com/evalops/browser-use-rs/issues/34) by
+   extending stale-node fallback lookup across relevant iframe target sessions.

@@ -840,6 +840,211 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_task_agent_replay_matches_golden_fixture() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let clicked = Arc::new(Mutex::new(Vec::new()));
+        let (llm, requests) = ScriptedChatModel::new(vec![
+            json!({
+                "current_state": {
+                    "thinking": "Open the workflow",
+                    "evaluation_previous_goal": "No previous goal",
+                    "memory": "Need to complete a report workflow",
+                    "next_goal": "Click Run"
+                },
+                "current_plan_item": 1,
+                "plan_update": [
+                    "Trigger the workflow",
+                    "Draft the report",
+                    "Review the report",
+                    "Display the report and finish"
+                ],
+                "action": [
+                    {
+                        "click": {
+                            "index": 1
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Check for status text",
+                    "evaluation_previous_goal": "Clicked element 1",
+                    "memory": "Workflow was triggered",
+                    "next_goal": "Find status"
+                },
+                "current_plan_item": 2,
+                "action": [
+                    {
+                        "find_text": {
+                            "text": "Ready"
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Recover from unsupported text lookup by writing the report",
+                    "evaluation_previous_goal": "find_text failed",
+                    "memory": "Use the report artifact to preserve progress",
+                    "next_goal": "Write report"
+                },
+                "current_plan_item": 2,
+                "plan_update": [
+                    "Triggered the workflow",
+                    "Skipped unsupported status lookup",
+                    "Draft the report",
+                    "Review and display the report"
+                ],
+                "action": [
+                    {
+                        "write_file": {
+                            "file_name": "report.md",
+                            "content": "Run clicked",
+                            "append": false,
+                            "trailing_newline": false,
+                            "leading_newline": false
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Read the draft back",
+                    "evaluation_previous_goal": "Wrote report.md",
+                    "memory": "Report draft exists",
+                    "next_goal": "Read report"
+                },
+                "current_plan_item": 3,
+                "action": [
+                    {
+                        "read_file": {
+                            "file_name": "report.md"
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Append review notes",
+                    "evaluation_previous_goal": "Read report.md",
+                    "memory": "Report says Run clicked",
+                    "next_goal": "Append verification"
+                },
+                "current_plan_item": 3,
+                "action": [
+                    {
+                        "write_file": {
+                            "file_name": "report.md",
+                            "content": "Report verified",
+                            "append": true,
+                            "trailing_newline": false,
+                            "leading_newline": true
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Read final report",
+                    "evaluation_previous_goal": "Appended report.md",
+                    "memory": "Report has verification",
+                    "next_goal": "Read final report"
+                },
+                "current_plan_item": 3,
+                "action": [
+                    {
+                        "read_file": {
+                            "file_name": "report.md"
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "Finish with displayed report",
+                    "evaluation_previous_goal": "Read final report",
+                    "memory": "Report is ready",
+                    "next_goal": "Finish"
+                },
+                "current_plan_item": 4,
+                "plan_update": [
+                    "Triggered workflow",
+                    "Drafted report",
+                    "Reviewed report",
+                    "Displayed report"
+                ],
+                "action": [
+                    {
+                        "done": {
+                            "text": "Long task complete",
+                            "success": true,
+                            "files_to_display": ["report.md"]
+                        }
+                    }
+                ]
+            }),
+        ]);
+        let settings = AgentSettings {
+            max_actions_per_step: 1,
+            max_history_items: Some(4),
+            planning_replan_on_stall: 1,
+            planning_exploration_limit: 2,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings_and_file_system(
+            "Complete the long report workflow",
+            settings,
+            llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::clone(&clicked),
+            },
+            file_system,
+        );
+
+        agent.run(7).await.expect("long task run");
+        let history = agent.history();
+        assert!(history.is_done());
+        let prompt_texts = {
+            let requests = requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 7);
+            requests.iter().map(request_text).collect::<Vec<_>>()
+        };
+        let final_result = history.final_result().unwrap_or_default();
+        let actual = json!({
+            "history_summary": {
+                "steps": history.items.len(),
+                "is_done": history.is_done(),
+                "is_successful": history.is_successful(),
+                "action_names": history_action_names(history),
+                "clicked_indices": clicked.lock().expect("clicked lock").clone(),
+                "final_file_names": agent.file_system().list_files()
+            },
+            "prompt_checks": {
+                "first_prompt_has_planning_guidance": prompt_texts[0].contains("When useful, include `current_plan_item` and `plan_update`"),
+                "third_prompt_requests_recovery_replan": prompt_texts[2].contains("Recent steps have failed or stalled"),
+                "sixth_prompt_requests_plan_update": prompt_texts[5].contains("explored for several steps without updating the plan"),
+                "seventh_prompt_reports_stagnant_page": prompt_texts[6].contains("page content has not changed across 6 consecutive observations"),
+                "seventh_prompt_preserves_initial_click_result": prompt_texts[6].contains("Clicked element 1"),
+                "seventh_prompt_omits_recovered_find_error": !prompt_texts[6].contains("fixture session does not support find_text"),
+                "seventh_prompt_keeps_recent_report_read": prompt_texts[6].contains("Report verified")
+            },
+            "final_result_checks": {
+                "contains_done_text": final_result.contains("Long task complete"),
+                "displays_report_heading": final_result.contains("report.md"),
+                "displays_report_body": final_result.contains("Run clicked") && final_result.contains("Report verified")
+            }
+        });
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/long_task_agent_replay.json"),
+        );
+    }
+
+    #[tokio::test]
     async fn managed_file_system_replay_matches_golden_fixture() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");

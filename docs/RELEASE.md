@@ -123,11 +123,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   counts.
 - Scripted agent replay conformance fixtures for schema-guided model output,
   previous-result prompt context, action execution, `done`, serialized
-  history, managed `FileSystemState` replay through restored prompts,
-  `read_file`, todo context, extracted-content numbering, and full
-  `AgentCheckpoint` resume with prior history and initial-action state, plus
-  public browser lifecycle event JSON shape, with semantic checks for dynamic
-  step timing metadata.
+  history, longer multi-step planning/recovery replay with prompt-history
+  limits and stagnant-page loop-awareness, managed `FileSystemState` replay
+  through restored prompts, `read_file`, todo context, extracted-content
+  numbering, and full `AgentCheckpoint` resume with prior history and
+  initial-action state, plus public browser lifecycle event and adapter JSON
+  shapes, with semantic checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
