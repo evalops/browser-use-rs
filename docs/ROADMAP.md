@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active tracked slice is open right now; the next parity slice should be
-filed from the upstream gap scan before implementation starts.
+- [#70 Add upstream-style judge trace validation settings](https://github.com/evalops/browser-use-rs/issues/70)
 
 ## Completed Tracks
 
