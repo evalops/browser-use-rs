@@ -1629,7 +1629,7 @@ fn is_docx_file(file_name: &str) -> bool {
 }
 
 fn merge_pdf_append_content(existing: &str, new_content: &str) -> String {
-    let existing = existing.trim_end_matches(|char| matches!(char, '\n' | '\r' | '\u{c}'));
+    let existing = existing.trim_end_matches(['\n', '\r', '\u{c}']);
     merge_document_append_content(existing, new_content)
 }
 
