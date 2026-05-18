@@ -168,9 +168,10 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   page-change diagnostics, current-state `AgentHistoryReplayRun` orchestration,
   serialized replay-run and replay-recapture conformance coverage, and
   screenshot/URL accessors.
-  `AgentCheckpoint` export/resume preserves task
-  settings, history, initial-action execution state, and managed filesystem
-  state across a new model/session.
+  `AgentCheckpoint` export/resume preserves task settings, history,
+  initial-action execution state, pause/stop state, and managed filesystem
+  state across a new model/session. Agents expose pause/resume control that
+  returns an explicit paused error before model or browser work until resumed.
 - Schema-guided agent extraction passes the requested schema to the extraction
   LLM, returns upstream-style `<structured_result>` content, and records
   structured metadata with schema, partial status, and content statistics.

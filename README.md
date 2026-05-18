@@ -129,7 +129,8 @@ includes:
   step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,
-  reasoned programmatic stop errors, page-change guards, normalized
+  reasoned programmatic stop errors, pause/resume control state with checkpoint
+  preservation, page-change guards, normalized
   repeated-action loop detection,
   loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
@@ -158,15 +159,15 @@ includes:
   action-history interacted-element metadata, and screenshot/URL history
   accessors. Agents can export a serializable
   `AgentCheckpoint` and resume it with a new model/session while preserving
-  task settings, history, initial-action execution state, and managed
-  filesystem state. Conformance fixtures include a longer multi-step replay for
-  planning nudges, recovery after a failed browser action, prompt-history
-  limits, stagnant-page loop-awareness, interacted-element rematching,
-  action-level replay remapping diagnostics, rematched replay-plan construction,
-  generic and browser-guarded replay execution diagnostics, current-state
-  `AgentHistoryReplayRun` orchestration with DOM recapture between replay
-  actions, replay-run and replay-recapture JSON conformance fixtures,
-  replay-run JSON Schema snapshot, file artifacts, and final `done`.
+  task settings, history, initial-action execution state, pause/stop state, and
+  managed filesystem state. Conformance fixtures include a longer multi-step
+  replay for planning nudges, recovery after a failed browser action,
+  prompt-history limits, stagnant-page loop-awareness, interacted-element
+  rematching, action-level replay remapping diagnostics, rematched replay-plan
+  construction, generic and browser-guarded replay execution diagnostics,
+  current-state `AgentHistoryReplayRun` orchestration with DOM recapture
+  between replay actions, replay-run and replay-recapture JSON conformance
+  fixtures, replay-run JSON Schema snapshot, file artifacts, and final `done`.
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output
