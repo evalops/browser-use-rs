@@ -37,6 +37,10 @@ browser-use-rs agent <url> <task> --provider gemini \
   [--base-url https://generativelanguage.googleapis.com/v1beta] [--max-steps 10]
 browser-use-rs agent <url> <task> --provider ollama \
   [--model <model>] [--base-url http://localhost:11434] [--max-steps 10]
+browser-use-rs agent <url> <task> \
+  --provider deepseek|groq|cerebras|mistral|openrouter|vercel \
+  [--api-key <key>] [--model <model>] [--base-url <openai-compatible-url>] \
+  [--max-steps 10]
 browser-use-rs session start <id> <url> [--screenshot]
 browser-use-rs session state <id> [--screenshot]
 browser-use-rs session actions <id> <actions.json> [--screenshot]
@@ -77,9 +81,16 @@ Agent runs use the same one-shot browser lifecycle and print typed
 `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS`. `--provider gemini` reads
 `GEMINI_API_KEY`, `GEMINI_MODEL`, and optional `GEMINI_BASE_URL`.
 `--provider ollama` reads `OLLAMA_MODEL` and optional `OLLAMA_BASE_URL` or
-`OLLAMA_HOST`; it does not require an API key. CLI `--api-key`, `--model`, and
-`--base-url` override the provider-specific environment values where they
-apply.
+`OLLAMA_HOST`; it does not require an API key. The OpenAI-compatible upstream
+provider aliases read `DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`, `GROQ_API_KEY`/
+`GROQ_MODEL`, `CEREBRAS_API_KEY`/`CEREBRAS_MODEL`, `MISTRAL_API_KEY`/
+`MISTRAL_MODEL`, `OPENROUTER_API_KEY`/`OPENROUTER_MODEL`, or
+`AI_GATEWAY_API_KEY`/`AI_GATEWAY_MODEL` for Vercel AI Gateway. Vercel also
+accepts `VERCEL_OIDC_TOKEN` and `VERCEL_MODEL`. Each alias has an optional
+matching `*_BASE_URL` override. DeepSeek, Cerebras, and Mistral use their
+upstream default model names when `--model` is omitted. CLI `--api-key`,
+`--model`, and `--base-url` override the provider-specific environment values
+where they apply.
 
 Agent runs accept repeated `--allowed-domain <pattern>` and
 `--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce
@@ -155,8 +166,10 @@ templates live under `packaging/`; see
   mask/autocomplete/date-format hints, plus JavaScript click/pointer
   listener-backed control detection when Chrome exposes command-line inspection
   APIs. Full browser-use DOM/AX snapshot parity is still tracked separately.
-- Agent runs currently support OpenAI-compatible Chat Completions, Anthropic
-  Messages, Gemini GenerateContent, and Ollama Chat structured-output adapters.
+- Agent runs currently support OpenAI-compatible Chat Completions plus
+  DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
+  Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output
+  adapters.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.

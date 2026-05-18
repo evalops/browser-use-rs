@@ -78,7 +78,8 @@ Implemented:
   results, per-step error slots, model-output/action/thought accessors,
   truncated action-history helpers, duration helpers, and screenshot/URL
   helpers.
-- OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
+- OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
+  OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
 - One-shot CLI agent command backed by explicit provider selection and typed
@@ -116,5 +117,5 @@ Next:
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Continue browser-profile security parity toward an event-driven watchdog
    when the CDP layer grows background event dispatch.
-3. Expand agent planning depth, replay coverage, and provider parity beyond
-   OpenAI-compatible, Anthropic, Gemini, and Ollama.
+3. Expand agent planning depth, replay coverage, and provider-specific
+   structured-output fallbacks for non-OpenAI-wire providers.

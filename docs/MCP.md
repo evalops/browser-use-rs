@@ -37,9 +37,16 @@ Current tool contracts:
 Provider secrets are intentionally not part of MCP tool input schemas. A server
 implementation reads provider credentials from its process environment or host
 configuration. `browser_use_agent` accepts an optional `provider` input:
-`openai-compatible` (default), `anthropic`, `gemini`, or `ollama`.
+`openai-compatible` (default), `deepseek`, `groq`, `cerebras`, `mistral`,
+`openrouter`, `vercel`, `anthropic`, `gemini`, or `ollama`.
 OpenAI-compatible runs require `OPENAI_API_KEY` plus a tool `model` argument or
-`OPENAI_MODEL`; `OPENAI_BASE_URL` is optional. Anthropic runs require
+`OPENAI_MODEL`; `OPENAI_BASE_URL` is optional. DeepSeek, Groq, Cerebras,
+Mistral, OpenRouter, and Vercel AI Gateway use the same Chat Completions wire
+contract with provider-specific environment values: `DEEPSEEK_*`, `GROQ_*`,
+`CEREBRAS_*`, `MISTRAL_*`, `OPENROUTER_*`, or `AI_GATEWAY_*` for API key,
+model, and optional base URL. Vercel also accepts `VERCEL_OIDC_TOKEN` and
+`VERCEL_MODEL`; DeepSeek, Cerebras, and Mistral use their upstream default
+models when a tool `model` argument is omitted. Anthropic runs require
 `ANTHROPIC_API_KEY` plus a tool `model` argument or `ANTHROPIC_MODEL`;
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are
 optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or

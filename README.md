@@ -67,8 +67,9 @@ includes:
   action-result success validation, judgement results, step-error,
   model-output/action/thought, duration, action, truncated action-history, and
   screenshot/URL history accessors.
-- OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
-  GenerateContent, and Ollama Chat providers.
+- OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
+  OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
+  and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
   bearer/header auth, supervisor pid/ready files, packaged systemd/launchd
   templates, persistent session registry, typed MCP/CLI agent settings

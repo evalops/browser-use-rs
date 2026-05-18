@@ -74,7 +74,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Scripted agent replay conformance fixture for schema-guided model output,
   previous-result prompt context, action execution, `done`, and serialized
   history, with semantic checks for dynamic step timing metadata.
-- OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
+- OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
+  OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests.
 - CLI one-shot commands plus `actions`, `agent` with typed settings flags
   including available-file-path and sensitive-data placeholder context plus
@@ -110,8 +111,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - The packaged daemon service files are local user-service templates; distro
   packages, Homebrew formulas, and installer-managed secret stores are not
   implemented.
-- Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
-  Gemini GenerateContent, and Ollama Chat is not implemented.
+- Provider-specific structured-output fallbacks beyond OpenAI-compatible Chat
+  Completions, Anthropic Messages, Gemini GenerateContent, and Ollama Chat are
+  still partial.
 - Rich filesystem state and sandboxing are still lighter than upstream's
   `FileSystem` service.
 - Package publishing is limited to the GitHub release artifact.
