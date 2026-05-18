@@ -31,6 +31,30 @@ browser-use where compatibility is claimed.
    expands.
 6. CLI/MCP: persistent session lifecycle, JSON output stability, and error
    shapes.
+7. Browser/profile lifecycle: public lifecycle event JSON shape, bounded event
+   buffers, and security-watchdog diagnostics for target/page transitions.
+
+## Browser/Profile Lifecycle Audit
+
+The frozen upstream target exposes a broad browser event bus with
+`BrowserStartEvent`, `BrowserStopEvent`, `BrowserConnectedEvent`,
+`BrowserStoppedEvent`, `TabCreatedEvent`, `TabClosedEvent`,
+`AgentFocusChangedEvent`, `TargetCrashedEvent`, `NavigationStartedEvent`,
+`NavigationCompleteEvent`, `BrowserErrorEvent`, reconnection events, storage
+state events, download events, and JavaScript dialog handling through watchdogs.
+
+The Rust port currently exposes bounded `BrowserLifecycleEvent` diagnostics for
+browser connect/close requests, target create/switch/close, navigation
+start/complete, URL-policy navigation blocks, current-tab resets, popup closes,
+and popup close/reset failures. These lifecycle events are available through the
+CDP session API and are intentionally kept out of normal agent replies; prompt
+state still only includes security-relevant recent events and closed-popup
+messages.
+
+Remaining lifecycle gaps: upstream-style browser reconnection events,
+target-crash and network-timeout watchdogs, JavaScript dialog automation,
+download progress/completion events, storage-state save/load events, and a full
+general-purpose event bus are not yet implemented.
 
 ## Drift Policy
 
@@ -82,3 +106,6 @@ Upstream bumps must include:
   serialized initial actions, prior history/action results, resumed
   `<file_system>` and `<todo_contents>` prompt context, restored read-state
   replay, and extracted-content numbering after checkpoint resume.
+- `browser_lifecycle_events.json`: public lifecycle event JSON fixture covering
+  browser connection, target creation, navigation completion, and URL-policy
+  popup failure diagnostics.

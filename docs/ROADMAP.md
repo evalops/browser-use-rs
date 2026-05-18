@@ -77,7 +77,11 @@ Implemented:
   `about:blank`, blocked-navigation preflight diagnostics,
   navigation-capable action-boundary checks, newly observed disallowed tab
   closure, and event-driven target/frame navigation watchdog enforcement with
-  bounded success and failure diagnostics while a session is active.
+  bounded success and failure diagnostics while a session is active. CDP
+  sessions expose bounded `BrowserLifecycleEvent` diagnostics for browser
+  connect/close, target create/switch/close, navigation start/complete, and
+  URL-policy block/reset/popup outcomes without placing the full lifecycle
+  stream into normal agent replies.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -137,7 +141,8 @@ Implemented:
   serialized history, and managed `FileSystemState` replay through restored
   prompts, todo context, restored `read_file`, extracted-content numbering, and
   full `AgentCheckpoint` resume with prior history and initial-action state,
-  plus semantic step timing metadata checks.
+  public browser lifecycle event JSON shape, plus semantic step timing metadata
+  checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,
@@ -177,6 +182,7 @@ Implemented:
 
 Next:
 
-1. Implement the active browser-profile lifecycle event hook track with bounded
-   target/page transition diagnostics.
+1. Continue the active browser-profile lifecycle track with the remaining
+   upstream gaps: reconnection, target-crash/network-timeout, dialog, download,
+   and storage-state event hooks.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

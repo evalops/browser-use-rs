@@ -16,7 +16,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   checks, blocked-navigation preflight diagnostics, navigation-capable
   action-boundary checks, newly observed tab closure for disallowed URLs, and
   event-driven target/frame navigation watchdog enforcement while a session is
-  active.
+  active. CDP sessions expose bounded `BrowserLifecycleEvent` diagnostics for
+  browser connect/close, target create/switch/close, navigation start/complete,
+  and URL-policy block/reset/popup outcomes.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -107,8 +109,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   previous-result prompt context, action execution, `done`, serialized
   history, managed `FileSystemState` replay through restored prompts,
   `read_file`, todo context, extracted-content numbering, and full
-  `AgentCheckpoint` resume with prior history and initial-action state, with
-  semantic checks for dynamic step timing metadata.
+  `AgentCheckpoint` resume with prior history and initial-action state, plus
+  public browser lifecycle event JSON shape, with semantic checks for dynamic
+  step timing metadata.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
@@ -137,10 +140,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 
 - Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
   sessions; stale-node fallback still searches the current main-frame DOM.
-- Browser profile URL access policies now include blocked-navigation
-  preflight diagnostics plus a CDP event watchdog for active sessions with
-  bounded recent-event, closed-popup, and enforcement failure diagnostics, but
-  lifecycle hooks are still lighter than upstream's full browser event bus.
+- Browser profile lifecycle support now exposes bounded public lifecycle
+  diagnostics for core browser/target/navigation/security transitions. It is
+  still lighter than upstream's full browser event bus: reconnection events,
+  target-crash/network-timeout watchdogs, JavaScript dialog handling, download
+  events, and storage-state lifecycle events are not yet exposed with the same
+  breadth.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.
@@ -157,7 +162,5 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Managed filesystem and agent checkpoint replay now cover serialized restore
   into a new agent, restored prompt context, restored `read_file`, todo
   context, extracted-content numbering, prior history, and initial-action
-  execution state. Remaining lifecycle gaps are outside the checkpoint surface:
-  upstream's browser/profile event-bus hooks are still broader than the Rust
-  watchdog/session lifecycle.
+  execution state.
 - Package publishing is limited to the GitHub release artifact.
