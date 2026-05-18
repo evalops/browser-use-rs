@@ -1753,6 +1753,10 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
 }
 
 fn read_document_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    if is_pdf_file(file_name) {
+        return read_pdf_file_action(file_name);
+    }
+
     let content = match read_document_file_content(file_name) {
         Ok(content) => content,
         Err(error) => {
@@ -1782,10 +1786,200 @@ fn read_document_file_action(file_name: &str) -> Result<ActionResult, BrowserErr
 
 fn read_document_file_content(file_name: &str) -> Result<String, String> {
     match file_extension(file_name).as_deref() {
-        Some("pdf") => pdf_extract::extract_text(file_name).map_err(|error| error.to_string()),
         Some("docx") => read_docx_text(file_name),
         _ => Err("unsupported document extension".to_owned()),
     }
+}
+
+fn read_pdf_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    let pages = match pdf_extract::extract_text_by_pages(file_name) {
+        Ok(pages) => pdf_pages_or_empty_page(pages),
+        Err(error) => {
+            return Ok(ActionResult::error(format!(
+                "Error: Could not read file '{file_name}'. {error}"
+            )));
+        }
+    };
+    let envelope = render_pdf_read_envelope(file_name, &pages);
+    let memory = read_file_memory(&pages.join("\n"));
+
+    Ok(ActionResult {
+        extracted_content: Some(envelope),
+        error: None,
+        judgement: None,
+        long_term_memory: Some(memory),
+        include_extracted_content_only_once: true,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+        attachments: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
+    })
+}
+
+fn pdf_pages_or_empty_page(pages: Vec<String>) -> Vec<String> {
+    if pages.is_empty() {
+        vec![String::new()]
+    } else {
+        pages
+    }
+}
+
+const PDF_READ_MAX_CHARS: usize = 60_000;
+
+fn render_pdf_read_envelope(file_name: &str, pages: &[String]) -> String {
+    let total_pages = pages.len();
+    let total_chars: usize = pages.iter().map(|page| page.chars().count()).sum();
+    if total_chars <= PDF_READ_MAX_CHARS {
+        let content = render_pdf_page_markers(
+            pages
+                .iter()
+                .enumerate()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .map(|(index, text)| (index + 1, text.as_str())),
+        );
+        return format!(
+            "Read from file {file_name} ({total_pages} pages, {} chars).\n<content>\n{content}\n</content>",
+            format_usize_with_commas(total_chars)
+        );
+    }
+
+    let mut content_parts = Vec::new();
+    let mut pages_included = BTreeSet::new();
+    let mut chars_used = 0usize;
+    for page_number in pdf_priority_pages(pages) {
+        let text = &pages[page_number - 1];
+        if text.trim().is_empty() {
+            continue;
+        }
+
+        let header = format!("--- Page {page_number} ---\n");
+        let truncation_suffix = "\n[...truncated]";
+        let remaining = PDF_READ_MAX_CHARS.saturating_sub(chars_used);
+        let min_useful = header.chars().count() + truncation_suffix.chars().count() + 50;
+        if remaining < min_useful {
+            break;
+        }
+
+        let mut page_content = format!("{header}{text}");
+        if page_content.chars().count() > remaining {
+            let kept_chars = remaining.saturating_sub(truncation_suffix.chars().count());
+            page_content = format!(
+                "{}{truncation_suffix}",
+                page_content.chars().take(kept_chars).collect::<String>()
+            );
+        }
+        chars_used += page_content.chars().count();
+        pages_included.insert(page_number);
+        content_parts.push((page_number, page_content));
+        if chars_used >= PDF_READ_MAX_CHARS {
+            break;
+        }
+    }
+
+    content_parts.sort_by_key(|(page_number, _)| *page_number);
+    let mut content = content_parts
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if pages_included.len() < total_pages {
+        let skipped = (1..=total_pages)
+            .filter(|page_number| !pages_included.contains(page_number))
+            .collect::<Vec<_>>();
+        let skipped_preview = skipped
+            .iter()
+            .take(10)
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ellipsis = if skipped.len() > 10 { "..." } else { "" };
+        content.push_str(&format!(
+            "\n\n[Showing {} of {total_pages} pages. Skipped pages: [{skipped_preview}]{ellipsis}. Use extract with start_from_char to read further into the file.]",
+            pages_included.len()
+        ));
+    }
+
+    format!(
+        "Read from file {file_name} ({total_pages} pages, {} chars total).\n<content>\n{content}\n</content>",
+        format_usize_with_commas(total_chars)
+    )
+}
+
+fn render_pdf_page_markers<'a>(pages: impl Iterator<Item = (usize, &'a str)>) -> String {
+    pages
+        .map(|(page_number, text)| format!("--- Page {page_number} ---\n{text}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn pdf_priority_pages(pages: &[String]) -> Vec<usize> {
+    let word_pattern = regex::Regex::new(r"\b[a-zA-Z]{4,}\b").expect("valid word regex");
+    let total_pages = pages.len();
+    let mut page_words = BTreeMap::<usize, BTreeSet<String>>::new();
+    let mut word_to_pages = BTreeMap::<String, BTreeSet<usize>>::new();
+
+    for (index, text) in pages.iter().enumerate() {
+        let page_number = index + 1;
+        let words = word_pattern
+            .find_iter(text)
+            .map(|word| word.as_str().to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
+        for word in &words {
+            word_to_pages
+                .entry(word.clone())
+                .or_default()
+                .insert(page_number);
+        }
+        page_words.insert(page_number, words);
+    }
+
+    let mut scored_pages = page_words
+        .iter()
+        .map(|(page_number, words)| {
+            let score = words
+                .iter()
+                .filter_map(|word| word_to_pages.get(word))
+                .map(|pages_with_word| (total_pages as f64 / pages_with_word.len() as f64).ln())
+                .sum::<f64>();
+            (*page_number, score)
+        })
+        .collect::<Vec<_>>();
+    scored_pages.sort_by(|(left_page, left_score), (right_page, right_score)| {
+        right_score
+            .partial_cmp(left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left_page.cmp(right_page))
+    });
+
+    let mut priority_pages = Vec::new();
+    if total_pages > 0 {
+        priority_pages.push(1);
+    }
+    for (page_number, _) in scored_pages {
+        if !priority_pages.contains(&page_number) {
+            priority_pages.push(page_number);
+        }
+    }
+    for page_number in 1..=total_pages {
+        if !priority_pages.contains(&page_number) {
+            priority_pages.push(page_number);
+        }
+    }
+    priority_pages
+}
+
+fn format_usize_with_commas(value: usize) -> String {
+    let text = value.to_string();
+    let mut formatted = String::with_capacity(text.len() + text.len() / 3);
+    for (index, character) in text.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(character);
+    }
+    formatted.chars().rev().collect()
 }
 
 fn write_pdf_text(path: &std::path::Path, content: &str) -> Result<(), String> {
@@ -5609,7 +5803,8 @@ mod tests {
 
         assert_eq!(result.error, None);
         let content = result.extracted_content.as_deref().expect("pdf content");
-        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains(&format!("Read from file {file_name} (1 pages,")));
+        assert!(content.contains("<content>\n--- Page 1 ---"));
         assert!(content.contains("Hello PDF EvalOps"));
         assert!(
             result
@@ -5664,7 +5859,8 @@ mod tests {
         assert!(extracted.contains("Beta (Gamma)"));
         assert!(extracted.contains(r"Second \ line"));
         let content = read_result.extracted_content.as_deref().expect("pdf read");
-        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains(&format!("Read from file {file_name} (1 pages,")));
+        assert!(content.contains("--- Page 1 ---"));
         assert!(content.contains("Report"));
         assert!(content.contains("Beta (Gamma)"));
         assert!(content.contains(r"Second \ line"));
@@ -5681,6 +5877,48 @@ mod tests {
 
         assert!(bytes.starts_with(b"%PDF-1.4"));
         assert!(pdf.matches("/Type /Page /Parent").count() > 1);
+    }
+
+    #[test]
+    fn pdf_read_envelope_marks_pages_for_small_documents() {
+        let pages = vec![
+            "Cover text".to_owned(),
+            String::new(),
+            "Appendix text".to_owned(),
+        ];
+        let envelope = render_pdf_read_envelope("report.pdf", &pages);
+
+        assert!(envelope.contains("Read from file report.pdf (3 pages, 23 chars)."));
+        assert!(envelope.contains("--- Page 1 ---\nCover text"));
+        assert!(!envelope.contains("--- Page 2 ---"));
+        assert!(envelope.contains("--- Page 3 ---\nAppendix text"));
+    }
+
+    #[test]
+    fn pdf_read_envelope_prioritizes_and_truncates_large_documents() {
+        let pages = (1..=20)
+            .map(|page_number| {
+                let distinctive = if page_number == 17 {
+                    "needleword uniqueword "
+                } else {
+                    ""
+                };
+                format!(
+                    "Page {page_number} {distinctive}{}",
+                    "commonword ".repeat(700)
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let envelope = render_pdf_read_envelope("large.pdf", &pages);
+
+        assert!(envelope.contains("Read from file large.pdf (20 pages,"));
+        assert!(envelope.contains("chars total)."));
+        assert!(envelope.contains("--- Page 1 ---"));
+        assert!(envelope.contains("--- Page 17 ---"));
+        assert!(envelope.contains("[Showing "));
+        assert!(envelope.contains("Skipped pages: ["));
+        assert!(envelope.chars().count() < PDF_READ_MAX_CHARS + 500);
     }
 
     fn minimal_pdf(text: &str) -> Vec<u8> {
