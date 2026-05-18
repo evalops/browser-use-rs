@@ -509,6 +509,8 @@ pub struct AgentHistoryReplayStop {
     pub step_index: usize,
     pub action_index: usize,
     pub reason: AgentHistoryReplayStopReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -517,6 +519,7 @@ pub enum AgentHistoryReplayStopReason {
     DoneAfterPriorAction,
     Done,
     Error,
+    PageChanged,
     TerminatingAction,
 }
 
@@ -936,6 +939,101 @@ where
         }
 
         results
+    }
+
+    pub async fn execute_replay_plan(
+        &mut self,
+        plan: &AgentHistoryReplayPlan,
+    ) -> AgentHistoryReplayExecution {
+        let mut items = Vec::new();
+        let mut stop = None;
+
+        for (plan_index, item) in plan.actions.iter().enumerate() {
+            let action = &item.remapped_action;
+            if plan_index > 0 && matches!(action, BrowserAction::Done(_)) {
+                stop = Some(AgentHistoryReplayStop {
+                    step_index: item.step_index,
+                    action_index: item.action_index,
+                    reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+                    diagnostic: None,
+                });
+                break;
+            }
+
+            let needs_page_change_guard = !action.terminates_sequence();
+            let before = if needs_page_change_guard {
+                match self.session.state(false).await {
+                    Ok(state) => Some(state),
+                    Err(error) => {
+                        let result = ActionResult::error(error.to_string());
+                        stop = Some(AgentHistoryReplayStop {
+                            step_index: item.step_index,
+                            action_index: item.action_index,
+                            reason: AgentHistoryReplayStopReason::Error,
+                            diagnostic: result.error.clone(),
+                        });
+                        items.push(AgentHistoryReplayExecutionItem {
+                            step_index: item.step_index,
+                            action_index: item.action_index,
+                            original_action: item.original_action.clone(),
+                            executed_action: action.clone(),
+                            rematch: item.rematch.clone(),
+                            result,
+                        });
+                        break;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let result = self.execute(action).await;
+            let mut stop_reason = replay_stop_reason(action, &result);
+            let mut stop_diagnostic = result.error.clone();
+            let mut page_changed = false;
+            if stop_reason.is_none() {
+                if let Some(before) = before {
+                    match self.session.state(false).await {
+                        Ok(after) => page_changed = after.url != before.url,
+                        Err(error) => {
+                            stop_reason = Some(AgentHistoryReplayStopReason::Error);
+                            stop_diagnostic = Some(error.to_string());
+                        }
+                    }
+                }
+            }
+
+            items.push(AgentHistoryReplayExecutionItem {
+                step_index: item.step_index,
+                action_index: item.action_index,
+                original_action: item.original_action.clone(),
+                executed_action: action.clone(),
+                rematch: item.rematch.clone(),
+                result,
+            });
+
+            if let Some(reason) = stop_reason {
+                stop = Some(AgentHistoryReplayStop {
+                    step_index: item.step_index,
+                    action_index: item.action_index,
+                    reason,
+                    diagnostic: stop_diagnostic,
+                });
+                break;
+            }
+
+            if page_changed {
+                stop = Some(AgentHistoryReplayStop {
+                    step_index: item.step_index,
+                    action_index: item.action_index,
+                    reason: AgentHistoryReplayStopReason::PageChanged,
+                    diagnostic: None,
+                });
+                break;
+            }
+        }
+
+        AgentHistoryReplayExecution { items, stop }
     }
 }
 
@@ -5244,12 +5342,14 @@ where
                 step_index: item.step_index,
                 action_index: item.action_index,
                 reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+                diagnostic: None,
             });
             break;
         }
 
         let result = executor.execute(action).await;
         let stop_reason = replay_stop_reason(action, &result);
+        let stop_diagnostic = result.error.clone();
         items.push(AgentHistoryReplayExecutionItem {
             step_index: item.step_index,
             action_index: item.action_index,
@@ -5264,6 +5364,7 @@ where
                 step_index: item.step_index,
                 action_index: item.action_index,
                 reason,
+                diagnostic: stop_diagnostic,
             });
             break;
         }
@@ -6588,6 +6689,7 @@ mod tests {
                 step_index: 4,
                 action_index: 2,
                 reason: AgentHistoryReplayStopReason::Error,
+                diagnostic: Some("click failed".to_owned()),
             })
         );
         assert_eq!(
@@ -6628,6 +6730,7 @@ mod tests {
                 step_index: 0,
                 action_index: 0,
                 reason: AgentHistoryReplayStopReason::TerminatingAction,
+                diagnostic: None,
             })
         );
     }
@@ -6656,6 +6759,7 @@ mod tests {
                 step_index: 9,
                 action_index: 0,
                 reason: AgentHistoryReplayStopReason::Done,
+                diagnostic: None,
             })
         );
 
@@ -6681,6 +6785,7 @@ mod tests {
                 step_index: 9,
                 action_index: 1,
                 reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+                diagnostic: None,
             })
         );
     }
@@ -7037,6 +7142,132 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(executor.session().events(), vec!["click:1"]);
+    }
+
+    #[tokio::test]
+    async fn browser_replay_execution_stops_when_url_changes() {
+        let mut first_state = blank_state();
+        first_state.url = "https://example.com/one".to_owned();
+        let mut second_state = blank_state();
+        second_state.url = "https://example.com/two".to_owned();
+        let session = MockSession::with_states(vec![first_state, second_state]);
+        let mut executor = BrowserActionExecutor::new(session);
+        let original_click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let remapped_click = BrowserAction::Click(ClickElementAction {
+            index: Some(7),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let input = BrowserAction::Input(InputTextAction {
+            index: 2,
+            text: "should not type".to_owned(),
+            clear: true,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(3, 0, original_click, remapped_click.clone()),
+                replay_plan_item(3, 1, input.clone(), input),
+            ],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert_eq!(executor.session().events(), vec!["click:7"]);
+        assert_eq!(
+            executor.session().state_screenshot_requests(),
+            vec![false, false]
+        );
+        assert_eq!(execution.items.len(), 1);
+        assert_eq!(execution.items[0].executed_action, remapped_click);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 3,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::PageChanged,
+                diagnostic: None,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_execution_reports_pre_state_failure_without_action() {
+        let session = MockSession::with_state_error("state unavailable");
+        let mut executor = BrowserActionExecutor::new(session);
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![replay_plan_item(5, 0, click.clone(), click)],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert!(executor.session().events().is_empty());
+        assert_eq!(executor.session().state_screenshot_requests(), vec![false]);
+        assert_eq!(execution.items.len(), 1);
+        assert!(
+            execution.items[0]
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("state unavailable"))
+        );
+        let stop = execution.stop.expect("state failure stop");
+        assert_eq!(stop.step_index, 5);
+        assert_eq!(stop.action_index, 0);
+        assert_eq!(stop.reason, AgentHistoryReplayStopReason::Error);
+        assert!(
+            stop.diagnostic
+                .as_deref()
+                .is_some_and(|error| error.contains("state unavailable"))
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_execution_skips_pre_state_for_terminating_actions() {
+        let session = MockSession::with_state_error("state unavailable");
+        let mut executor = BrowserActionExecutor::new(session);
+        let navigate = BrowserAction::Navigate(NavigateAction {
+            url: "https://example.com".to_owned(),
+            new_tab: false,
+        });
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(6, 0, navigate.clone(), navigate.clone()),
+                replay_plan_item(6, 1, click.clone(), click),
+            ],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert_eq!(
+            executor.session().events(),
+            vec!["navigate:https://example.com:false"]
+        );
+        assert!(executor.session().state_screenshot_requests().is_empty());
+        assert_eq!(execution.items.len(), 1);
+        assert_eq!(execution.items[0].executed_action, navigate);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 6,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::TerminatingAction,
+                diagnostic: None,
+            })
+        );
     }
 
     #[tokio::test]
