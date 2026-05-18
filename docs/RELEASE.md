@@ -74,7 +74,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   extension rejection, DOCX text extraction, PNG/JPEG image-file reads with
   one-shot image prompt parts, PDF capture, extraction, page search, element
   lookup across Chrome OOPIF iframe targets, cached observed-node
-  click/input/scroll/dropdown/upload resolution, and done.
+  click/input/scroll/dropdown/upload resolution, target-aware stale-node
+  fallback for cached iframe actions, and done.
 - `screenshot` requests screenshot inclusion in the next observation by default
   and writes a local `.png` file with an attachment path when `file_name` is
   supplied.
@@ -155,8 +156,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 
 ## Known Gaps
 
-- Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
-  sessions; stale-node fallback still searches the current main-frame DOM.
 - Browser profile lifecycle support now exposes bounded public lifecycle
   diagnostics for core browser/target/navigation/security transitions and
   stable event shapes for reconnect, target-crash/network-timeout, JavaScript

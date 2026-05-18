@@ -23,8 +23,9 @@ includes:
   navigation-capable actions, redirects, and newly observed tabs, and page
   state with browser-use-style short tab ids,
   including cached observed-node click/input/scroll/dropdown/upload resolution
-  when available. CDP sessions expose a bounded public lifecycle event history
-  for browser connect/close, target create/switch/close, navigation
+  and target-aware stale-node fallback for cached iframe actions when
+  available. CDP sessions expose a bounded public lifecycle event history for
+  browser connect/close, target create/switch/close, navigation
   start/complete/failure/timeout, target crash, URL-policy reset/popup
   diagnostics, reconnect, JavaScript dialog, download, and storage-state
   diagnostics plus a `BrowserLifecycleEventSubscription` returned by
@@ -86,7 +87,7 @@ includes:
   upstream-aligned binary/image extension rejection,
   `screenshot` with optional PNG file save, `save_as_pdf` with filename
   normalization, `extract`, `search_page`, `find_elements` including
-  Chrome OOPIF iframe targets, back
+  target-aware stale-node action fallback for Chrome OOPIF iframe targets, back
   navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
   `done` with requested text-file display attachments.
 - Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,

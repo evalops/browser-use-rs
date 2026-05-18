@@ -2518,6 +2518,12 @@ struct AttachedFramePage {
     offset: FrameOffset,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedDomElementRef {
+    element: DomElementRef,
+    target_local_index: u32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct UrlAccessPolicy {
     allowed_domains: Vec<String>,
@@ -2973,14 +2979,17 @@ impl CdpBrowserSession {
         BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
     }
 
-    async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
-        self.last_dom_state
-            .lock()
-            .await
-            .as_ref()?
-            .selector_map
-            .get(&index)
-            .cloned()
+    async fn cached_element(&self, index: u32) -> Option<CachedDomElementRef> {
+        let state = self.last_dom_state.lock().await;
+        let state = state.as_ref()?;
+        let element = state.selector_map.get(&index)?.clone();
+        let target_local_index =
+            target_local_index_for_global_index(&state.selector_map, index, &element.target_id);
+
+        Some(CachedDomElementRef {
+            element,
+            target_local_index,
+        })
     }
 
     async fn evaluate_json(&self, expression: &str) -> Result<Value, BrowserError> {
@@ -3051,6 +3060,19 @@ impl CdpBrowserSession {
         }
 
         attach_to_target(&self.connection, element.target_id.clone()).await
+    }
+
+    async fn page_for_index_fallback(
+        &self,
+        cached_element: Option<&CachedDomElementRef>,
+    ) -> Result<AttachedPage, BrowserError> {
+        let page = self.current_page().await;
+        let target_id = index_fallback_target_id(&page, cached_element).to_owned();
+        if target_id == page.target_id {
+            return Ok(page);
+        }
+
+        attach_to_target(&self.connection, target_id).await
     }
 
     async fn resolve_element_object_id(
@@ -4677,6 +4699,35 @@ fn dom_state_elements(state: SerializedDomState) -> Vec<DomElementRef> {
     state.selector_map.into_values().collect()
 }
 
+fn target_local_index_for_global_index(
+    selector_map: &BTreeMap<u32, DomElementRef>,
+    global_index: u32,
+    target_id: &str,
+) -> u32 {
+    let mut local_index = 0_u32;
+    for (candidate_index, element) in selector_map {
+        if element.target_id != target_id {
+            continue;
+        }
+        local_index = local_index.saturating_add(1);
+        if *candidate_index == global_index {
+            return local_index;
+        }
+    }
+
+    global_index
+}
+
+fn index_fallback_target_id<'a>(
+    current_page: &'a AttachedPage,
+    cached_element: Option<&'a CachedDomElementRef>,
+) -> &'a str {
+    cached_element
+        .map(|cached| cached.element.target_id.as_str())
+        .filter(|target_id| !target_id.is_empty())
+        .unwrap_or(current_page.target_id.as_str())
+}
+
 fn attach_child_eval_root(eval_root: &mut Option<DomEvalNode>, child_eval_root: DomEvalNode) {
     let Some(root) = eval_root else {
         *eval_root = Some(child_eval_root);
@@ -6212,10 +6263,11 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
-        if let Some(element) = self.cached_element(index).await {
+        let cached_element = self.cached_element(index).await;
+        if let Some(cached) = cached_element.as_ref() {
             match self
                 .call_element_function(
-                    &element,
+                    &cached.element,
                     element_action_function_js(CLICK_ELEMENT_ACTION_JS),
                 )
                 .await
@@ -6225,7 +6277,15 @@ impl BrowserSession for CdpBrowserSession {
                 Err(error) => return Err(error),
             }
         }
-        self.evaluate_effect(click_element_js(index)).await?;
+        let page = self
+            .page_for_index_fallback(cached_element.as_ref())
+            .await?;
+        let fallback_index = cached_element
+            .as_ref()
+            .map(|cached| cached.target_local_index)
+            .unwrap_or(index);
+        self.evaluate_effect_for_page(&page, click_element_js(fallback_index))
+            .await?;
         self.enforce_url_policy_after_settle().await
     }
 
@@ -6261,9 +6321,10 @@ impl BrowserSession for CdpBrowserSession {
                 "el.focus(); el.value = (el.value || '') + {text_json}; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }}));"
             )
         };
-        if let Some(element) = self.cached_element(index).await {
+        let cached_element = self.cached_element(index).await;
+        if let Some(cached) = cached_element.as_ref() {
             match self
-                .call_element_function(&element, element_action_function_js(&action))
+                .call_element_function(&cached.element, element_action_function_js(&action))
                 .await
             {
                 Ok(()) => return self.enforce_url_policy_after_settle().await,
@@ -6271,7 +6332,14 @@ impl BrowserSession for CdpBrowserSession {
                 Err(error) => return Err(error),
             }
         }
-        self.evaluate_effect(element_action_js(index, &action))
+        let page = self
+            .page_for_index_fallback(cached_element.as_ref())
+            .await?;
+        let fallback_index = cached_element
+            .as_ref()
+            .map(|cached| cached.target_local_index)
+            .unwrap_or(index);
+        self.evaluate_effect_for_page(&page, element_action_js(fallback_index, &action))
             .await?;
         self.enforce_url_policy_after_settle().await
     }
@@ -6283,9 +6351,10 @@ impl BrowserSession for CdpBrowserSession {
                 "el.scrollBy(0, (el.clientHeight || window.innerHeight) * {});",
                 pages * direction
             );
-            if let Some(element) = self.cached_element(index).await {
+            let cached_element = self.cached_element(index).await;
+            if let Some(cached) = cached_element.as_ref() {
                 match self
-                    .call_element_function(&element, element_action_function_js(&action))
+                    .call_element_function(&cached.element, element_action_function_js(&action))
                     .await
                 {
                     Ok(()) => return self.enforce_url_policy_after_settle().await,
@@ -6293,7 +6362,14 @@ impl BrowserSession for CdpBrowserSession {
                     Err(error) => return Err(error),
                 }
             }
-            self.evaluate_effect(element_action_js(index, &action))
+            let page = self
+                .page_for_index_fallback(cached_element.as_ref())
+                .await?;
+            let fallback_index = cached_element
+                .as_ref()
+                .map(|cached| cached.target_local_index)
+                .unwrap_or(index);
+            self.evaluate_effect_for_page(&page, element_action_js(fallback_index, &action))
                 .await?;
             return self.enforce_url_policy_after_settle().await;
         }
@@ -6335,10 +6411,11 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
-        if let Some(element) = self.cached_element(index).await {
+        let cached_element = self.cached_element(index).await;
+        if let Some(cached) = cached_element.as_ref() {
             match self
                 .call_element_function_value(
-                    &element,
+                    &cached.element,
                     element_function_js(DROPDOWN_OPTIONS_BODY_JS),
                 )
                 .await
@@ -6348,15 +6425,25 @@ impl BrowserSession for CdpBrowserSession {
                 Err(error) => return Err(error),
             }
         }
-        let value = self.evaluate_json(&dropdown_options_js(index)).await?;
+        let page = self
+            .page_for_index_fallback(cached_element.as_ref())
+            .await?;
+        let fallback_index = cached_element
+            .as_ref()
+            .map(|cached| cached.target_local_index)
+            .unwrap_or(index);
+        let value = self
+            .evaluate_json_for_page(&page, &dropdown_options_js(fallback_index), false)
+            .await?;
         parse_dropdown_options_value(value)
     }
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
         let body = select_dropdown_option_body_js(text)?;
-        if let Some(element) = self.cached_element(index).await {
+        let cached_element = self.cached_element(index).await;
+        if let Some(cached) = cached_element.as_ref() {
             match self
-                .call_element_function(&element, element_function_js(&body))
+                .call_element_function(&cached.element, element_function_js(&body))
                 .await
             {
                 Ok(()) => return self.enforce_url_policy_after_settle().await,
@@ -6364,7 +6451,14 @@ impl BrowserSession for CdpBrowserSession {
                 Err(error) => return Err(error),
             }
         }
-        self.evaluate_effect(select_dropdown_option_js(index, text)?)
+        let page = self
+            .page_for_index_fallback(cached_element.as_ref())
+            .await?;
+        let fallback_index = cached_element
+            .as_ref()
+            .map(|cached| cached.target_local_index)
+            .unwrap_or(index);
+        self.evaluate_effect_for_page(&page, select_dropdown_option_js(fallback_index, text)?)
             .await?;
         self.enforce_url_policy_after_settle().await
     }
@@ -6561,26 +6655,34 @@ impl BrowserSession for CdpBrowserSession {
         );
         let cached_element = self.cached_element(index).await;
         let mut marked_cached_element = None;
-        if let Some(element) = cached_element.as_ref() {
+        if let Some(cached) = cached_element.as_ref() {
             match self
-                .call_element_function(element, element_function_js(&mark_upload_body))
+                .call_element_function(&cached.element, element_function_js(&mark_upload_body))
                 .await
             {
-                Ok(()) => marked_cached_element = Some(element.clone()),
+                Ok(()) => marked_cached_element = Some(cached.clone()),
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
         }
+        let page = if let Some(cached) = marked_cached_element.as_ref() {
+            self.page_for_element(&cached.element).await?
+        } else {
+            self.page_for_index_fallback(cached_element.as_ref())
+                .await?
+        };
+        let fallback_index = cached_element
+            .as_ref()
+            .map(|cached| cached.target_local_index)
+            .unwrap_or(index);
         if marked_cached_element.is_none() {
-            self.evaluate_effect(element_eval_js(index, &mark_upload_body))
-                .await?;
+            self.evaluate_effect_for_page(
+                &page,
+                element_eval_js(fallback_index, &mark_upload_body),
+            )
+            .await?;
         }
 
-        let page = if let Some(element) = marked_cached_element.as_ref() {
-            self.page_for_element(element).await?
-        } else {
-            self.current_page().await
-        };
         let document = self
             .connection
             .command(
@@ -6630,9 +6732,9 @@ impl BrowserSession for CdpBrowserSession {
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return true;
 "#;
-        if let Some(element) = marked_cached_element.as_ref() {
+        if let Some(cached) = marked_cached_element.as_ref() {
             match self
-                .call_element_function(element, element_function_js(finish_upload_body))
+                .call_element_function(&cached.element, element_function_js(finish_upload_body))
                 .await
             {
                 Ok(()) => return self.enforce_url_policy_after_settle().await,
@@ -6640,7 +6742,7 @@ impl BrowserSession for CdpBrowserSession {
                 Err(error) => return Err(error),
             }
         }
-        self.evaluate_effect(element_eval_js(index, finish_upload_body))
+        self.evaluate_effect_for_page(&page, element_eval_js(fallback_index, finish_upload_body))
             .await?;
         self.enforce_url_policy_after_settle().await
     }
@@ -7015,6 +7117,37 @@ mod tests {
                     offset: FrameOffset { x: 56, y: 78 },
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn cached_iframe_fallback_uses_target_local_index() {
+        let state = SerializedDomState::from_elements(vec![
+            test_dom_bound_element(1, "root-target", "Root iframe", None),
+            test_dom_bound_element(2, "child-target", "Child button", None),
+            test_dom_bound_element(3, "child-target", "Child input", None),
+        ]);
+        let current_page = AttachedPage {
+            target_id: "root-target".to_owned(),
+            session_id: "root-session".to_owned(),
+        };
+        let cached = CachedDomElementRef {
+            element: state.selector_map[&3].clone(),
+            target_local_index: target_local_index_for_global_index(
+                &state.selector_map,
+                3,
+                "child-target",
+            ),
+        };
+
+        assert_eq!(cached.target_local_index, 2);
+        assert_eq!(
+            index_fallback_target_id(&current_page, Some(&cached)),
+            "child-target"
+        );
+        assert_eq!(
+            target_local_index_for_global_index(&state.selector_map, 1, "root-target"),
+            1
         );
     }
 
@@ -9381,6 +9514,130 @@ mod tests {
 
         assert_eq!(clicked.as_str(), Some("yes"));
         assert_eq!(input_value.as_str(), Some("EvalOps"));
+        child_server.abort();
+        parent_server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_uses_cross_origin_iframe_target_for_stale_node_fallback() {
+        let child_html = "<html><body><button id='child-button' onclick=\"document.body.dataset.clicked='initial'\">Cross child</button><input id='child-input' placeholder='Cross input'></body></html>";
+        let (child_addr, child_server) = spawn_static_html_server(child_html.to_owned()).await;
+        let child_url = format!("http://127.0.0.1:{}/child", child_addr.port());
+        let parent_html = format!(
+            "<html><head><title>cross stale fallback</title></head><body><iframe src='{child_url}' style='width:420px;height:180px;border:0'></iframe></body></html>"
+        );
+        let (parent_addr, parent_server) = spawn_static_html_server(parent_html).await;
+        let parent_url = format!("http://localhost:{}/parent", parent_addr.port());
+        let profile = BrowserProfile {
+            args: vec!["--site-per-process".to_owned()],
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(&parent_url, false)
+            .await
+            .expect("navigate cross-origin parent");
+        let mut initial_state = None;
+        for _ in 0..20 {
+            let state = session.state(false).await.expect("cross-origin state");
+            if state.dom_state.llm_representation().contains("Cross child") {
+                initial_state = Some(state);
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        let initial_state = initial_state.expect("cross-origin iframe element state");
+        let iframe = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.tag_name == "iframe")
+            .expect("iframe element");
+        let child_button = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "child-button")
+            })
+            .expect("child button")
+            .clone();
+        let child_input = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "child-input")
+            })
+            .expect("child input")
+            .clone();
+        assert_ne!(child_button.target_id, iframe.target_id);
+        assert_eq!(child_button.target_id, child_input.target_id);
+        assert!(child_button.index > 1);
+        assert!(child_input.index > 1);
+
+        let page = session.current_page().await;
+        let frame_infos = session
+            .frame_element_infos(&page)
+            .await
+            .expect("frame element infos");
+        let child_page = session
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .expect("iframe target pages")
+            .into_iter()
+            .find(|frame| frame.page.target_id == child_button.target_id)
+            .expect("child target page");
+        session
+            .evaluate_json_for_page(
+                &child_page.page,
+                r#"
+(() => {
+  document.open();
+  document.write(`<html><body><button id="child-button" onclick="document.body.dataset.clicked='replacement'">Replacement child</button><input id="child-input" placeholder="Replacement input"></body></html>`);
+  document.close();
+  return true;
+})()
+"#,
+                false,
+            )
+            .await
+            .expect("replace child document");
+        sleep(Duration::from_millis(100)).await;
+
+        session
+            .click(child_button.index)
+            .await
+            .expect("click replacement child through fallback");
+        session
+            .input_text(child_input.index, "EvalOps", true)
+            .await
+            .expect("input replacement child through fallback");
+
+        let values = session
+            .evaluate_json_for_page(
+                &child_page.page,
+                "JSON.stringify({ clicked: document.body.dataset.clicked || '', input: document.getElementById('child-input').value || '' })",
+                false,
+            )
+            .await
+            .expect("child values");
+        let values: Value = serde_json::from_str(values.as_str().expect("encoded child values"))
+            .expect("child values json");
+        assert_eq!(values["clicked"].as_str(), Some("replacement"));
+        assert_eq!(values["input"].as_str(), Some("EvalOps"));
+
         child_server.abort();
         parent_server.abort();
     }

@@ -19,8 +19,8 @@ browser-use where compatibility is claimed.
    widget roles, accessibility names, and eval/judge DOM tree output.
 3. Browser actions: navigation, URL access policy guards for explicit
    navigation, action boundaries, redirects, and new tabs, search, click,
-   input, scroll, keyboard, tab switching, downloads, screenshots, and PDF
-   output.
+   input, scroll, keyboard, tab switching, downloads, screenshots, PDF output,
+   and cached-node fallback inside same-page and Chrome OOPIF iframe targets.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, prompt attribute settings, extraction
    metadata, per-step timing metadata, done semantics, and final history.

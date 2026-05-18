@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#34 Improve stale-node fallback across iframe target sessions](https://github.com/evalops/browser-use-rs/issues/34)
+- Next parity track will be selected from fresh upstream drift after this
+  checkpoint.
 
 ## Completed Tracks
 
@@ -37,6 +38,7 @@ small pushed checkpoints as each surface becomes real.
 - [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
 - [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
 - [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
+- [#34 Improve stale-node fallback across iframe target sessions](https://github.com/evalops/browser-use-rs/issues/34)
 
 ## Current Checkpoint
 
@@ -109,9 +111,10 @@ Implemented:
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
   events, native/ARIA dropdown actions, scroll, and compact DOM-indexed browser
-  actions, including indexed element scrolling and cached observed-node
-  click/input/scroll/dropdown/upload resolution, plus page text and element
-  lookup across Chrome OOPIF iframe targets.
+  actions, including indexed element scrolling, cached observed-node
+  click/input/scroll/dropdown/upload resolution, target-aware stale-node
+  fallback for cached iframe actions, plus page text and element lookup across
+  Chrome OOPIF iframe targets.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across
@@ -206,5 +209,5 @@ Implemented:
 
 Next:
 
-1. Continue [#34](https://github.com/evalops/browser-use-rs/issues/34) by
-   extending stale-node fallback lookup across relevant iframe target sessions.
+1. Select the next highest-value upstream drift gap and open a tracked issue
+   with fixture-backed acceptance criteria.
