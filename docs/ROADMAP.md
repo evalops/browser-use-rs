@@ -6,6 +6,7 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - [#71 Preserve upstream non-judge auxiliary AgentSettings flags](https://github.com/evalops/browser-use-rs/issues/71)
+- [#72 Add upstream-style message compaction support](https://github.com/evalops/browser-use-rs/issues/72)
 
 ## Completed Tracks
 
