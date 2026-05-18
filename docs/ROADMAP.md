@@ -50,10 +50,11 @@ Implemented:
 - MCP stdio reconnection to persistent CLI session records by `session_id`.
 - MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
-  max-step, max-failure handling, upstream-style max-action truncation, step and
-  LLM timeouts, compact page-stat prompt context, vision-aware screenshot
-  capture, screenshot action next-observation image overrides, action-result
-  image prompt parts, one-time extraction replay handling, invalid model-output recovery,
+  upstream-style initial actions, max-step, max-failure handling,
+  upstream-style max-action truncation, step and LLM timeouts, compact page-stat
+  prompt context, vision-aware screenshot capture, screenshot action
+  next-observation image overrides, action-result image prompt parts, one-time
+  extraction replay handling, invalid model-output recovery,
   upstream-style final `done` responses after repeated failures,
   normalized repeated-action loop detection, loop-awareness prompt nudges,
   upstream flattened planning fields, custom

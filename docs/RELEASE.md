@@ -38,13 +38,13 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   result and returns their attachment paths.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
-- Agent runs with schema-guided provider output, max actions per step with
-  upstream-style truncation, max steps, max failures, step and LLM timeouts,
-  upstream-style final `done` responses after repeated failures, normalized
-  repeated-action loop detection, previous result context, vision-aware
-  screenshot capture and image prompt parts, screenshot action next-observation
-  image overrides, action-result image prompt parts, compact page-stat prompt
-  context, one-time extraction replay handling, invalid model-output
+- Agent runs with schema-guided provider output, upstream-style initial actions,
+  max actions per step with upstream-style truncation, max steps, max failures,
+  step and LLM timeouts, upstream-style final `done` responses after repeated
+  failures, normalized repeated-action loop detection, previous result context,
+  vision-aware screenshot capture and image prompt parts, screenshot action
+  next-observation image overrides, action-result image prompt parts, compact
+  page-stat prompt context, one-time extraction replay handling, invalid model-output
   recovery, loop-awareness prompt nudges, upstream
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, thinking/flash output-schema controls, upstream-style

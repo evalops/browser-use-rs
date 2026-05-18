@@ -45,11 +45,12 @@ optional and defaults to `http://localhost:11434`.
 `browser-use-core`'s `AgentSettings`, including vision, action limits,
 timeouts, final `done` responses after repeated failures, prompt-history
 limits, planning controls, thinking/flash output modes, and prompt-visible DOM
-attributes plus available file-path and sensitive-data prompt context, and
-system-message override/extension fields. Sensitive data values are rendered to
-the model as placeholder names, not raw values, and placeholders ending in
-`bu_2fa_code` generate TOTP codes at execution time. Provider credentials remain
-environment-only and are intentionally absent from tool input schemas.
+attributes plus initial actions, available file-path and sensitive-data prompt
+context, and system-message override/extension fields. Sensitive data values
+are rendered to the model as placeholder names, not raw values, and placeholders
+ending in `bu_2fa_code` generate TOTP codes at execution time. Provider
+credentials remain environment-only and are intentionally absent from tool input
+schemas.
 
 Browser and agent tools support an optional `session_id` argument. When omitted,
 the tool call uses a fresh one-shot browser. When present, the stdio server

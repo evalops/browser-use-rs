@@ -25,7 +25,7 @@ pub use browser_use_tools::{BrowserAction, SearchEngine};
 /// Version of the upstream browser-use source that this crate initially targets.
 pub const INITIAL_UPSTREAM_COMMIT: &str = "933e28c599ddd74c15a48568f159da95547e40dd";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSettings {
     #[serde(default = "default_use_vision")]
     pub use_vision: bool,
@@ -61,6 +61,8 @@ pub struct AgentSettings {
     pub include_attributes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_actions: Vec<BrowserAction>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sensitive_data: BTreeMap<String, SensitiveDataValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +91,7 @@ impl Default for AgentSettings {
             flash_mode: false,
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
+            initial_actions: Vec::new(),
             sensitive_data: BTreeMap::new(),
             override_system_message: None,
             extend_system_message: None,
@@ -155,7 +158,7 @@ pub enum SensitiveDataValue {
     Domain(BTreeMap<String, String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentTask {
     pub id: Uuid,
     pub task: String,
@@ -2076,6 +2079,7 @@ pub struct Agent<M, S> {
     llm: M,
     executor: BrowserActionExecutor<S>,
     history: AgentHistory,
+    initial_actions_executed: bool,
 }
 
 impl<M, S> Agent<M, S>
@@ -2101,6 +2105,7 @@ where
             llm,
             executor: BrowserActionExecutor::new(session),
             history: AgentHistory::default(),
+            initial_actions_executed: false,
         }
     }
 
@@ -2110,6 +2115,16 @@ where
 
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
+
+        self.execute_initial_actions().await?;
+        if self
+            .history
+            .items
+            .last()
+            .is_some_and(|item| item.result.iter().any(|result| result.is_done))
+        {
+            return Ok(&self.history);
+        }
 
         for _ in 0..max_steps {
             let (is_done, has_error) = {
@@ -2259,6 +2274,39 @@ where
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
 
+    async fn execute_initial_actions(&mut self) -> Result<(), AgentRunError> {
+        if self.initial_actions_executed || self.settings.initial_actions.is_empty() {
+            return Ok(());
+        }
+        self.initial_actions_executed = true;
+
+        let step_start_time = now_seconds();
+        let initial_actions = self.settings.initial_actions.clone();
+        let state = initial_actions_state_history(&initial_actions);
+        let current_url = state.url.clone();
+        let execution_actions =
+            actions_for_execution(&initial_actions, &self.settings, &current_url);
+        let result = self.executor.execute_sequence(&execution_actions).await;
+        let step_end_time = now_seconds();
+
+        self.history.items.push(AgentHistoryItem {
+            model_output: Some(initial_actions_model_output(
+                initial_actions,
+                self.settings.flash_mode,
+            )),
+            result,
+            state,
+            metadata: Some(StepMetadata {
+                step_start_time,
+                step_end_time,
+                step_number: 0,
+                step_interval: None,
+            }),
+        });
+
+        Ok(())
+    }
+
     async fn record_final_response_after_failure(
         &mut self,
         failures: u32,
@@ -2349,11 +2397,19 @@ where
             .last()
             .and_then(|item| item.metadata.as_ref())
             .map(|metadata| metadata.duration_seconds().max(0.0));
+        let step_number = self
+            .history
+            .items
+            .iter()
+            .filter_map(|item| item.metadata.as_ref().map(|metadata| metadata.step_number))
+            .max()
+            .unwrap_or(0)
+            + 1;
 
         StepMetadata {
             step_start_time,
             step_end_time,
-            step_number: self.history.items.len() + 1,
+            step_number,
             step_interval,
         }
     }
@@ -2386,6 +2442,59 @@ fn now_seconds() -> f64 {
 
 fn is_single_done_output(output: &AgentOutput) -> bool {
     matches!(output.action.as_slice(), [BrowserAction::Done(_)])
+}
+
+fn initial_actions_model_output(actions: Vec<BrowserAction>, flash_mode: bool) -> AgentOutput {
+    if flash_mode {
+        return AgentOutput {
+            current_state: AgentCurrentState::default(),
+            thinking: None,
+            evaluation_previous_goal: None,
+            memory: Some("Initial navigation".to_owned()),
+            next_goal: None,
+            current_plan_item: None,
+            plan_update: None,
+            action: actions,
+        };
+    }
+
+    AgentOutput {
+        current_state: AgentCurrentState::default(),
+        thinking: None,
+        evaluation_previous_goal: Some("Start".to_owned()),
+        memory: None,
+        next_goal: Some("Initial navigation".to_owned()),
+        current_plan_item: None,
+        plan_update: None,
+        action: actions,
+    }
+}
+
+fn initial_actions_state_history(actions: &[BrowserAction]) -> BrowserStateSummary {
+    BrowserStateSummary {
+        dom_state: Default::default(),
+        url: initial_actions_url(actions).unwrap_or_default(),
+        title: "Initial Actions".to_owned(),
+        tabs: Vec::new(),
+        screenshot: None,
+        page_info: None,
+        pixels_above: 0,
+        pixels_below: 0,
+        browser_errors: Vec::new(),
+        is_pdf_viewer: false,
+        recent_events: None,
+        pending_network_requests: Vec::new(),
+        pagination_buttons: Vec::new(),
+        closed_popup_messages: Vec::new(),
+    }
+}
+
+fn initial_actions_url(actions: &[BrowserAction]) -> Option<String> {
+    actions.iter().find_map(|action| match action {
+        BrowserAction::Navigate(params) => Some(params.url.clone()),
+        BrowserAction::Search(params) => Some(search_url(&params.engine, &params.query)),
+        _ => None,
+    })
 }
 
 fn actions_for_execution(
@@ -3416,6 +3525,7 @@ mod tests {
         assert!(!settings.flash_mode);
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
+        assert!(settings.initial_actions.is_empty());
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
@@ -5633,6 +5743,75 @@ mod tests {
             1
         );
         assert_eq!(agent.executor.session().events(), vec!["click:1"]);
+    }
+
+    #[tokio::test]
+    async fn agent_run_executes_initial_actions_as_step_zero() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "ready",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            initial_actions: vec![BrowserAction::Navigate(NavigateAction {
+                url: "https://example.test/start".to_owned(),
+                new_tab: false,
+            })],
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "continue after preload",
+            settings,
+            QueueModel::new(vec![done_output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("agent run").clone();
+
+        assert_eq!(
+            agent.executor.session().events(),
+            vec!["navigate:https://example.test/start:false"]
+        );
+        assert_eq!(history.items.len(), 2);
+        assert_eq!(
+            history.items[0]
+                .metadata
+                .as_ref()
+                .expect("initial metadata")
+                .step_number,
+            0
+        );
+        assert_eq!(history.items[0].state.url, "https://example.test/start");
+        assert_eq!(history.items[0].state.title, "Initial Actions");
+        assert_eq!(
+            history.items[0]
+                .model_output
+                .as_ref()
+                .expect("initial output")
+                .next_goal
+                .as_deref(),
+            Some("Initial navigation")
+        );
+        assert_eq!(
+            history.items[1]
+                .metadata
+                .as_ref()
+                .expect("step metadata")
+                .step_number,
+            1
+        );
+
+        let request = agent.llm.requests.lock().expect("requests lock");
+        let prompt_text = request_text(&request[0]);
+        assert!(prompt_text.contains("Initial navigation"));
+        assert!(prompt_text.contains("Navigated to https://example.test/start"));
     }
 
     #[tokio::test]
