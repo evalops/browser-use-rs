@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#88 Add upstream agent callback and stop-control hooks](https://github.com/evalops/browser-use-rs/issues/88)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #88 lands and CI is green.
 
 ## Completed Tracks
 
+- [#88 Add upstream agent callback and stop-control hooks](https://github.com/evalops/browser-use-rs/issues/88)
 - [#87 Add upstream sample_images prompt support](https://github.com/evalops/browser-use-rs/issues/87)
 - [#86 Add upstream directly_open_url initial navigation](https://github.com/evalops/browser-use-rs/issues/86)
 - [#85 Add BrowserProfile proxy bypass launch parity](https://github.com/evalops/browser-use-rs/issues/85)
