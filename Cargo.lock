@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-cdp"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "browser-use-dom",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-conformance"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "browser-use-cdp",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-dom"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "schemars",
  "serde",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-llm"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-mcp"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "browser-use-cdp",
  "browser-use-core",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "browser-use-tools"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "schemars",
  "serde",
