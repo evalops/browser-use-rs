@@ -1930,7 +1930,7 @@ async fn cdp_connection_actor(
     let mut pending: HashMap<u64, (String, oneshot::Sender<Result<Value, BrowserError>>)> =
         HashMap::new();
 
-    loop {
+    let websocket_closed_event = loop {
         tokio::select! {
             Some(request) = request_rx.recv() => {
                 let text = request.payload.to_string();
@@ -1945,7 +1945,7 @@ async fn cdp_connection_actor(
             }
             message = socket.next() => {
                 let Some(message) = message else {
-                    break;
+                    break cdp_websocket_closed_event("websocket_stream_ended", None);
                 };
                 let payload = match message {
                     Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
@@ -1961,11 +1961,12 @@ async fn cdp_connection_actor(
                     },
                     Ok(_) => continue,
                     Err(error) => {
-                        let transport_error = BrowserError::Transport(error.to_string());
+                        let error = error.to_string();
+                        let transport_error = BrowserError::Transport(error.clone());
                         for (_, (_, response_tx)) in pending.drain() {
                             let _ = response_tx.send(Err(transport_error.clone()));
                         }
-                        break;
+                        break cdp_websocket_closed_event("websocket_error", Some(error));
                     }
                 };
 
@@ -2003,14 +2004,30 @@ async fn cdp_connection_actor(
                     });
                 }
             }
-            else => break,
+            else => {
+                break cdp_websocket_closed_event("connection_actor_stopped", None);
+            },
         }
-    }
+    };
+
+    let _ = event_tx.send(websocket_closed_event);
 
     for (_, (_, response_tx)) in pending {
         let _ = response_tx.send(Err(BrowserError::Transport(
             "CDP websocket closed while waiting for response".to_owned(),
         )));
+    }
+}
+
+fn cdp_websocket_closed_event(reason: &str, error: Option<String>) -> CdpEvent {
+    let mut params = json!({ "reason": reason });
+    if let Some(error) = error {
+        params["error"] = Value::String(error);
+    }
+    CdpEvent {
+        method: "browser-use-rs.websocket-closed".to_owned(),
+        params,
+        session_id: None,
     }
 }
 
@@ -2962,6 +2979,13 @@ async fn handle_lifecycle_cdp_event(
     event: CdpEvent,
 ) {
     match event.method.as_str() {
+        "browser-use-rs.websocket-closed" => {
+            record_lifecycle_event_in_buffer(
+                lifecycle_events,
+                lifecycle_event_for_websocket_closed(&event),
+            )
+            .await;
+        }
         "Target.targetCrashed" | "Inspector.targetCrashed" => {
             record_lifecycle_events(lifecycle_events, lifecycle_events_for_target_crash(&event))
                 .await;
@@ -2984,6 +3008,36 @@ async fn handle_lifecycle_cdp_event(
         }
         _ => {}
     }
+}
+
+fn lifecycle_event_for_websocket_closed(event: &CdpEvent) -> BrowserLifecycleEvent {
+    let reason = event
+        .params
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("websocket_closed");
+    let error = event
+        .params
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut details = BTreeMap::from([("reason".to_owned(), reason.to_owned())]);
+    if let Some(error) = &error {
+        details.insert("error".to_owned(), error.clone());
+    }
+    let message = match &error {
+        Some(error) => format!("CDP websocket closed ({reason}): {error}"),
+        None => format!("CDP websocket closed ({reason})"),
+    };
+    BrowserLifecycleEvent::new(
+        BrowserLifecycleEventKind::BrowserStopped,
+        None,
+        None,
+        Some(reason.to_owned()),
+        error,
+        details,
+        message,
+    )
 }
 
 async fn record_lifecycle_events(
@@ -6242,6 +6296,21 @@ mod tests {
 
     #[test]
     fn lifecycle_watchdog_maps_cdp_crash_and_download_events() {
+        let websocket_closed = lifecycle_event_for_websocket_closed(&CdpEvent {
+            method: "browser-use-rs.websocket-closed".to_owned(),
+            params: json!({
+                "reason": "websocket_error",
+                "error": "connection reset",
+            }),
+            session_id: None,
+        });
+        assert_eq!(
+            websocket_closed.kind,
+            BrowserLifecycleEventKind::BrowserStopped
+        );
+        assert_eq!(websocket_closed.reason.as_deref(), Some("websocket_error"));
+        assert_eq!(websocket_closed.error.as_deref(), Some("connection reset"));
+
         let crash_event = CdpEvent {
             method: "Target.targetCrashed".to_owned(),
             params: json!({

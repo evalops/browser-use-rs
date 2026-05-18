@@ -28,6 +28,7 @@ includes:
   start/complete/failure/timeout, target crash, URL-policy reset/popup
   diagnostics, reconnect, JavaScript dialog, download, and storage-state
   diagnostics without adding that full event stream to normal agent replies.
+  CDP websocket closure is recorded as a browser-stopped lifecycle diagnostic.
   Launch profiles can set `downloads_path` to enable Chrome download behavior
   and browser-level download lifecycle events, and `storage_state_path` to
   load/save browser cookie storage state with lifecycle notifications.
