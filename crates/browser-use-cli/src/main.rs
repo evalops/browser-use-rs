@@ -1885,6 +1885,10 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
                     value_env: &["OPENROUTER_HTTP_REFERER", "OPENROUTER_APP_URL"],
                 },
                 OpenAiWireDefaultHeader {
+                    name: "X-Title",
+                    value_env: &["OPENROUTER_X_TITLE", "OPENROUTER_APP_TITLE"],
+                },
+                OpenAiWireDefaultHeader {
                     name: "X-OpenRouter-Title",
                     value_env: &["OPENROUTER_X_TITLE", "OPENROUTER_APP_TITLE"],
                 },
@@ -2190,6 +2194,7 @@ mod tests {
             headers,
             [
                 ("HTTP-Referer", "https://evalops.dev".to_owned()),
+                ("X-Title", "EvalOps browser-use-rs".to_owned()),
                 ("X-OpenRouter-Title", "EvalOps browser-use-rs".to_owned())
             ]
         );

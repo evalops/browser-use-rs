@@ -100,7 +100,8 @@ provider aliases read `DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`, `GROQ_API_KEY`/
 `AI_GATEWAY_API_KEY`/`AI_GATEWAY_MODEL` for Vercel AI Gateway. Vercel also
 accepts `VERCEL_OIDC_TOKEN` and `VERCEL_MODEL`. Each alias has an optional
 matching `*_BASE_URL` override. OpenRouter also reads
-`OPENROUTER_HTTP_REFERER` and `OPENROUTER_APP_TITLE` and sends app attribution
+`OPENROUTER_HTTP_REFERER`/`OPENROUTER_APP_URL` and
+`OPENROUTER_X_TITLE`/`OPENROUTER_APP_TITLE` and sends app attribution
 headers (`HTTP-Referer`, `X-Title`, and `X-OpenRouter-Title`). DeepSeek,
 Cerebras, and Mistral use their upstream default model names when `--model` is
 omitted. CLI `--api-key`, `--model`, and `--base-url` override the

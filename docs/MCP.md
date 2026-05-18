@@ -53,7 +53,10 @@ contract with provider-specific environment values: `DEEPSEEK_*`, `GROQ_*`,
 `CEREBRAS_*`, `MISTRAL_*`, `OPENROUTER_*`, or `AI_GATEWAY_*` for API key,
 model, and optional base URL. Vercel also accepts `VERCEL_OIDC_TOKEN` and
 `VERCEL_MODEL`; DeepSeek, Cerebras, and Mistral use their upstream default
-models when a tool `model` argument is omitted. DeepSeek structured-output
+models when a tool `model` argument is omitted. OpenRouter also reads
+`OPENROUTER_HTTP_REFERER`/`OPENROUTER_APP_URL` and
+`OPENROUTER_X_TITLE`/`OPENROUTER_APP_TITLE` for app attribution headers.
+DeepSeek structured-output
 requests force a schema function tool call and parse the tool-call arguments,
 while Cerebras uses prompt-only schema guidance. Anthropic runs require
 `ANTHROPIC_API_KEY` plus a
