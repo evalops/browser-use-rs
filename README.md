@@ -192,15 +192,19 @@ Packaged systemd and launchd supervision templates are documented in
 From source:
 
 ```sh
-cargo install --path crates/browser-use-cli
+cargo install --git https://github.com/evalops/browser-use-rs --package browser-use-cli
 browser-use-rs version-target
 ```
 
-Tagged GitHub releases publish a Linux x86_64 tarball containing the
-`browser-use-rs` binary, license files, release support matrix, and daemon
+From a local checkout, use `cargo install --path crates/browser-use-cli`.
+
+Tagged GitHub releases publish a Linux x86_64 tarball, `SHA256SUMS`, and a
+Linux Homebrew formula artifact. The tarball contains the `browser-use-rs`
+binary, license files, install guide, release support matrix, and daemon
 supervision templates.
 
-See [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
+See [docs/INSTALL.md](docs/INSTALL.md) for install commands and
+[docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
 browser-use surface.
 
 ## Smokes

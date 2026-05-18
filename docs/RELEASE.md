@@ -213,8 +213,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   running sessions unless forced through normal stop semantics; the daemon does
   not automatically restart stale browser processes.
 - The packaged daemon service files are local user-service templates; distro
-  packages, Homebrew formulas, and installer-managed secret stores are not
-  implemented.
+  packages, maintained Homebrew tap publication, macOS prebuilt artifacts, and
+  installer-managed secret stores are not implemented. Tagged releases now emit
+  Linux tarball checksums plus a generated Linux Homebrew formula artifact.
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
@@ -222,4 +223,5 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   into a new agent, restored prompt context, restored `read_file`, todo
   context, extracted-content numbering, prior history, and initial-action
   execution state.
-- Package publishing is limited to the GitHub release artifact.
+- Package publishing is limited to GitHub release artifacts and the generated
+  Linux Homebrew formula scaffold.
