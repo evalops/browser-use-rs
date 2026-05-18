@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#105 Add BrowserProfile disable_security and deterministic_rendering launch parity](https://github.com/evalops/browser-use-rs/issues/105)
+- Next upstream parity slice after #105 lands and CI is green.
 
 ## Completed Tracks
 
+- [#105 Add BrowserProfile disable_security and deterministic_rendering launch parity](https://github.com/evalops/browser-use-rs/issues/105)
 - [#104 Add upstream wait_between_actions delay](https://github.com/evalops/browser-use-rs/issues/104)
 - [#102 Add upstream external agent status interruption callback](https://github.com/evalops/browser-use-rs/issues/102)
 - [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
