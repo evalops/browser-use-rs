@@ -449,7 +449,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const axRef = `browser-use-rs-${index + 1}`;
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
@@ -4131,6 +4131,7 @@ mod tests {
             "aria-placeholder",
             "aria-required",
             "aria-valuemax",
+            "aria-valuetext",
             "autocomplete",
             "data-cy",
             "data-datepicker",
@@ -5328,7 +5329,7 @@ mod tests {
 
         session
             .navigate(
-                "data:text/html,<html><head><title>ax props smoke</title></head><body><button id='toggle' aria-expanded='true'>Details</button></body></html>",
+                "data:text/html,<html><head><title>ax props smoke</title></head><body><button id='toggle' aria-expanded='true'>Details</button><div id='slider' role='slider' aria-valuemin='0' aria-valuemax='10' aria-valuenow='7' aria-valuetext='Seven'>Volume</div></body></html>",
                 false,
             )
             .await
@@ -5344,6 +5345,10 @@ mod tests {
         assert!(
             !llm.contains("aria-expanded=true"),
             "DOM state did not prefer AX expanded over aria-expanded: {llm}"
+        );
+        assert!(
+            llm.contains("valuetext=Seven"),
+            "DOM state did not include human-readable value text: {llm}"
         );
     }
 

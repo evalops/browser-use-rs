@@ -468,6 +468,7 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
         "pressed" => "aria-pressed",
         "required" => "aria-required",
         "selected" => "aria-selected",
+        "valuetext" => "aria-valuetext",
         _ => return None,
     };
     element.attributes.get(alias)
@@ -901,6 +902,32 @@ mod tests {
             attributes,
             "id=customer-checkout-button value=customer-checkout-button"
         );
+    }
+
+    #[test]
+    fn rendered_attributes_alias_aria_value_text() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "div".to_owned(),
+            role: Some("slider".to_owned()),
+            name: Some("Volume".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("aria-valuenow".to_owned(), "7".to_owned()),
+                ("aria-valuetext".to_owned(), "Seven".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(attributes, "aria-valuenow=7 valuetext=Seven");
     }
 
     #[test]

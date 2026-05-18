@@ -29,14 +29,13 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   selected dropdown values, compound control metadata, compact select option
   summaries, common ARIA widget roles, search affordance signals, small icon
   controls, ARIA required/autocomplete/keyshortcut interactivity signals with
-  prompt-visible `keyshortcuts`,
-  input mask/autocomplete/date-format hints, JavaScript click/pointer
-  listener-backed controls, cursor-pointer controls, decorative SVG child
-  pruning, duplicate long-attribute pruning, static mouse/keyboard handler
-  attributes, contained
-  duplicate-descendant pruning for action containers, pagination affordance
-  detection, configurable prompt-visible attributes, and the upstream empty-DOM
-  load hint.
+  prompt-visible `keyshortcuts`, human-readable value text,
+  duplicate long-attribute pruning, input mask/autocomplete/date-format hints,
+  JavaScript click/pointer listener-backed controls, cursor-pointer controls,
+  decorative SVG child pruning, static mouse/keyboard handler attributes,
+  contained duplicate-descendant pruning for action containers, pagination
+  affordance detection, configurable prompt-visible attributes, and the upstream
+  empty-DOM load hint.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
