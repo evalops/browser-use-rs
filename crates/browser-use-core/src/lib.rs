@@ -487,6 +487,39 @@ impl std::fmt::Display for AgentHistoryReplayPlanError {
 
 impl std::error::Error for AgentHistoryReplayPlanError {}
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayExecution {
+    pub items: Vec<AgentHistoryReplayExecutionItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<AgentHistoryReplayStop>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayExecutionItem {
+    pub step_index: usize,
+    pub action_index: usize,
+    pub original_action: BrowserAction,
+    pub executed_action: BrowserAction,
+    pub rematch: ActionReplayRematch,
+    pub result: ActionResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayStop {
+    pub step_index: usize,
+    pub action_index: usize,
+    pub reason: AgentHistoryReplayStopReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHistoryReplayStopReason {
+    DoneAfterPriorAction,
+    Done,
+    Error,
+    TerminatingAction,
+}
+
 pub fn build_history_replay_plan(
     history: &AgentHistory,
     current_dom: &SerializedDomState,
@@ -5193,6 +5226,68 @@ where
     results
 }
 
+/// Execute a rematched replay plan while preserving history coordinates and
+/// the same generic stop rules used by action sequence execution.
+pub async fn execute_history_replay_plan<E>(
+    executor: &mut E,
+    plan: &AgentHistoryReplayPlan,
+) -> AgentHistoryReplayExecution
+where
+    E: ActionExecutor + Send,
+{
+    let mut items = Vec::new();
+    let mut stop = None;
+
+    for (plan_index, item) in plan.actions.iter().enumerate() {
+        let action = &item.remapped_action;
+        if plan_index > 0 && matches!(action, BrowserAction::Done(_)) {
+            stop = Some(AgentHistoryReplayStop {
+                step_index: item.step_index,
+                action_index: item.action_index,
+                reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+            });
+            break;
+        }
+
+        let result = executor.execute(action).await;
+        let stop_reason = replay_stop_reason(action, &result);
+        items.push(AgentHistoryReplayExecutionItem {
+            step_index: item.step_index,
+            action_index: item.action_index,
+            original_action: item.original_action.clone(),
+            executed_action: action.clone(),
+            rematch: item.rematch.clone(),
+            result,
+        });
+
+        if let Some(reason) = stop_reason {
+            stop = Some(AgentHistoryReplayStop {
+                step_index: item.step_index,
+                action_index: item.action_index,
+                reason,
+            });
+            break;
+        }
+    }
+
+    AgentHistoryReplayExecution { items, stop }
+}
+
+fn replay_stop_reason(
+    action: &BrowserAction,
+    result: &ActionResult,
+) -> Option<AgentHistoryReplayStopReason> {
+    if result.error.is_some() {
+        Some(AgentHistoryReplayStopReason::Error)
+    } else if result.is_done {
+        Some(AgentHistoryReplayStopReason::Done)
+    } else if action.terminates_sequence() {
+        Some(AgentHistoryReplayStopReason::TerminatingAction)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6343,6 +6438,42 @@ mod tests {
         }
     }
 
+    struct ScriptedReplayExecutor {
+        seen: Vec<BrowserAction>,
+        results: VecDeque<ActionResult>,
+    }
+
+    #[async_trait]
+    impl ActionExecutor for ScriptedReplayExecutor {
+        async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
+            self.seen.push(action.clone());
+            self.results
+                .pop_front()
+                .unwrap_or_else(|| ActionResult::extracted(action.name()))
+        }
+    }
+
+    fn replay_plan_item(
+        step_index: usize,
+        action_index: usize,
+        original_action: BrowserAction,
+        executed_action: BrowserAction,
+    ) -> AgentHistoryReplayPlanItem {
+        AgentHistoryReplayPlanItem {
+            step_index,
+            action_index,
+            original_action: original_action.clone(),
+            remapped_action: executed_action.clone(),
+            rematch: ActionReplayRematch {
+                action: executed_action.clone(),
+                original_index: original_action.interacted_element_index(),
+                rematched_index: executed_action.interacted_element_index(),
+                match_result: None,
+                changed: original_action != executed_action,
+            },
+        }
+    }
+
     #[tokio::test]
     async fn action_sequence_stops_after_navigation() {
         let actions = vec![
@@ -6384,6 +6515,175 @@ mod tests {
 
         assert_eq!(executor.seen, vec!["click"]);
         assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn history_replay_execution_runs_rematched_plan_actions() {
+        let original_click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let remapped_click = BrowserAction::Click(ClickElementAction {
+            index: Some(7),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let wait = BrowserAction::Wait(WaitAction { seconds: 0 });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(2, 0, original_click.clone(), remapped_click.clone()),
+                replay_plan_item(2, 1, wait.clone(), wait.clone()),
+            ],
+        };
+        let mut executor = ScriptedReplayExecutor {
+            seen: Vec::new(),
+            results: VecDeque::from([
+                ActionResult::extracted("clicked remapped element"),
+                ActionResult::extracted("waited"),
+            ]),
+        };
+
+        let execution = execute_history_replay_plan(&mut executor, &plan).await;
+
+        assert_eq!(executor.seen, vec![remapped_click.clone(), wait]);
+        assert_eq!(execution.items.len(), 2);
+        assert_eq!(execution.items[0].step_index, 2);
+        assert_eq!(execution.items[0].action_index, 0);
+        assert_eq!(execution.items[0].original_action, original_click);
+        assert_eq!(execution.items[0].executed_action, remapped_click);
+        assert_eq!(execution.items[0].rematch.original_index, Some(1));
+        assert_eq!(execution.items[0].rematch.rematched_index, Some(7));
+        assert_eq!(
+            execution.items[0].result.extracted_content.as_deref(),
+            Some("clicked remapped element")
+        );
+        assert_eq!(execution.stop, None);
+    }
+
+    #[tokio::test]
+    async fn history_replay_execution_stops_on_action_errors_with_coordinates() {
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let wait = BrowserAction::Wait(WaitAction { seconds: 0 });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(4, 2, click.clone(), click),
+                replay_plan_item(4, 3, wait.clone(), wait),
+            ],
+        };
+        let mut executor = ScriptedReplayExecutor {
+            seen: Vec::new(),
+            results: VecDeque::from([ActionResult::error("click failed")]),
+        };
+
+        let execution = execute_history_replay_plan(&mut executor, &plan).await;
+
+        assert_eq!(executor.seen.len(), 1);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 4,
+                action_index: 2,
+                reason: AgentHistoryReplayStopReason::Error,
+            })
+        );
+        assert_eq!(
+            execution.items[0].result.error.as_deref(),
+            Some("click failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn history_replay_execution_stops_after_terminating_actions() {
+        let navigate = BrowserAction::Navigate(NavigateAction {
+            url: "https://example.com".to_owned(),
+            new_tab: false,
+        });
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(0, 0, navigate.clone(), navigate.clone()),
+                replay_plan_item(0, 1, click.clone(), click),
+            ],
+        };
+        let mut executor = ScriptedReplayExecutor {
+            seen: Vec::new(),
+            results: VecDeque::from([ActionResult::extracted("navigated")]),
+        };
+
+        let execution = execute_history_replay_plan(&mut executor, &plan).await;
+
+        assert_eq!(executor.seen, vec![navigate]);
+        assert_eq!(execution.items.len(), 1);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 0,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::TerminatingAction,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn history_replay_execution_matches_done_sequence_rules() {
+        let done = BrowserAction::Done(DoneAction {
+            text: "finished".to_owned(),
+            success: true,
+            files_to_display: vec![],
+        });
+        let first_done_plan = AgentHistoryReplayPlan {
+            actions: vec![replay_plan_item(9, 0, done.clone(), done.clone())],
+        };
+        let mut executor = ScriptedReplayExecutor {
+            seen: Vec::new(),
+            results: VecDeque::from([ActionResult::done("finished", true)]),
+        };
+
+        let execution = execute_history_replay_plan(&mut executor, &first_done_plan).await;
+
+        assert_eq!(executor.seen, vec![done.clone()]);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 9,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::Done,
+            })
+        );
+
+        let wait = BrowserAction::Wait(WaitAction { seconds: 0 });
+        let delayed_done_plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(9, 0, wait.clone(), wait.clone()),
+                replay_plan_item(9, 1, done.clone(), done),
+            ],
+        };
+        let mut executor = ScriptedReplayExecutor {
+            seen: Vec::new(),
+            results: VecDeque::from([ActionResult::extracted("waited")]),
+        };
+
+        let execution = execute_history_replay_plan(&mut executor, &delayed_done_plan).await;
+
+        assert_eq!(executor.seen, vec![wait]);
+        assert_eq!(execution.items.len(), 1);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 9,
+                action_index: 1,
+                reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+            })
+        );
     }
 
     struct MockSession {
