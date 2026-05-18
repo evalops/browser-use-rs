@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is open at this checkpoint.
+- [#54 Recapture and rematch DOM state between replay actions](https://github.com/evalops/browser-use-rs/issues/54)
 
 ## Completed Tracks
 
