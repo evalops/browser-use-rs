@@ -134,6 +134,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   numbering, and full `AgentCheckpoint` resume with prior history and
   initial-action state, plus public browser lifecycle event and adapter JSON
   shapes, with semantic checks for dynamic step timing metadata.
+- `browser-use-dom` exposes interacted-element rematching diagnostics for
+  exact hash, stable hash, XPath, AX-name, and unique-attribute history replay
+  foundations without changing live action execution.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
@@ -184,8 +187,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   needed for action selection, evaluator context, hidden/disabled suppression,
   and conformance fixtures.
 - Agent history now captures compact interacted-element metadata for indexed
-  actions; full rerun execution and current-page rematching from that history
-  remain outside this release slice.
+  actions and exposes current-page rematching diagnostics; full rerun execution
+  from that history remains outside this release slice.
 - CLI sessions are local registry records. Session `status` reports registry
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does

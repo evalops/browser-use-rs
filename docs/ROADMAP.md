@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#40 Implement interacted-element rematching for history replay](https://github.com/evalops/browser-use-rs/issues/40)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -43,6 +44,7 @@ small pushed checkpoints as each surface becomes real.
 - [#37 Report persistent session liveness in registry outputs](https://github.com/evalops/browser-use-rs/issues/37)
 - [#38 Capture interacted element metadata in agent history](https://github.com/evalops/browser-use-rs/issues/38)
 - [#39 Add daemon-owned session supervision and stale cleanup](https://github.com/evalops/browser-use-rs/issues/39)
+- [#40 Implement interacted-element rematching for history replay](https://github.com/evalops/browser-use-rs/issues/40)
 
 ## Current Checkpoint
 
@@ -215,11 +217,10 @@ Implemented:
 - `browser-use-dom` now also exposes a tree-shaped eval/judge representation
   that mirrors upstream `DOMEvalSerializer` markers for backend-node
   interactives, shadow roots, iframe contents, compact key attributes, scroll
-  context, collapsed SVG contents, live CDP capture, and Chrome OOPIF child
-  target merging.
+  context, collapsed SVG contents, live CDP capture, Chrome OOPIF child target
+  merging, and interacted-element rematching diagnostics for exact, stable,
+  XPath, AX-name, and unique-attribute history replay foundations.
 
 Next:
 
-1. Continue [#40](https://github.com/evalops/browser-use-rs/issues/40) by
-   resolving historical interacted-element records against the current selector
-   map with exact, stable, XPath, AX-name, and unique-attribute diagnostics.
+1. Open the next narrowly scoped parity issue before starting implementation.
