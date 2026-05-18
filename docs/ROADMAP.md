@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
+- Next upstream parity slice after #100 lands and CI is green.
 
 ## Completed Tracks
 
+- [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
 - [#98 Add upstream add_new_task follow-up control](https://github.com/evalops/browser-use-rs/issues/98)
 - [#96 Add upstream pause/resume agent state](https://github.com/evalops/browser-use-rs/issues/96)
 - [#97 Add upstream judge_llm routing](https://github.com/evalops/browser-use-rs/issues/97)

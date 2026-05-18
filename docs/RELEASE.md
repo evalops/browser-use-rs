@@ -126,6 +126,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   reasoned stop errors, max steps, max failures, step and LLM timeouts,
   upstream-style per-action wall-clock timeout
   guard with `BROWSER_USE_ACTION_TIMEOUT_S`/`action_timeout_seconds`,
+  caller-supplied task identity with checkpoint restore continuity and
+  follow-up task reuse,
   validated `llm_screenshot_size` prompt-only PNG resizing with coordinate-click
   scaling back to the observed viewport, upstream-style long URL shortening for
   user/assistant prompt text with recursive restoration before action
@@ -168,12 +170,12 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   page-change diagnostics, current-state `AgentHistoryReplayRun` orchestration,
   serialized replay-run and replay-recapture conformance coverage, and
   screenshot/URL accessors.
-  `AgentCheckpoint` export/resume preserves task settings, history,
-  initial-action execution state, pause/stop state, and managed filesystem
-  state across a new model/session. Agents expose pause/resume control that
-  returns an explicit paused error before model or browser work until resumed,
-  and `add_new_task` appends upstream-style follow-up user requests while
-  clearing pause/stop control state.
+  `AgentCheckpoint` export/resume preserves task identity, task settings,
+  history, initial-action execution state, pause/stop state, and managed
+  filesystem state across a new model/session. Agents expose pause/resume
+  control that returns an explicit paused error before model or browser work
+  until resumed, and `add_new_task` appends upstream-style follow-up user
+  requests while clearing pause/stop control state.
 - Schema-guided agent extraction passes the requested schema to the extraction
   LLM, returns upstream-style `<structured_result>` content, and records
   structured metadata with schema, partial status, and content statistics.

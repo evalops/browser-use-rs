@@ -127,7 +127,9 @@ includes:
   fallback LLM switching for retryable main model-output provider/rate-limit
   failures,
   step/LLM timeouts, max-failure handling,
-  upstream-style initial actions, upstream-style max-action truncation,
+  upstream-style initial actions, caller-supplied task identity with
+  checkpoint restore continuity and follow-up task reuse, upstream-style
+  max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,
   reasoned programmatic stop errors, pause/resume control state with checkpoint
   preservation, continuous follow-up task updates via `add_new_task`,
@@ -160,8 +162,9 @@ includes:
   action-history interacted-element metadata, and screenshot/URL history
   accessors. Agents can export a serializable
   `AgentCheckpoint` and resume it with a new model/session while preserving
-  task settings, history, initial-action execution state, pause/stop state, and
-  managed filesystem state. Conformance fixtures include a longer multi-step
+  task identity, task settings, history, initial-action execution state,
+  pause/stop state, and managed filesystem state. Conformance fixtures include
+  a longer multi-step
   replay for planning nudges, recovery after a failed browser action,
   prompt-history limits, stagnant-page loop-awareness, interacted-element
   rematching, action-level replay remapping diagnostics, rematched replay-plan
