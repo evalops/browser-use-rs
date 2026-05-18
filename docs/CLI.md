@@ -137,6 +137,13 @@ with `BROWSER_USE_RS_STATE_DIR`. Session IDs may contain ASCII letters, digits,
 process is gone, `stopped` after an explicit stop, and `unknown` when no process
 id was recorded.
 
+Use `browser-use-rs session cleanup` to remove records whose recorded browser
+process is stale. It prints `cleaned_sessions` plus the remaining `sessions`.
+By default cleanup skips running sessions and records with unknown liveness. Use
+`browser-use-rs session cleanup <id> --force` only when you intentionally want
+to force a specific running session through normal stop semantics, or remove a
+record whose liveness cannot be established.
+
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 `browser_use_state`, `browser_use_actions`, `browser_use_agent`, and
@@ -147,7 +154,7 @@ persistent record when the `session_id` is new and a URL is supplied. The MCP
 `browser_use_agent` tool also accepts
 `structured_output_mode` values `json-schema`, `json-object`, `prompt-only`,
 and `tool-call`, matching the CLI override for OpenAI-wire provider fallbacks.
-`browser_use_session` can start, stop, and list persistent session records. If
+`browser_use_session` can start, stop, list, and clean up persistent session records. If
 `session_id` matches a persistent session record, `mcp-stdio` reconnects to
 that Chrome session even after the stdio server process restarts. Session list
 output includes the same liveness `status` as the CLI registry.
@@ -188,7 +195,8 @@ templates live under `packaging/`; see
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
 - Persistent session `status` is a registry liveness hint, not a supervisor;
-  stale records still require an explicit stop/remove or a new session start.
+  stale records can be removed with `session cleanup`, but stale browser
+  processes are not automatically restarted.
 - The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
   authentication, pid/ready files, and packaged systemd/launchd templates for
   external supervisors.

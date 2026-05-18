@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#39 Add daemon-owned session supervision and stale cleanup](https://github.com/evalops/browser-use-rs/issues/39)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -42,6 +43,7 @@ small pushed checkpoints as each surface becomes real.
 - [#36 Persist implicit MCP session_id launches](https://github.com/evalops/browser-use-rs/issues/36)
 - [#37 Report persistent session liveness in registry outputs](https://github.com/evalops/browser-use-rs/issues/37)
 - [#38 Capture interacted element metadata in agent history](https://github.com/evalops/browser-use-rs/issues/38)
+- [#39 Add daemon-owned session supervision and stale cleanup](https://github.com/evalops/browser-use-rs/issues/39)
 
 ## Current Checkpoint
 
@@ -120,13 +122,13 @@ Implemented:
   Chrome OOPIF iframe targets.
 - One-shot CLI commands and a stdio MCP server backed by the CDP session,
   including in-process MCP session reuse by `session_id`.
-- Local persistent CLI session records for start/state/actions/stop/list across
-  CLI invocations.
+- Local persistent CLI session records for start/state/actions/stop/list/cleanup
+  across CLI invocations.
 - MCP stdio reconnection to persistent CLI session records by `session_id`, and
   persistent record creation for new `session_id` state/action/agent calls with
   a supplied URL.
-- MCP stdio persistent session lifecycle tool for start/stop/list, with
-  liveness status on session records.
+- MCP stdio persistent session lifecycle tool for start/stop/list/cleanup, with
+  liveness status and conservative stale-record cleanup on session records.
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
@@ -219,6 +221,4 @@ Implemented:
 
 Next:
 
-1. Continue [#39](https://github.com/evalops/browser-use-rs/issues/39) by
-   adding daemon-owned session supervision and stale record cleanup beyond
-   read-time liveness annotation.
+1. Open the next narrowly scoped parity issue before starting implementation.

@@ -148,8 +148,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   session reuse by `session_id`, and reconnection to persistent CLI session
   records, plus persistent record creation for new `session_id` calls when a
   URL is supplied.
-- MCP stdio persistent session lifecycle for start, stop, and list, with
-  liveness status on session records.
+- MCP stdio persistent session lifecycle for start, stop, list, and cleanup,
+  with liveness status and conservative stale-record cleanup on session
+  records.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
   the MCP tool surface with shared in-process sessions across active
   connections, `GET /healthz`, and optional bearer/header token auth for
@@ -185,9 +186,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Agent history now captures compact interacted-element metadata for indexed
   actions; full rerun execution and current-page rematching from that history
   remain outside this release slice.
-- CLI sessions are local registry records; there is not yet a supervised
-  background service that owns their lifecycle. Session `status` reports
-  registry liveness, but it does not restart stale browser processes.
+- CLI sessions are local registry records. Session `status` reports registry
+  liveness, and explicit cleanup removes stale records while refusing to remove
+  running sessions unless forced through normal stop semantics; the daemon does
+  not automatically restart stale browser processes.
 - The packaged daemon service files are local user-service templates; distro
   packages, Homebrew formulas, and installer-managed secret stores are not
   implemented.

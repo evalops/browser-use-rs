@@ -79,8 +79,11 @@ the tool call uses a fresh one-shot browser. When present, the stdio server
 reuses an in-process Chrome session for subsequent calls with the same
 `session_id`, reconnects to an existing persistent record after restarts, or
 creates a persistent record when the `session_id` is new and a URL is supplied.
-Use `browser_use_session` with `operation` set to `list` to inspect records and
-`stop` to close and remove one.
+Use `browser_use_session` with `operation` set to `list` to inspect records,
+`stop` to close and remove one, and `cleanup` to remove stale records. Cleanup
+skips running sessions and unknown-liveness records by default; set `force` only
+when a specific record should be stopped through normal stop semantics or
+removed despite unknown liveness.
 Persistent sessions created by the CLI are the same record format and can be
 stopped through MCP, and MCP-created persistent sessions can be stopped with
 `browser-use-rs session stop <id>`. Session records include a `status` field:

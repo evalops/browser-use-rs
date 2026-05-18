@@ -20,6 +20,12 @@ environment. Add only the provider variables you use, for example
 `OPENAI_API_KEY` and `OPENAI_MODEL`, or the Anthropic, Gemini, and Ollama
 variables documented in [CLI.md](CLI.md).
 
+The daemon exposes the same `browser_use_session` lifecycle tool as stdio. Use
+`operation: "list"` to inspect `running`, `stale`, and `unknown` records, then
+`operation: "cleanup"` to remove stale records. Cleanup refuses running sessions
+unless `force` is set, in which case it routes through normal stop semantics
+before removing the record.
+
 ## Systemd User Service
 
 The packaged user unit lives at:
