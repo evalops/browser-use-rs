@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #107 lands and CI is green.
+- [#108 Add BrowserProfile chromium_sandbox launch parity](https://github.com/evalops/browser-use-rs/issues/108)
 
 ## Completed Tracks
 
