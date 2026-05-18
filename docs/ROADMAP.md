@@ -57,10 +57,11 @@ Implemented:
   upstream flattened planning fields, custom
   prompt-visible DOM attributes, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash
-  output-schema controls, configurable prompt-history and clickable-element text
-  limits, upstream-style last-result completion helpers, upstream-style prompt
-  error truncation, per-step error slots, model-output/action/thought
-  accessors, duration helpers, and URL helpers.
+  output-schema controls, upstream-style flattened required output fields,
+  configurable prompt-history and clickable-element text limits, upstream-style
+  last-result completion helpers, upstream-style prompt error truncation,
+  per-step error slots, model-output/action/thought accessors, duration helpers,
+  and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.

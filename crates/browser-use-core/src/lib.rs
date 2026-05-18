@@ -2201,7 +2201,7 @@ fn schema_for_agent_output() -> Value {
 
 fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
     let mut schema = schema_for_agent_output();
-    let mut remove_fields = Vec::new();
+    let mut remove_fields = vec!["current_state"];
 
     if !settings.use_thinking || settings.flash_mode {
         remove_fields.push("thinking");
@@ -2219,6 +2219,16 @@ fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
     if !remove_fields.is_empty() {
         prune_schema_properties(&mut schema, &remove_fields);
     }
+
+    if settings.flash_mode {
+        require_schema_properties(&mut schema, &["memory", "action"]);
+    } else {
+        require_schema_properties(
+            &mut schema,
+            &["evaluation_previous_goal", "memory", "next_goal", "action"],
+        );
+    }
+    require_non_empty_actions(&mut schema);
 
     schema
 }
@@ -2268,6 +2278,26 @@ fn prune_schema_properties(schema: &mut Value, remove_fields: &[&str]) {
                 .as_str()
                 .is_none_or(|field| !remove_fields.contains(&field))
         });
+    }
+}
+
+fn require_schema_properties(schema: &mut Value, fields: &[&str]) {
+    schema["required"] = Value::Array(
+        fields
+            .iter()
+            .map(|field| Value::String((*field).to_owned()))
+            .collect(),
+    );
+}
+
+fn require_non_empty_actions(schema: &mut Value) {
+    if let Some(action) = schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .and_then(|properties| properties.get_mut("action"))
+        .and_then(Value::as_object_mut)
+    {
+        action.insert("minItems".to_owned(), Value::from(1));
     }
 }
 
@@ -2636,6 +2666,15 @@ mod tests {
         assert_eq!(serialized["plan_update"][0], "Find search box");
     }
 
+    fn schema_required_fields(schema: &Value) -> Vec<&str> {
+        schema["required"]
+            .as_array()
+            .expect("required fields")
+            .iter()
+            .map(|field| field.as_str().expect("required field string"))
+            .collect()
+    }
+
     #[test]
     fn agent_output_schema_exposes_planning_fields() {
         let schema = schema_for_agent_output();
@@ -2655,7 +2694,12 @@ mod tests {
         let schema = schema_for_agent_output_with_settings(&no_thinking);
         let properties = schema["properties"].as_object().expect("properties");
         assert!(!properties.contains_key("thinking"));
+        assert!(!properties.contains_key("current_state"));
         assert!(properties.contains_key("current_plan_item"));
+        assert_eq!(
+            schema_required_fields(&schema),
+            vec!["evaluation_previous_goal", "memory", "next_goal", "action"]
+        );
 
         let flash = AgentSettings {
             flash_mode: true,
@@ -2671,6 +2715,20 @@ mod tests {
         assert!(!properties.contains_key("plan_update"));
         assert!(properties.contains_key("memory"));
         assert!(properties.contains_key("action"));
+        assert_eq!(schema_required_fields(&schema), vec!["memory", "action"]);
+    }
+
+    #[test]
+    fn agent_output_schema_matches_upstream_required_fields() {
+        let schema = schema_for_agent_output_with_settings(&AgentSettings::default());
+        let properties = schema["properties"].as_object().expect("properties");
+
+        assert!(!properties.contains_key("current_state"));
+        assert_eq!(
+            schema_required_fields(&schema),
+            vec!["evaluation_previous_goal", "memory", "next_goal", "action"]
+        );
+        assert_eq!(schema["properties"]["action"]["minItems"], 1);
     }
 
     #[test]
