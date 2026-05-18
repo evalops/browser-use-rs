@@ -54,8 +54,9 @@ includes:
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`,
-  text/PDF/DOCX read support, text-file write/replace with CSV normalization
-  and upstream-style append semantics, PNG/JPEG image-file read payloads,
+  text/PDF/DOCX read support, text-file write/replace with CSV normalization,
+  DOCX write/append artifacts, and upstream-style append semantics, PNG/JPEG
+  image-file read payloads,
   `screenshot` with optional PNG file save, `save_as_pdf` with filename
   normalization, `extract`, `search_page`, `find_elements` including
   Chrome OOPIF iframe targets, back

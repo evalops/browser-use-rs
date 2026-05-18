@@ -19,6 +19,7 @@ small pushed checkpoints as each surface becomes real.
 - [#12 Port upstream FileSystem CSV normalization](https://github.com/evalops/browser-use-rs/issues/12)
 - [#13 Expand browser-profile watchdog diagnostics](https://github.com/evalops/browser-use-rs/issues/13)
 - [#14 Match upstream append_file missing-file behavior](https://github.com/evalops/browser-use-rs/issues/14)
+- [#15 Support DOCX write_file artifacts](https://github.com/evalops/browser-use-rs/issues/15)
 
 ## Current Checkpoint
 
@@ -40,10 +41,10 @@ Implemented:
   `.pdf` extension normalization, duplicate filename avoidance, and attachment
   paths.
 - Built-in text-file read/write/replace action parity for local agent artifacts,
-  upstream-style CSV write/append normalization, plus upstream-style PDF/DOCX
-  text extraction and PNG/JPEG read payloads for one-shot image prompt parts.
-  Append mode requires an existing file, matching upstream `FileSystem`
-  semantics.
+  upstream-style CSV write/append normalization, DOCX write/append artifacts,
+  plus upstream-style PDF/DOCX text extraction and PNG/JPEG read payloads for
+  one-shot image prompt parts. Append mode requires an existing file, matching
+  upstream `FileSystem` semantics.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.

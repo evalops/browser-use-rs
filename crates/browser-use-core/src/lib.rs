@@ -1537,7 +1537,7 @@ fn ensure_png_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
 fn write_file_action(
     params: &browser_use_tools::WriteFileAction,
 ) -> Result<ActionResult, BrowserError> {
-    if let Some(result) = validate_text_file_name(&params.file_name) {
+    if let Some(result) = validate_write_file_name(&params.file_name) {
         return Ok(result);
     }
     let path = std::path::Path::new(&params.file_name);
@@ -1567,7 +1567,13 @@ fn write_file_action(
     }
 
     if params.append {
-        if is_csv_file(&params.file_name) {
+        if is_docx_file(&params.file_name) {
+            let existing = read_docx_text(&params.file_name)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            let merged = merge_docx_append_content(&existing, &content);
+            write_docx_text(path, &merged)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        } else if is_csv_file(&params.file_name) {
             let existing = std::fs::read_to_string(path)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_csv_append_content(&existing, &content);
@@ -1587,8 +1593,13 @@ fn write_file_action(
             params.file_name
         )))
     } else {
-        std::fs::write(path, content)
-            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        if is_docx_file(&params.file_name) {
+            write_docx_text(path, &content)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        } else {
+            std::fs::write(path, content)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
         Ok(ActionResult::extracted(format!(
             "Wrote file {}",
             params.file_name
@@ -1598,6 +1609,26 @@ fn write_file_action(
 
 fn is_csv_file(file_name: &str) -> bool {
     file_extension(file_name).as_deref() == Some("csv")
+}
+
+fn is_docx_file(file_name: &str) -> bool {
+    file_extension(file_name).as_deref() == Some("docx")
+}
+
+fn merge_docx_append_content(existing: &str, new_content: &str) -> String {
+    if new_content
+        .trim_matches(|char| char == '\n' || char == '\r')
+        .is_empty()
+    {
+        return existing.to_owned();
+    }
+
+    let mut merged = existing.to_owned();
+    if !merged.is_empty() && !new_content.starts_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(new_content);
+    merged
 }
 
 fn merge_csv_append_content(existing: &str, new_content: &str) -> String {
@@ -1748,17 +1779,127 @@ fn read_docx_text(file_name: &str) -> Result<String, String> {
     docx_document_xml_to_text(&xml)
 }
 
+fn write_docx_text(path: &std::path::Path, content: &str) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    archive
+        .start_file("[Content_Types].xml", options)
+        .map_err(|error| error.to_string())?;
+    archive
+        .write_all(docx_content_types_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+    archive
+        .start_file("_rels/.rels", options)
+        .map_err(|error| error.to_string())?;
+    archive
+        .write_all(docx_root_relationships_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+    archive
+        .start_file("word/document.xml", options)
+        .map_err(|error| error.to_string())?;
+    archive
+        .write_all(docx_document_xml(content).as_bytes())
+        .map_err(|error| error.to_string())?;
+    archive.finish().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn docx_content_types_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#
+}
+
+fn docx_root_relationships_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#
+}
+
+fn docx_document_xml(content: &str) -> String {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+    );
+    for paragraph in content.split('\n') {
+        xml.push_str("<w:p>");
+        xml.push_str(&docx_paragraph_runs(paragraph));
+        xml.push_str("</w:p>");
+    }
+    xml.push_str(r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#);
+    xml
+}
+
+fn docx_paragraph_runs(paragraph: &str) -> String {
+    let mut runs = String::new();
+    let mut text = String::new();
+    for character in paragraph.chars() {
+        if character == '\t' {
+            push_docx_text_run(&mut runs, &text);
+            text.clear();
+            runs.push_str("<w:r><w:tab/></w:r>");
+        } else {
+            text.push(character);
+        }
+    }
+    push_docx_text_run(&mut runs, &text);
+    runs
+}
+
+fn push_docx_text_run(runs: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    runs.push_str(r#"<w:r><w:t xml:space="preserve">"#);
+    push_xml_escaped(runs, text);
+    runs.push_str("</w:t></w:r>");
+}
+
+fn push_xml_escaped(output: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(character),
+        }
+    }
+}
+
 fn docx_document_xml_to_text(xml: &str) -> Result<String, String> {
     let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut text = String::new();
+    let mut in_text = false;
 
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Eof) => break,
+            Ok(quick_xml::events::Event::Start(event))
+                if local_xml_name(event.name().as_ref()) == b"t" =>
+            {
+                in_text = true;
+            }
+            Ok(quick_xml::events::Event::End(event))
+                if local_xml_name(event.name().as_ref()) == b"t" =>
+            {
+                in_text = false;
+            }
             Ok(quick_xml::events::Event::Text(event)) => {
-                let decoded = event.decode().map_err(|error| error.to_string())?;
-                text.push_str(&decoded);
+                if in_text {
+                    let decoded = event.decode().map_err(|error| error.to_string())?;
+                    text.push_str(&decoded);
+                }
+            }
+            Ok(quick_xml::events::Event::CData(event)) => {
+                if in_text {
+                    let decoded = event.decode().map_err(|error| error.to_string())?;
+                    text.push_str(&decoded);
+                }
+            }
+            Ok(quick_xml::events::Event::GeneralRef(event)) => {
+                if in_text {
+                    let decoded = event.decode().map_err(|error| error.to_string())?;
+                    text.push_str(&decode_xml_general_ref(&decoded)?);
+                }
             }
             Ok(quick_xml::events::Event::Empty(event))
                 if local_xml_name(event.name().as_ref()) == b"tab" =>
@@ -1781,6 +1922,28 @@ fn docx_document_xml_to_text(xml: &str) -> Result<String, String> {
     }
 
     Ok(text.trim_end_matches('\n').to_owned())
+}
+
+fn decode_xml_general_ref(reference: &str) -> Result<String, String> {
+    match reference {
+        "amp" => return Ok("&".to_owned()),
+        "lt" => return Ok("<".to_owned()),
+        "gt" => return Ok(">".to_owned()),
+        "quot" => return Ok("\"".to_owned()),
+        "apos" => return Ok("'".to_owned()),
+        _ => {}
+    }
+
+    let value = if let Some(hex) = reference.strip_prefix("#x") {
+        u32::from_str_radix(hex, 16).map_err(|error| error.to_string())?
+    } else if let Some(decimal) = reference.strip_prefix('#') {
+        decimal.parse::<u32>().map_err(|error| error.to_string())?
+    } else {
+        return Err(format!("unsupported XML entity reference '&{reference};'"));
+    };
+    char::from_u32(value)
+        .map(|character| character.to_string())
+        .ok_or_else(|| format!("invalid XML character reference '&{reference};'"))
 }
 
 fn local_xml_name(name: &[u8]) -> &[u8] {
@@ -1860,6 +2023,37 @@ fn replace_file_action(
     )))
 }
 
+fn validate_write_file_name(file_name: &str) -> Option<ActionResult> {
+    let path = std::path::Path::new(file_name);
+    let base_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(file_name);
+    let Some(extension) = path.extension().and_then(std::ffi::OsStr::to_str) else {
+        return Some(ActionResult::error(format!(
+            "Filename '{base_name}' has no extension. Supported extensions: {}.",
+            supported_write_extensions_message()
+        )));
+    };
+    let extension = extension.to_ascii_lowercase();
+
+    if unsupported_binary_extensions().contains(&extension.as_str()) {
+        return Some(ActionResult::error(format!(
+            "Cannot write binary/image file '{base_name}'. The write_file action supports text files and DOCX documents. Supported extensions: {}.",
+            supported_write_extensions_message()
+        )));
+    }
+
+    if !supported_write_extensions().contains(&extension.as_str()) {
+        return Some(ActionResult::error(format!(
+            "Unsupported file extension '.{extension}' in '{base_name}'. Supported extensions: {}.",
+            supported_write_extensions_message()
+        )));
+    }
+
+    None
+}
+
 fn validate_text_file_name(file_name: &str) -> Option<ActionResult> {
     let path = std::path::Path::new(file_name);
     let base_name = path
@@ -1929,6 +2123,10 @@ fn supported_text_extensions() -> &'static [&'static str] {
     &["txt", "md", "json", "jsonl", "csv", "html", "xml"]
 }
 
+fn supported_write_extensions() -> &'static [&'static str] {
+    &["txt", "md", "json", "jsonl", "csv", "html", "xml", "docx"]
+}
+
 fn supported_read_image_extensions() -> &'static [&'static str] {
     &["png", "jpg", "jpeg"]
 }
@@ -1963,6 +2161,14 @@ fn unsupported_binary_extensions() -> &'static [&'static str] {
 
 fn supported_text_extensions_message() -> String {
     supported_text_extensions()
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn supported_write_extensions_message() -> String {
+    supported_write_extensions()
         .iter()
         .map(|extension| format!(".{extension}"))
         .collect::<Vec<_>>()
@@ -4986,6 +5192,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let text_path = temp_dir.path().join("missing.md");
         let csv_path = temp_dir.path().join("missing.csv");
+        let docx_path = temp_dir.path().join("missing.docx");
         let session = MockSession::new();
         let mut executor = BrowserActionExecutor::new(session);
 
@@ -5007,9 +5214,19 @@ mod tests {
                 leading_newline: false,
             }))
             .await;
+        let docx_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: docx_path.display().to_string(),
+                content: "docx".to_owned(),
+                append: true,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
 
         let expected_text_error = format!("File '{}' not found.", text_path.display());
         let expected_csv_error = format!("File '{}' not found.", csv_path.display());
+        let expected_docx_error = format!("File '{}' not found.", docx_path.display());
         assert_eq!(
             text_result.error.as_deref(),
             Some(expected_text_error.as_str())
@@ -5018,8 +5235,13 @@ mod tests {
             csv_result.error.as_deref(),
             Some(expected_csv_error.as_str())
         );
+        assert_eq!(
+            docx_result.error.as_deref(),
+            Some(expected_docx_error.as_str())
+        );
         assert!(!text_path.exists());
         assert!(!csv_path.exists());
+        assert!(!docx_path.exists());
     }
 
     #[tokio::test]
@@ -5126,6 +5348,51 @@ mod tests {
         assert!(content.contains("<content>\nAlpha\nBeta\n</content>"));
         assert_eq!(result.long_term_memory.as_deref(), Some("Alpha\nBeta"));
         assert!(result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_writes_and_appends_docx_files_as_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.docx");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "Title <One>\nAlpha\tBeta".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let append_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "Gamma & Delta".to_owned(),
+                append: true,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(append_result.error, None);
+        assert_eq!(
+            read_docx_text(&file_name).expect("docx text"),
+            "Title <One>\nAlpha\tBeta\nGamma & Delta"
+        );
+        let bytes = std::fs::read(&path).expect("docx bytes");
+        assert_eq!(&bytes[..2], b"PK");
+        let content = read_result.extracted_content.as_deref().expect("docx read");
+        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains("Title <One>\nAlpha\tBeta\nGamma & Delta"));
     }
 
     #[tokio::test]
