@@ -100,7 +100,14 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             role: None,
             name: Some("Plan".to_owned()),
             text: Some("Enterprise".to_owned()),
-            attributes: BTreeMap::from([("name".to_owned(), "plan".to_owned())]),
+            attributes: BTreeMap::from([
+                (
+                    "compound_components".to_owned(),
+                    "(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=3,options=Starter|Enterprise|Internal)"
+                        .to_owned(),
+                ),
+                ("name".to_owned(), "plan".to_owned()),
+            ]),
             bounds: Some(ElementBounds {
                 x: 12,
                 y: 112,

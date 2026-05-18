@@ -44,7 +44,8 @@ Upstream bumps must include:
 
 - `simple_interactive_state.json`: compact DOM text and selector-map fixture.
 - `mixed_interactive_state.json`: selector-map fixture for accessible labels,
-  attributes, bounds, dropdown current values, and scrollable metadata.
+  attributes, bounds, dropdown current values, compound control metadata, and
+  scrollable metadata.
 - `simple_action_sequence.json`: typed browser action sequence fixture.
 - `simple_action_results.json`: expected action-result fixture for the action
   sequence harness.
