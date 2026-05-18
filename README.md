@@ -107,6 +107,8 @@ includes:
   while absolute external paths continue to bypass it. Agent prompts include
   upstream-style `<file_system>` and `<todo_contents>` context, and large
   extract results can spill into managed `extracted_content_N.md` files.
+  Agent-level `extraction_schema` supplies the default structured schema for
+  LLM-backed extract actions that do not provide their own `output_schema`.
   Restored agents can continue prompt and tool execution from serialized
   `FileSystemState`, including preserved todo/report context and incrementing
   extracted-content numbering. `AgentSettings.file_system_path` and the CLI

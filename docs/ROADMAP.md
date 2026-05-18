@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
+- Next upstream parity slice after #92 lands and CI is green.
 
 ## Completed Tracks
 
+- [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
 - [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
 - [#90 Add upstream long-URL shortening and output restoration](https://github.com/evalops/browser-use-rs/issues/90)
 - [#89 Add upstream llm_screenshot_size resizing and coordinate scaling](https://github.com/evalops/browser-use-rs/issues/89)
@@ -128,7 +129,9 @@ Implemented:
   route through that sandbox while absolute external paths bypass it. Agent
   prompts include upstream-style `<file_system>` and `<todo_contents>` context,
   and large extract results can spill into managed `extracted_content_N.md`
-  files. Restored agents can continue prompt and tool execution from serialized
+  files. Agent-level `extraction_schema` supplies the default structured schema
+  for LLM-backed extract actions that do not provide their own `output_schema`.
+  Restored agents can continue prompt and tool execution from serialized
   `FileSystemState`, including restored `read_file` behavior, todo/report
   context, and extracted-content numbering that survives replay. Agents can use
   upstream-style `file_system_path` to place the managed filesystem under a
