@@ -66,8 +66,8 @@ Implemented:
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names, and
-  backend node ids, carries image alt text into image-only control names,
-  renders selected dropdown values, preserves automation-friendly
+  backend/frontend node ids, carries image alt text into image-only control
+  names, renders selected dropdown values, preserves automation-friendly
   data/ARIA/value attributes, preserves static history-matching attributes,
   renders native input format hints, detects search affordance signals and
   small icon controls, detects pagination affordances, supports caller-selected

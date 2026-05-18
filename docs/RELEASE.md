@@ -14,11 +14,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
   element metadata, automation-friendly data/ARIA/value attributes,
   static history-matching attributes, accessibility-tree role/name enrichment
-  with backend node ids, hidden-element filtering, and basic accessible names
-  from labels, ARIA references, and image alt text, plus selected dropdown
-  values, common ARIA widget roles, search affordance signals, small icon
-  controls, pagination affordance detection, and configurable prompt-visible
-  attributes.
+  with backend/frontend node ids, hidden-element filtering, and basic
+  accessible names from labels, ARIA references, and image alt text, plus
+  selected dropdown values, common ARIA widget roles, search affordance signals,
+  small icon controls, pagination affordance detection, and configurable
+  prompt-visible attributes.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and

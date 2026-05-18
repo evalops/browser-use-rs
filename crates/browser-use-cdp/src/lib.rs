@@ -1157,6 +1157,11 @@ impl CdpBrowserSession {
         if backend_by_ref.is_empty() {
             return Ok(BTreeMap::new());
         }
+        let backend_node_ids = backend_by_ref.values().copied().collect::<Vec<_>>();
+        let node_ids_by_backend = self
+            .node_ids_by_backend_ids(page, &backend_node_ids)
+            .await
+            .unwrap_or_default();
 
         let ax_by_backend = self
             .connection
@@ -1177,7 +1182,48 @@ impl CdpBrowserSession {
                     .cloned()
                     .unwrap_or_default();
                 info.backend_node_id = backend_node_id;
+                info.node_id = node_ids_by_backend.get(&backend_node_id).copied();
                 (ax_ref, info)
+            })
+            .collect())
+    }
+
+    async fn node_ids_by_backend_ids(
+        &self,
+        page: &AttachedPage,
+        backend_node_ids: &[u64],
+    ) -> Result<BTreeMap<u64, u64>, BrowserError> {
+        if backend_node_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let _ = self
+            .connection
+            .command(
+                "DOM.getDocument",
+                json!({ "depth": -1, "pierce": true }),
+                Some(&page.session_id),
+            )
+            .await;
+        let result = self
+            .connection
+            .command(
+                "DOM.pushNodesByBackendIdsToFrontend",
+                json!({ "backendNodeIds": backend_node_ids }),
+                Some(&page.session_id),
+            )
+            .await?;
+        let node_ids = result
+            .get("nodeIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| BrowserError::MissingResponseData("DOM nodeIds".to_owned()))?;
+
+        Ok(backend_node_ids
+            .iter()
+            .zip(node_ids)
+            .filter_map(|(backend_node_id, node_id)| {
+                let node_id = node_id.as_u64()?;
+                (node_id != 0).then_some((*backend_node_id, node_id))
             })
             .collect())
     }
@@ -1186,6 +1232,7 @@ impl CdpBrowserSession {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct AccessibilityNodeInfo {
     backend_node_id: u64,
+    node_id: Option<u64>,
     role: Option<String>,
     name: Option<String>,
 }
@@ -1232,7 +1279,7 @@ fn dom_element_from_value(
         index,
         target_id: target_id.to_owned(),
         backend_node_id: ax_info.map(|info| info.backend_node_id).unwrap_or_default(),
-        node_id: None,
+        node_id: ax_info.and_then(|info| info.node_id),
         tag_name: value
             .get("tag_name")
             .and_then(Value::as_str)
@@ -1336,6 +1383,7 @@ fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, Accessibilit
                 backend_node_id,
                 AccessibilityNodeInfo {
                     backend_node_id,
+                    node_id: None,
                     role: ax_property_value(node, "role").map(str::to_owned),
                     name: ax_property_value(node, "name").map(str::to_owned),
                 },
@@ -3001,6 +3049,7 @@ mod tests {
             "browser-use-rs-1".to_owned(),
             AccessibilityNodeInfo {
                 backend_node_id: 42,
+                node_id: Some(84),
                 role: Some("button".to_owned()),
                 name: Some("Save settings".to_owned()),
             },
@@ -3022,6 +3071,7 @@ mod tests {
         .expect("dom element");
 
         assert_eq!(element.backend_node_id, 42);
+        assert_eq!(element.node_id, Some(84));
         assert_eq!(element.role.as_deref(), Some("button"));
         assert_eq!(element.name.as_deref(), Some("Save settings"));
     }
@@ -3305,6 +3355,7 @@ mod tests {
             .expect("native button");
 
         assert!(button.backend_node_id > 0);
+        assert!(button.node_id.is_some_and(|node_id| node_id > 0));
         assert_eq!(button.role.as_deref(), Some("button"));
         assert_eq!(button.name.as_deref(), Some("Save settings"));
 

@@ -22,12 +22,13 @@ includes:
   short tab ids.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
-  tags and contents, accessibility-tree role/name enrichment, backend node ids,
-  accessible labels, image-alt control names, selected dropdown values, bounds,
-  automation-friendly data/ARIA/value attributes, static history-matching
-  attributes, hidden-element filtering, and scrollable element metadata, plus
-  common ARIA widget roles, search affordance signals, small icon controls,
-  pagination affordances, and configurable prompt-visible attributes.
+  tags and contents, accessibility-tree role/name enrichment, backend and
+  frontend node ids, accessible labels, image-alt control names, selected
+  dropdown values, bounds, automation-friendly data/ARIA/value attributes,
+  static history-matching attributes, hidden-element filtering, and scrollable
+  element metadata, plus common ARIA widget roles, search affordance signals,
+  small icon controls, pagination affordances, and configurable prompt-visible
+  attributes.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file
