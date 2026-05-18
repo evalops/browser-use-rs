@@ -76,7 +76,7 @@ kebab-case enum values.
 `browser_use_agent` also accepts an optional typed `settings` object matching
 `browser-use-core`'s `AgentSettings`, including upstream-compatible
 `use_vision` values of `true`, `false`, or `"auto"`, image detail level,
-action limits, timeouts, final `done` responses after repeated failures,
+action limits, step/LLM/per-action timeouts, final `done` responses after repeated failures,
 optional `done.files_to_display` text expansion, prompt-history limits,
 planning controls, upstream-style message compaction settings, thinking/flash
 output modes, and prompt-visible DOM

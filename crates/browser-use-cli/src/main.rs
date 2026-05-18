@@ -135,6 +135,8 @@ enum Command {
         llm_timeout_seconds: Option<u64>,
         #[arg(long)]
         step_timeout_seconds: Option<u64>,
+        #[arg(long)]
+        action_timeout_seconds: Option<f64>,
         #[arg(long, default_value_t = false)]
         no_final_response_after_failure: bool,
         #[arg(long, default_value_t = false)]
@@ -512,6 +514,7 @@ async fn main() -> anyhow::Result<()> {
             max_actions_per_step,
             llm_timeout_seconds,
             step_timeout_seconds,
+            action_timeout_seconds,
             no_final_response_after_failure,
             no_display_files_in_done_text,
             no_loop_detection,
@@ -572,6 +575,7 @@ async fn main() -> anyhow::Result<()> {
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
+                action_timeout_seconds,
                 no_final_response_after_failure,
                 no_display_files_in_done_text,
                 no_loop_detection,
@@ -654,6 +658,7 @@ struct CliAgentSettingsArgs {
     max_actions_per_step: Option<usize>,
     llm_timeout_seconds: Option<u64>,
     step_timeout_seconds: Option<u64>,
+    action_timeout_seconds: Option<f64>,
     no_final_response_after_failure: bool,
     no_display_files_in_done_text: bool,
     no_loop_detection: bool,
@@ -716,6 +721,9 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     if let Some(value) = args.step_timeout_seconds {
         settings.step_timeout_seconds = value;
+    }
+    if let Some(value) = args.action_timeout_seconds {
+        settings.action_timeout_seconds = value;
     }
     if args.no_final_response_after_failure {
         settings.final_response_after_failure = false;
@@ -2189,6 +2197,8 @@ mod tests {
             "11",
             "--step-timeout-seconds",
             "22",
+            "--action-timeout-seconds",
+            "33.5",
             "--no-final-response-after-failure",
             "--no-display-files-in-done-text",
             "--no-loop-detection",
@@ -2267,6 +2277,7 @@ mod tests {
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
+                action_timeout_seconds,
                 no_final_response_after_failure,
                 no_display_files_in_done_text,
                 no_loop_detection,
@@ -2314,6 +2325,7 @@ mod tests {
                 assert_eq!(max_actions_per_step, Some(1));
                 assert_eq!(llm_timeout_seconds, Some(11));
                 assert_eq!(step_timeout_seconds, Some(22));
+                assert_eq!(action_timeout_seconds, Some(33.5));
                 assert!(no_final_response_after_failure);
                 assert!(no_display_files_in_done_text);
                 assert!(no_loop_detection);
@@ -2645,6 +2657,7 @@ mod tests {
             max_actions_per_step: Some(1),
             llm_timeout_seconds: Some(11),
             step_timeout_seconds: Some(22),
+            action_timeout_seconds: Some(33.5),
             no_final_response_after_failure: true,
             no_display_files_in_done_text: true,
             no_loop_detection: true,
@@ -2704,6 +2717,7 @@ mod tests {
         assert_eq!(settings.max_actions_per_step, 1);
         assert_eq!(settings.llm_timeout_seconds, 11);
         assert_eq!(settings.step_timeout_seconds, 22);
+        assert_eq!(settings.action_timeout_seconds, 33.5);
         assert!(!settings.final_response_after_failure);
         assert!(!settings.display_files_in_done_text);
         assert!(!settings.loop_detection_enabled);

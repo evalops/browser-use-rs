@@ -114,8 +114,10 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
   max actions per step with upstream-style truncation, max steps, max failures,
-  step and LLM timeouts, upstream-style final `done` responses after repeated
-  failures, normalized repeated-action loop detection, previous result context,
+  step and LLM timeouts, upstream-style per-action wall-clock timeout guard
+  with `BROWSER_USE_ACTION_TIMEOUT_S`/`action_timeout_seconds`, upstream-style
+  final `done` responses after repeated failures, normalized repeated-action
+  loop detection, previous result context,
   vision-aware screenshot capture and image prompt parts, screenshot action
   next-observation image overrides, action-result image prompt parts,
   upstream-style page-stat prompt context with loading/skeleton hints, one-time

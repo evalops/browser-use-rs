@@ -32,6 +32,9 @@ pub use browser_use_tools::{BrowserAction, SearchEngine};
 /// Version of the upstream browser-use source that this crate initially targets.
 pub const INITIAL_UPSTREAM_COMMIT: &str = "f09a86671591312bbc272403a7409d56f4cec668";
 
+const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
+const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSettings {
     #[serde(default = "default_use_vision")]
@@ -48,6 +51,8 @@ pub struct AgentSettings {
     pub llm_timeout_seconds: u64,
     #[serde(default = "default_step_timeout_seconds")]
     pub step_timeout_seconds: u64,
+    #[serde(default = "default_action_timeout_seconds")]
+    pub action_timeout_seconds: f64,
     #[serde(default = "default_final_response_after_failure")]
     pub final_response_after_failure: bool,
     #[serde(default = "default_display_files_in_done_text")]
@@ -235,6 +240,7 @@ impl Default for AgentSettings {
             max_actions_per_step: default_max_actions_per_step(),
             llm_timeout_seconds: default_llm_timeout_seconds(),
             step_timeout_seconds: default_step_timeout_seconds(),
+            action_timeout_seconds: default_action_timeout_seconds(),
             final_response_after_failure: default_final_response_after_failure(),
             display_files_in_done_text: default_display_files_in_done_text(),
             loop_detection_window: default_loop_detection_window(),
@@ -262,6 +268,13 @@ impl Default for AgentSettings {
             override_system_message: None,
             extend_system_message: None,
         }
+    }
+}
+
+impl AgentSettings {
+    #[must_use]
+    pub fn effective_action_timeout_seconds(&self) -> f64 {
+        coerce_valid_action_timeout_seconds(self.action_timeout_seconds)
     }
 }
 
@@ -619,6 +632,44 @@ fn default_llm_timeout_seconds() -> u64 {
 
 fn default_step_timeout_seconds() -> u64 {
     180
+}
+
+fn default_action_timeout_seconds() -> f64 {
+    parse_action_timeout_seconds(std::env::var(ACTION_TIMEOUT_ENV_VAR).ok().as_deref())
+}
+
+fn parse_action_timeout_seconds(raw: Option<&str>) -> f64 {
+    let Some(raw) = raw else {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    };
+    if raw.is_empty() {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    }
+    let Ok(parsed) = raw.parse::<f64>() else {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    };
+    coerce_valid_action_timeout_seconds(parsed)
+}
+
+fn coerce_valid_action_timeout_seconds(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 && Duration::try_from_secs_f64(value).is_ok() {
+        value
+    } else {
+        ACTION_TIMEOUT_FALLBACK_SECONDS
+    }
+}
+
+fn action_timeout_duration(seconds: f64) -> Duration {
+    Duration::try_from_secs_f64(coerce_valid_action_timeout_seconds(seconds))
+        .unwrap_or_else(|_| Duration::from_secs(ACTION_TIMEOUT_FALLBACK_SECONDS as u64))
+}
+
+fn timed_out_action_result(action: &BrowserAction, timeout_seconds: f64) -> ActionResult {
+    ActionResult::error(format!(
+        "Action {} timed out after {:.0}s. The browser may be unresponsive (dead CDP WebSocket). Try again or a different approach.",
+        action.name(),
+        coerce_valid_action_timeout_seconds(timeout_seconds)
+    ))
 }
 
 fn default_final_response_after_failure() -> bool {
@@ -1439,6 +1490,7 @@ pub struct BrowserActionExecutor<S> {
     session: S,
     file_system: ManagedFileSystem,
     display_files_in_done_text: bool,
+    action_timeout_seconds: f64,
     enforce_upload_file_availability: bool,
     available_file_paths: BTreeSet<String>,
 }
@@ -1458,6 +1510,7 @@ impl<S> BrowserActionExecutor<S> {
             session,
             file_system,
             display_files_in_done_text: true,
+            action_timeout_seconds: default_action_timeout_seconds(),
             enforce_upload_file_availability: false,
             available_file_paths: BTreeSet::new(),
         }
@@ -1481,6 +1534,15 @@ impl<S> BrowserActionExecutor<S> {
         self.display_files_in_done_text = display_files_in_done_text;
     }
 
+    pub fn set_action_timeout_seconds(&mut self, action_timeout_seconds: f64) {
+        self.action_timeout_seconds = coerce_valid_action_timeout_seconds(action_timeout_seconds);
+    }
+
+    #[must_use]
+    pub fn action_timeout_seconds(&self) -> f64 {
+        coerce_valid_action_timeout_seconds(self.action_timeout_seconds)
+    }
+
     pub fn set_upload_file_availability(
         &mut self,
         enforce_upload_file_availability: bool,
@@ -1496,19 +1558,24 @@ where
     S: BrowserSession + Send + Sync,
 {
     async fn execute_for_agent(&mut self, action: &BrowserAction) -> ActionResult {
-        match execute_browser_action(
-            &self.session,
-            &mut self.file_system,
-            action,
-            self.display_files_in_done_text,
-            self.enforce_upload_file_availability,
-            &self.available_file_paths,
-            false,
+        let timeout_seconds = self.action_timeout_seconds();
+        match timeout(
+            action_timeout_duration(timeout_seconds),
+            execute_browser_action(
+                &self.session,
+                &mut self.file_system,
+                action,
+                self.display_files_in_done_text,
+                self.enforce_upload_file_availability,
+                &self.available_file_paths,
+                false,
+            ),
         )
         .await
         {
-            Ok(result) => result,
-            Err(error) => ActionResult::error(error.to_string()),
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => ActionResult::error(error.to_string()),
+            Err(_) => timed_out_action_result(action, timeout_seconds),
         }
     }
 
@@ -1776,19 +1843,24 @@ where
     S: BrowserSession + Send + Sync,
 {
     async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
-        match execute_browser_action(
-            &self.session,
-            &mut self.file_system,
-            action,
-            self.display_files_in_done_text,
-            self.enforce_upload_file_availability,
-            &self.available_file_paths,
-            true,
+        let timeout_seconds = self.action_timeout_seconds();
+        match timeout(
+            action_timeout_duration(timeout_seconds),
+            execute_browser_action(
+                &self.session,
+                &mut self.file_system,
+                action,
+                self.display_files_in_done_text,
+                self.enforce_upload_file_availability,
+                &self.available_file_paths,
+                true,
+            ),
         )
         .await
         {
-            Ok(result) => result,
-            Err(error) => ActionResult::error(error.to_string()),
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => ActionResult::error(error.to_string()),
+            Err(_) => timed_out_action_result(action, timeout_seconds),
         }
     }
 }
@@ -4801,6 +4873,7 @@ where
     ) -> Self {
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
+        executor.set_action_timeout_seconds(settings.action_timeout_seconds);
         executor.set_upload_file_availability(true, settings.available_file_paths.clone());
         Self {
             id: Uuid::now_v7(),
@@ -4821,6 +4894,7 @@ where
         let file_system = ManagedFileSystem::from_state(checkpoint.file_system_state)?;
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(checkpoint.settings.display_files_in_done_text);
+        executor.set_action_timeout_seconds(checkpoint.settings.action_timeout_seconds);
         executor
             .set_upload_file_availability(true, checkpoint.settings.available_file_paths.clone());
         Ok(Self {
@@ -5068,8 +5142,16 @@ where
                 None
             };
 
-            let raw_result = self.executor.execute_for_agent(action).await;
-            let result = self.resolve_agent_action_result(action, raw_result).await;
+            let timeout_seconds = self.settings.effective_action_timeout_seconds();
+            let result = match timeout(action_timeout_duration(timeout_seconds), async {
+                let raw_result = self.executor.execute_for_agent(action).await;
+                self.resolve_agent_action_result(action, raw_result).await
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => timed_out_action_result(action, timeout_seconds),
+            };
             let should_stop =
                 result.is_done || result.error.is_some() || action.terminates_sequence();
             let page_changed = if should_stop {
@@ -7077,6 +7159,10 @@ mod tests {
         assert_eq!(settings.max_actions_per_step, 5);
         assert_eq!(settings.llm_timeout_seconds, 60);
         assert_eq!(settings.step_timeout_seconds, 180);
+        assert_eq!(
+            settings.action_timeout_seconds,
+            default_action_timeout_seconds()
+        );
         assert!(settings.final_response_after_failure);
         assert!(settings.display_files_in_done_text);
         assert_eq!(settings.loop_detection_window, 20);
@@ -7106,6 +7192,18 @@ mod tests {
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
+    }
+
+    #[test]
+    fn action_timeout_parser_accepts_only_finite_positive_seconds() {
+        assert_eq!(parse_action_timeout_seconds(None), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("garbage")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("nan")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("inf")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("-1")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("0")), 180.0);
+        assert_eq!(parse_action_timeout_seconds(Some("12.5")), 12.5);
     }
 
     #[test]
@@ -8680,6 +8778,7 @@ mod tests {
         state_screenshot_requests: Mutex<Vec<bool>>,
         state_error: Mutex<Option<String>>,
         click_error: Mutex<Option<String>>,
+        click_delay: Mutex<Option<Duration>>,
     }
 
     impl MockSession {
@@ -8690,6 +8789,7 @@ mod tests {
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(None),
                 click_error: Mutex::new(None),
+                click_delay: Mutex::new(None),
             }
         }
 
@@ -8700,6 +8800,7 @@ mod tests {
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(None),
                 click_error: Mutex::new(None),
+                click_delay: Mutex::new(None),
             }
         }
 
@@ -8710,6 +8811,7 @@ mod tests {
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(Some(error.into())),
                 click_error: Mutex::new(None),
+                click_delay: Mutex::new(None),
             }
         }
 
@@ -8720,6 +8822,18 @@ mod tests {
                 state_screenshot_requests: Mutex::new(Vec::new()),
                 state_error: Mutex::new(None),
                 click_error: Mutex::new(Some(error.into())),
+                click_delay: Mutex::new(None),
+            }
+        }
+
+        fn with_click_delay(delay: Duration) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                states: Mutex::new(VecDeque::new()),
+                state_screenshot_requests: Mutex::new(Vec::new()),
+                state_error: Mutex::new(None),
+                click_error: Mutex::new(None),
+                click_delay: Mutex::new(Some(delay)),
             }
         }
 
@@ -8794,6 +8908,10 @@ mod tests {
                 .lock()
                 .expect("events lock")
                 .push(format!("click:{index}"));
+            let delay = self.click_delay.lock().expect("click delay lock").take();
+            if let Some(delay) = delay {
+                sleep(delay).await;
+            }
             if let Some(error) = self.click_error.lock().expect("click error lock").take() {
                 return Err(BrowserError::ActionFailed(error));
             }
@@ -8977,6 +9095,25 @@ mod tests {
             executor.session().events(),
             vec!["navigate:https://example.com:false"]
         );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_returns_action_error_when_action_times_out() {
+        let session = MockSession::with_click_delay(Duration::from_millis(50));
+        let mut executor = BrowserActionExecutor::new(session);
+        executor.set_action_timeout_seconds(0.005);
+
+        let result = executor
+            .execute(&BrowserAction::Click(ClickElementAction {
+                index: Some(1),
+                coordinate_x: None,
+                coordinate_y: None,
+            }))
+            .await;
+
+        let error = result.error.expect("timeout error");
+        assert!(error.contains("Action click timed out after"));
+        assert!(error.contains("dead CDP WebSocket"));
     }
 
     #[tokio::test]
@@ -11905,6 +12042,18 @@ mod tests {
 
     struct SlowModel;
 
+    struct QueueThenPendingModel {
+        first_output: Mutex<Option<Value>>,
+    }
+
+    impl QueueThenPendingModel {
+        fn new(first_output: Value) -> Self {
+            Self {
+                first_output: Mutex::new(Some(first_output)),
+            }
+        }
+    }
+
     #[async_trait]
     impl ChatModel for SlowModel {
         fn provider(&self) -> &str {
@@ -11919,6 +12068,33 @@ mod tests {
             &self,
             _request: ChatRequest,
         ) -> Result<ChatCompletion<Value>, LlmError> {
+            std::future::pending::<()>().await;
+            unreachable!("pending model should be cancelled by timeout")
+        }
+    }
+
+    #[async_trait]
+    impl ChatModel for QueueThenPendingModel {
+        fn provider(&self) -> &str {
+            "test"
+        }
+
+        fn model(&self) -> &str {
+            "queue-then-pending"
+        }
+
+        async fn invoke_json(
+            &self,
+            _request: ChatRequest,
+        ) -> Result<ChatCompletion<Value>, LlmError> {
+            let first_output = self.first_output.lock().expect("first output lock").take();
+            if let Some(content) = first_output {
+                return Ok(ChatCompletion {
+                    model: self.model().to_owned(),
+                    content,
+                    raw_response: None,
+                });
+            }
             std::future::pending::<()>().await;
             unreachable!("pending model should be cancelled by timeout")
         }
@@ -11950,6 +12126,40 @@ mod tests {
 
         assert!(matches!(error, AgentRunError::StepTimedOut { seconds: 0 }));
         assert!(agent.history().items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_action_timeout_bounds_llm_backed_extract_resolution() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "extract": {
+                        "query": "company summary",
+                        "extract_links": false,
+                        "extract_images": false,
+                        "include_source": false
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            action_timeout_seconds: 0.005,
+            llm_timeout_seconds: 30,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "extract with bounded action timeout",
+            settings,
+            QueueThenPendingModel::new(output),
+            MockSession::new(),
+        );
+
+        let item = agent.step().await.expect("step records action timeout");
+
+        let error = item.result[0].error.as_deref().expect("timeout error");
+        assert!(error.contains("Action extract timed out after"));
+        assert!(error.contains("dead CDP WebSocket"));
     }
 
     #[tokio::test]

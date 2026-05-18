@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #81 lands and CI is green.
+- [#82 Add upstream-style per-action timeout guard](https://github.com/evalops/browser-use-rs/issues/82)
 
 ## Completed Tracks
 
@@ -183,7 +182,9 @@ Implemented:
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
-  page-stat prompt context with loading/skeleton hints, upstream-compatible
+  per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
+  `action_timeout_seconds`, upstream-style page-stat prompt context with
+  loading/skeleton hints, upstream-compatible
   `true`/`false`/`auto` vision modes, auto-only screenshot action gating,
   screenshot action next-observation image overrides, action-result image
   prompt parts, one-time extraction replay handling, invalid model-output
