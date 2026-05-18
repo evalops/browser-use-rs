@@ -7571,19 +7571,45 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_event_bus_publishes_without_expanding_history() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+    fn lifecycle_event_bus_publishes_while_history_stays_bounded() {
+        let (event_tx, mut event_rx) = broadcast::channel(64);
         let mut events = VecDeque::new();
-        let event = BrowserLifecycleEvent::navigation_started("target-1", "https://example.test");
 
-        push_lifecycle_event_and_publish(&mut events, &event_tx, event.clone());
+        for index in 0..(MAX_LIFECYCLE_EVENTS + 2) {
+            push_lifecycle_event_and_publish(
+                &mut events,
+                &event_tx,
+                BrowserLifecycleEvent::navigation_completed(
+                    format!("target-{index}"),
+                    format!("https://example.test/{index}"),
+                ),
+            );
+        }
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0], event);
+        let mut received_targets = Vec::new();
+        for _ in 0..(MAX_LIFECYCLE_EVENTS + 2) {
+            let event = event_rx.try_recv().expect("published lifecycle event");
+            received_targets.push(event.target_id.expect("target id"));
+        }
+
+        assert_eq!(events.len(), MAX_LIFECYCLE_EVENTS);
+        assert_eq!(events[0].target_id.as_deref(), Some("target-2"));
         assert_eq!(
-            event_rx.try_recv().expect("published lifecycle event"),
-            event
+            events.back().and_then(|event| event.target_id.as_deref()),
+            Some("target-33")
         );
+        assert_eq!(
+            received_targets.first().map(String::as_str),
+            Some("target-0")
+        );
+        assert_eq!(
+            received_targets.last().map(String::as_str),
+            Some("target-33")
+        );
+        assert!(matches!(
+            event_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
     }
 
     #[test]
