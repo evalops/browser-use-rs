@@ -130,6 +130,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   scaling back to the observed viewport, upstream-style long URL shortening for
   user/assistant prompt text with recursive restoration before action
   execution/history,
+  upstream-style fallback LLM switching for retryable main model-output
+  provider/rate-limit failures,
   upstream-style final `done` responses after repeated failures, upstream-style
   final-step done-only guard when `max_steps` is reached, upstream-style 75%
   step-budget warning before finalization, normalized repeated-action loop

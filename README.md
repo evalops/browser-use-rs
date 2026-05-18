@@ -124,6 +124,8 @@ includes:
   URL shortening for user/assistant prompt text with recursive restoration
   before action execution/history, one-time extraction
   replay handling,
+  fallback LLM switching for retryable main model-output provider/rate-limit
+  failures,
   step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,

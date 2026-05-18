@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#93 Add upstream fallback LLM switching](https://github.com/evalops/browser-use-rs/issues/93)
+- Next upstream parity slice after #93 lands and CI is green.
 
 ## Completed Tracks
 
+- [#93 Add upstream fallback LLM switching](https://github.com/evalops/browser-use-rs/issues/93)
 - [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
 - [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
 - [#90 Add upstream long-URL shortening and output restoration](https://github.com/evalops/browser-use-rs/issues/90)
@@ -207,6 +208,8 @@ Implemented:
   resizing with coordinate-click scaling back to the observed viewport,
   upstream-style long URL shortening for user/assistant prompt text with
   recursive restoration of parsed model output before execution/history,
+  upstream-style fallback LLM switching for retryable main model-output
+  provider/rate-limit failures,
   upstream-style final-step done-only guard for
   `max_steps`, upstream-style 75% step-budget warning before finalization,
   upstream-style page-stat prompt context with loading/skeleton hints,
