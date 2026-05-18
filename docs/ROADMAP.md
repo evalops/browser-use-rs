@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #105 lands and CI is green.
+- [#106 Add BrowserProfile user_agent launch flag parity](https://github.com/evalops/browser-use-rs/issues/106)
 
 ## Completed Tracks
 
