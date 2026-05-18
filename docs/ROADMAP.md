@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #87 lands and CI is green.
+- [#88 Add upstream agent callback and stop-control hooks](https://github.com/evalops/browser-use-rs/issues/88)
 
 ## Completed Tracks
 
