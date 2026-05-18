@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- No active tracked slice. The next compatibility gap should be opened as a
-  GitHub issue before implementation starts.
+- [#65 Add upstream-style vision detail level controls](https://github.com/evalops/browser-use-rs/issues/65)
 
 ## Completed Tracks
 
