@@ -6,11 +6,11 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - None at the moment. The next parity slice should be selected from upstream
-  drift after #78 lands and CI is green.
+  drift after #77 lands and CI is green.
 
 ## Completed Tracks
 
-- [#78 Add Browser Use Cloud stop session contract](https://github.com/evalops/browser-use-rs/issues/78)
+- [#77 Add Browser Use Cloud stop lifecycle](https://github.com/evalops/browser-use-rs/issues/77)
 - [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
 - [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
 - [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
@@ -122,13 +122,10 @@ Implemented:
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
-- Browser Use Cloud creation request/response contracts, including
-  `BROWSER_USE_API_KEY`/explicit-key client support, `cdpUrl` to CDP endpoint
-  conversion, and upstream-compatible omitted/null/country proxy-country
-  serialization. Cloud clients track the most recently created session id and
-  expose the upstream-style stop-session contract for explicit or current
-  sessions, including stop request payloads, auth errors, missing-session
-  errors, and current-session cleanup on successful stop or 404.
+- Browser Use Cloud creation and stop request/response contracts, including
+  `BROWSER_USE_API_KEY`/explicit-key client support, current-session tracking,
+  `cdpUrl` to CDP endpoint conversion, and upstream-compatible omitted/null/
+  country proxy-country serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass

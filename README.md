@@ -22,10 +22,8 @@ includes:
   for navigation, blocked-navigation preflight diagnostics,
   navigation-capable actions, redirects, and newly observed tabs, and page
   state with browser-use-style short tab ids,
-  plus typed Browser Use Cloud creation and stop-session parameters,
-  response-to-CDP endpoint conversion, current-session tracking, and
-  current-session cleanup on stop/404 that preserve upstream's
-  omitted/null/proxy-country distinction,
+  plus typed Browser Use Cloud creation/stop parameters and response-to-CDP
+  endpoint conversion that preserve upstream's omitted/null/proxy-country distinction,
   including cached observed-node click/input/scroll/dropdown/upload resolution
   and target-aware stale-node fallback for cached iframe actions when
   available. CDP sessions expose a bounded public lifecycle event history for
