@@ -491,6 +491,7 @@ mod tests {
                 url: Some("http://127.0.0.1:9222".to_owned()),
                 reason: None,
                 error: None,
+                details: BTreeMap::new(),
                 message: "Browser connected at http://127.0.0.1:9222".to_owned(),
             },
             BrowserLifecycleEvent {
@@ -499,6 +500,7 @@ mod tests {
                 url: Some("https://example.test/report".to_owned()),
                 reason: None,
                 error: None,
+                details: BTreeMap::new(),
                 message: "Target target-1 created for https://example.test/report".to_owned(),
             },
             BrowserLifecycleEvent {
@@ -507,6 +509,7 @@ mod tests {
                 url: Some("https://example.test/report".to_owned()),
                 reason: None,
                 error: None,
+                details: BTreeMap::new(),
                 message:
                     "Navigation completed on target target-1 to https://example.test/report"
                         .to_owned(),
@@ -517,6 +520,7 @@ mod tests {
                 url: Some("https://blocked.test/popup".to_owned()),
                 reason: Some("in_prohibited_domains".to_owned()),
                 error: Some("No target with given id found".to_owned()),
+                details: BTreeMap::new(),
                 message:
                     "Failed to close popup https://blocked.test/popup (in_prohibited_domains): No target with given id found"
                         .to_owned(),
@@ -527,6 +531,83 @@ mod tests {
         assert_matches_fixture(
             actual,
             include_str!("../fixtures/browser_lifecycle_events.json"),
+        );
+    }
+
+    #[test]
+    fn browser_lifecycle_exception_events_match_golden_fixture() {
+        let actual = serde_json::to_value(vec![
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::BrowserReconnecting,
+                target_id: None,
+                url: Some("http://127.0.0.1:9222".to_owned()),
+                reason: None,
+                error: None,
+                details: BTreeMap::from([
+                    ("attempt".to_owned(), "2".to_owned()),
+                    ("max_attempts".to_owned(), "3".to_owned()),
+                ]),
+                message: "Browser reconnecting to http://127.0.0.1:9222 (attempt 2/3)".to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::TargetCrashed,
+                target_id: Some("target-1".to_owned()),
+                url: None,
+                reason: None,
+                error: Some("Inspector target crashed".to_owned()),
+                details: BTreeMap::new(),
+                message: "Target target-1 crashed: Inspector target crashed".to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::JavaScriptDialogHandled,
+                target_id: None,
+                url: Some("https://example.test".to_owned()),
+                reason: Some("confirm".to_owned()),
+                error: None,
+                details: BTreeMap::from([
+                    ("action".to_owned(), "accepted".to_owned()),
+                    ("dialog_message".to_owned(), "Continue?".to_owned()),
+                    ("dialog_type".to_owned(), "confirm".to_owned()),
+                ]),
+                message:
+                    "JavaScript confirm dialog on https://example.test was accepted: Continue?"
+                        .to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::DownloadProgress,
+                target_id: None,
+                url: None,
+                reason: Some("completed".to_owned()),
+                error: None,
+                details: BTreeMap::from([
+                    ("guid".to_owned(), "download-guid".to_owned()),
+                    ("received_bytes".to_owned(), "4096".to_owned()),
+                    ("state".to_owned(), "completed".to_owned()),
+                    ("total_bytes".to_owned(), "4096".to_owned()),
+                ]),
+                message: "Download download-guid progress: completed (4096 bytes received)"
+                    .to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::StorageStateSaved,
+                target_id: None,
+                url: None,
+                reason: Some("storage_state".to_owned()),
+                error: None,
+                details: BTreeMap::from([
+                    ("cookies_count".to_owned(), "4".to_owned()),
+                    ("origins_count".to_owned(), "2".to_owned()),
+                    ("path".to_owned(), "/tmp/storage.json".to_owned()),
+                ]),
+                message: "Storage state saved to /tmp/storage.json (4 cookies, 2 origins)"
+                    .to_owned(),
+            },
+        ])
+        .expect("serialize lifecycle events");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/browser_lifecycle_exception_events.json"),
         );
     }
 

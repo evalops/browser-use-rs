@@ -1,0 +1,49 @@
+[
+  {
+    "details": {
+      "attempt": "2",
+      "max_attempts": "3"
+    },
+    "kind": "browser_reconnecting",
+    "message": "Browser reconnecting to http://127.0.0.1:9222 (attempt 2/3)",
+    "url": "http://127.0.0.1:9222"
+  },
+  {
+    "error": "Inspector target crashed",
+    "kind": "target_crashed",
+    "message": "Target target-1 crashed: Inspector target crashed",
+    "target_id": "target-1"
+  },
+  {
+    "details": {
+      "action": "accepted",
+      "dialog_message": "Continue?",
+      "dialog_type": "confirm"
+    },
+    "kind": "java_script_dialog_handled",
+    "message": "JavaScript confirm dialog on https://example.test was accepted: Continue?",
+    "reason": "confirm",
+    "url": "https://example.test"
+  },
+  {
+    "details": {
+      "guid": "download-guid",
+      "received_bytes": "4096",
+      "state": "completed",
+      "total_bytes": "4096"
+    },
+    "kind": "download_progress",
+    "message": "Download download-guid progress: completed (4096 bytes received)",
+    "reason": "completed"
+  },
+  {
+    "details": {
+      "cookies_count": "4",
+      "origins_count": "2",
+      "path": "/tmp/storage.json"
+    },
+    "kind": "storage_state_saved",
+    "message": "Storage state saved to /tmp/storage.json (4 cookies, 2 origins)",
+    "reason": "storage_state"
+  }
+]

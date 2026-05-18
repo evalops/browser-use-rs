@@ -1249,16 +1249,28 @@ impl BrowserProfile {
 pub enum BrowserLifecycleEventKind {
     BrowserConnected,
     BrowserCloseRequested,
+    BrowserStopped,
+    BrowserReconnecting,
+    BrowserReconnected,
     TargetCreated,
     TargetClosed,
     TargetSwitched,
+    TargetCrashed,
     NavigationStarted,
     NavigationCompleted,
+    NavigationFailed,
+    NetworkTimeout,
     NavigationBlocked,
     CurrentTargetReset,
     CurrentTargetResetFailed,
     PopupClosed,
     PopupCloseFailed,
+    JavaScriptDialogHandled,
+    DownloadStarted,
+    DownloadProgress,
+    FileDownloaded,
+    StorageStateSaved,
+    StorageStateLoaded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1272,16 +1284,19 @@ pub struct BrowserLifecycleEvent {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub details: BTreeMap<String, String>,
     pub message: String,
 }
 
 impl BrowserLifecycleEvent {
-    fn new(
+    pub fn new(
         kind: BrowserLifecycleEventKind,
         target_id: Option<String>,
         url: Option<String>,
         reason: Option<String>,
         error: Option<String>,
+        details: BTreeMap<String, String>,
         message: String,
     ) -> Self {
         Self {
@@ -1290,11 +1305,12 @@ impl BrowserLifecycleEvent {
             url,
             reason,
             error,
+            details,
             message,
         }
     }
 
-    fn browser_connected(url: impl Into<String>) -> Self {
+    pub fn browser_connected(url: impl Into<String>) -> Self {
         let url = url.into();
         Self::new(
             BrowserLifecycleEventKind::BrowserConnected,
@@ -1302,22 +1318,74 @@ impl BrowserLifecycleEvent {
             Some(url.clone()),
             None,
             None,
+            BTreeMap::new(),
             format!("Browser connected at {url}"),
         )
     }
 
-    fn browser_close_requested() -> Self {
+    pub fn browser_close_requested() -> Self {
         Self::new(
             BrowserLifecycleEventKind::BrowserCloseRequested,
             None,
             None,
             None,
             None,
+            BTreeMap::new(),
             "Browser close requested".to_owned(),
         )
     }
 
-    fn target_created(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+    pub fn browser_stopped(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserStopped,
+            None,
+            None,
+            Some(reason.clone()),
+            None,
+            BTreeMap::new(),
+            format!("Browser stopped ({reason})"),
+        )
+    }
+
+    pub fn browser_reconnecting(url: impl Into<String>, attempt: u32, max_attempts: u32) -> Self {
+        let url = url.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserReconnecting,
+            None,
+            Some(url.clone()),
+            None,
+            None,
+            BTreeMap::from([
+                ("attempt".to_owned(), attempt.to_string()),
+                ("max_attempts".to_owned(), max_attempts.to_string()),
+            ]),
+            format!("Browser reconnecting to {url} (attempt {attempt}/{max_attempts})"),
+        )
+    }
+
+    pub fn browser_reconnected(
+        url: impl Into<String>,
+        attempt: u32,
+        downtime_seconds: impl Into<String>,
+    ) -> Self {
+        let url = url.into();
+        let downtime_seconds = downtime_seconds.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserReconnected,
+            None,
+            Some(url.clone()),
+            None,
+            None,
+            BTreeMap::from([
+                ("attempt".to_owned(), attempt.to_string()),
+                ("downtime_seconds".to_owned(), downtime_seconds.clone()),
+            ]),
+            format!("Browser reconnected to {url} on attempt {attempt} after {downtime_seconds}s"),
+        )
+    }
+
+    pub fn target_created(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
         Self::new(
@@ -1326,11 +1394,12 @@ impl BrowserLifecycleEvent {
             Some(url.clone()),
             None,
             None,
+            BTreeMap::new(),
             format!("Target {target_id} created for {url}"),
         )
     }
 
-    fn target_closed(target_id: impl Into<String>) -> Self {
+    pub fn target_closed(target_id: impl Into<String>) -> Self {
         let target_id = target_id.into();
         Self::new(
             BrowserLifecycleEventKind::TargetClosed,
@@ -1338,11 +1407,12 @@ impl BrowserLifecycleEvent {
             None,
             None,
             None,
+            BTreeMap::new(),
             format!("Target {target_id} closed"),
         )
     }
 
-    fn target_switched(target_id: impl Into<String>) -> Self {
+    pub fn target_switched(target_id: impl Into<String>) -> Self {
         let target_id = target_id.into();
         Self::new(
             BrowserLifecycleEventKind::TargetSwitched,
@@ -1350,11 +1420,26 @@ impl BrowserLifecycleEvent {
             None,
             None,
             None,
+            BTreeMap::new(),
             format!("Agent focus switched to target {target_id}"),
         )
     }
 
-    fn navigation_started(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+    pub fn target_crashed(target_id: impl Into<String>, error: impl Into<String>) -> Self {
+        let target_id = target_id.into();
+        let error = error.into();
+        Self::new(
+            BrowserLifecycleEventKind::TargetCrashed,
+            Some(target_id.clone()),
+            None,
+            None,
+            Some(error.clone()),
+            BTreeMap::new(),
+            format!("Target {target_id} crashed: {error}"),
+        )
+    }
+
+    pub fn navigation_started(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
         Self::new(
@@ -1363,11 +1448,12 @@ impl BrowserLifecycleEvent {
             Some(url.clone()),
             None,
             None,
+            BTreeMap::new(),
             format!("Navigation started on target {target_id} to {url}"),
         )
     }
 
-    fn navigation_completed(target_id: impl Into<String>, url: impl Into<String>) -> Self {
+    pub fn navigation_completed(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
         Self::new(
@@ -1376,7 +1462,191 @@ impl BrowserLifecycleEvent {
             Some(url.clone()),
             None,
             None,
+            BTreeMap::new(),
             format!("Navigation completed on target {target_id} to {url}"),
+        )
+    }
+
+    pub fn navigation_failed(
+        target_id: impl Into<String>,
+        url: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
+        let target_id = target_id.into();
+        let url = url.into();
+        let error = error.into();
+        Self::new(
+            BrowserLifecycleEventKind::NavigationFailed,
+            Some(target_id.clone()),
+            Some(url.clone()),
+            None,
+            Some(error.clone()),
+            BTreeMap::new(),
+            format!("Navigation failed on target {target_id} to {url}: {error}"),
+        )
+    }
+
+    pub fn network_timeout(
+        target_id: impl Into<String>,
+        url: impl Into<String>,
+        timeout_seconds: impl Into<String>,
+    ) -> Self {
+        let target_id = target_id.into();
+        let url = url.into();
+        let timeout_seconds = timeout_seconds.into();
+        Self::new(
+            BrowserLifecycleEventKind::NetworkTimeout,
+            Some(target_id.clone()),
+            Some(url.clone()),
+            Some("network_timeout".to_owned()),
+            Some(format!("timed out after {timeout_seconds}s")),
+            BTreeMap::from([("timeout_seconds".to_owned(), timeout_seconds.clone())]),
+            format!("Network timeout on target {target_id} for {url} after {timeout_seconds}s"),
+        )
+    }
+
+    pub fn javascript_dialog_handled(
+        url: impl Into<String>,
+        dialog_type: impl Into<String>,
+        message: impl Into<String>,
+        accepted: bool,
+    ) -> Self {
+        let url = url.into();
+        let dialog_type = dialog_type.into();
+        let message = message.into();
+        let action = if accepted { "accepted" } else { "dismissed" };
+        Self::new(
+            BrowserLifecycleEventKind::JavaScriptDialogHandled,
+            None,
+            Some(url.clone()),
+            Some(dialog_type.clone()),
+            None,
+            BTreeMap::from([
+                ("dialog_type".to_owned(), dialog_type.clone()),
+                ("dialog_message".to_owned(), message.clone()),
+                ("action".to_owned(), action.to_owned()),
+            ]),
+            format!("JavaScript {dialog_type} dialog on {url} was {action}: {message}"),
+        )
+    }
+
+    pub fn download_started(
+        guid: impl Into<String>,
+        url: impl Into<String>,
+        suggested_filename: impl Into<String>,
+    ) -> Self {
+        let guid = guid.into();
+        let url = url.into();
+        let suggested_filename = suggested_filename.into();
+        Self::new(
+            BrowserLifecycleEventKind::DownloadStarted,
+            None,
+            Some(url.clone()),
+            None,
+            None,
+            BTreeMap::from([
+                ("guid".to_owned(), guid.clone()),
+                ("suggested_filename".to_owned(), suggested_filename.clone()),
+            ]),
+            format!("Download {guid} started from {url} as {suggested_filename}"),
+        )
+    }
+
+    pub fn download_progress(
+        guid: impl Into<String>,
+        received_bytes: u64,
+        total_bytes: Option<u64>,
+        state: impl Into<String>,
+    ) -> Self {
+        let guid = guid.into();
+        let state = state.into();
+        let mut details = BTreeMap::from([
+            ("guid".to_owned(), guid.clone()),
+            ("received_bytes".to_owned(), received_bytes.to_string()),
+            ("state".to_owned(), state.clone()),
+        ]);
+        if let Some(total_bytes) = total_bytes {
+            details.insert("total_bytes".to_owned(), total_bytes.to_string());
+        }
+        Self::new(
+            BrowserLifecycleEventKind::DownloadProgress,
+            None,
+            None,
+            Some(state.clone()),
+            None,
+            details,
+            format!("Download {guid} progress: {state} ({received_bytes} bytes received)"),
+        )
+    }
+
+    pub fn file_downloaded(
+        guid: impl Into<String>,
+        path: impl Into<String>,
+        file_name: impl Into<String>,
+        file_size: u64,
+    ) -> Self {
+        let guid = guid.into();
+        let path = path.into();
+        let file_name = file_name.into();
+        Self::new(
+            BrowserLifecycleEventKind::FileDownloaded,
+            None,
+            None,
+            None,
+            None,
+            BTreeMap::from([
+                ("guid".to_owned(), guid.clone()),
+                ("path".to_owned(), path.clone()),
+                ("file_name".to_owned(), file_name.clone()),
+                ("file_size".to_owned(), file_size.to_string()),
+            ]),
+            format!("Download {guid} completed at {path} ({file_name}, {file_size} bytes)"),
+        )
+    }
+
+    pub fn storage_state_saved(
+        path: impl Into<String>,
+        cookies_count: usize,
+        origins_count: usize,
+    ) -> Self {
+        let path = path.into();
+        Self::new(
+            BrowserLifecycleEventKind::StorageStateSaved,
+            None,
+            None,
+            Some("storage_state".to_owned()),
+            None,
+            BTreeMap::from([
+                ("path".to_owned(), path.clone()),
+                ("cookies_count".to_owned(), cookies_count.to_string()),
+                ("origins_count".to_owned(), origins_count.to_string()),
+            ]),
+            format!(
+                "Storage state saved to {path} ({cookies_count} cookies, {origins_count} origins)"
+            ),
+        )
+    }
+
+    pub fn storage_state_loaded(
+        path: impl Into<String>,
+        cookies_count: usize,
+        origins_count: usize,
+    ) -> Self {
+        let path = path.into();
+        Self::new(
+            BrowserLifecycleEventKind::StorageStateLoaded,
+            None,
+            None,
+            Some("storage_state".to_owned()),
+            None,
+            BTreeMap::from([
+                ("path".to_owned(), path.clone()),
+                ("cookies_count".to_owned(), cookies_count.to_string()),
+                ("origins_count".to_owned(), origins_count.to_string()),
+            ]),
+            format!(
+                "Storage state loaded from {path} ({cookies_count} cookies, {origins_count} origins)"
+            ),
         )
     }
 }
@@ -2687,6 +2957,7 @@ impl BrowserSecurityEvent {
                 Some(url),
                 Some(reason),
                 None,
+                BTreeMap::new(),
                 message.clone(),
             ),
             message,
@@ -2705,6 +2976,7 @@ impl BrowserSecurityEvent {
                 Some(url),
                 Some(reason),
                 None,
+                BTreeMap::new(),
                 message.clone(),
             ),
             message,
@@ -2724,6 +2996,7 @@ impl BrowserSecurityEvent {
                 Some(url),
                 Some(reason),
                 Some(error),
+                BTreeMap::new(),
                 message.clone(),
             ),
             browser_error_message: Some(message.clone()),
@@ -2741,6 +3014,7 @@ impl BrowserSecurityEvent {
                 Some(url),
                 Some(reason),
                 None,
+                BTreeMap::new(),
                 message.clone(),
             ),
             browser_error_message: None,
@@ -2758,6 +3032,7 @@ impl BrowserSecurityEvent {
                 Some(url),
                 Some(reason),
                 Some(error),
+                BTreeMap::new(),
                 message.clone(),
             ),
             browser_error_message: Some(message.clone()),
@@ -5432,6 +5707,77 @@ mod tests {
         let json = serde_json::to_value(&events).expect("serialize lifecycle events");
         assert_eq!(json[0]["kind"], "browser_connected");
         assert_eq!(json[4]["kind"], "navigation_completed");
+        assert!(json[4].get("details").is_none());
+    }
+
+    #[test]
+    fn browser_lifecycle_events_cover_remaining_upstream_shapes() {
+        let events = vec![
+            BrowserLifecycleEvent::browser_reconnecting("http://127.0.0.1:9222", 2, 3),
+            BrowserLifecycleEvent::browser_reconnected("http://127.0.0.1:9222", 2, "1.25"),
+            BrowserLifecycleEvent::target_crashed("target-1", "Inspector target crashed"),
+            BrowserLifecycleEvent::navigation_failed(
+                "target-1",
+                "https://example.test/slow",
+                "net::ERR_FAILED",
+            ),
+            BrowserLifecycleEvent::network_timeout("target-1", "https://example.test/slow", "8"),
+            BrowserLifecycleEvent::javascript_dialog_handled(
+                "https://example.test",
+                "confirm",
+                "Continue?",
+                true,
+            ),
+            BrowserLifecycleEvent::download_started(
+                "download-guid",
+                "https://example.test/report.pdf",
+                "report.pdf",
+            ),
+            BrowserLifecycleEvent::download_progress(
+                "download-guid",
+                1024,
+                Some(4096),
+                "inProgress",
+            ),
+            BrowserLifecycleEvent::file_downloaded(
+                "download-guid",
+                "/tmp/report.pdf",
+                "report.pdf",
+                4096,
+            ),
+            BrowserLifecycleEvent::storage_state_saved("/tmp/storage.json", 4, 2),
+            BrowserLifecycleEvent::storage_state_loaded("/tmp/storage.json", 4, 2),
+            BrowserLifecycleEvent::browser_stopped("graceful_stop"),
+        ];
+
+        assert_eq!(
+            events.iter().map(|event| &event.kind).collect::<Vec<_>>(),
+            vec![
+                &BrowserLifecycleEventKind::BrowserReconnecting,
+                &BrowserLifecycleEventKind::BrowserReconnected,
+                &BrowserLifecycleEventKind::TargetCrashed,
+                &BrowserLifecycleEventKind::NavigationFailed,
+                &BrowserLifecycleEventKind::NetworkTimeout,
+                &BrowserLifecycleEventKind::JavaScriptDialogHandled,
+                &BrowserLifecycleEventKind::DownloadStarted,
+                &BrowserLifecycleEventKind::DownloadProgress,
+                &BrowserLifecycleEventKind::FileDownloaded,
+                &BrowserLifecycleEventKind::StorageStateSaved,
+                &BrowserLifecycleEventKind::StorageStateLoaded,
+                &BrowserLifecycleEventKind::BrowserStopped,
+            ]
+        );
+
+        assert_eq!(events[0].details["attempt"], "2");
+        assert_eq!(events[1].details["downtime_seconds"], "1.25");
+        assert_eq!(events[5].details["dialog_message"], "Continue?".to_owned());
+        assert_eq!(events[7].details["total_bytes"], "4096");
+        assert_eq!(events[9].details["cookies_count"], "4");
+
+        let json = serde_json::to_value(&events).expect("serialize lifecycle events");
+        assert_eq!(json[2]["kind"], "target_crashed");
+        assert_eq!(json[5]["details"]["action"], "accepted");
+        assert_eq!(json[8]["details"]["file_name"], "report.pdf");
     }
 
     #[test]

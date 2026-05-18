@@ -18,7 +18,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   event-driven target/frame navigation watchdog enforcement while a session is
   active. CDP sessions expose bounded `BrowserLifecycleEvent` diagnostics for
   browser connect/close, target create/switch/close, navigation start/complete,
-  and URL-policy block/reset/popup outcomes.
+  navigation failure/timeout, target crash, URL-policy block/reset/popup
+  outcomes, reconnect, JavaScript dialog, download, and storage-state event
+  shapes.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -141,11 +143,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
   sessions; stale-node fallback still searches the current main-frame DOM.
 - Browser profile lifecycle support now exposes bounded public lifecycle
-  diagnostics for core browser/target/navigation/security transitions. It is
-  still lighter than upstream's full browser event bus: reconnection events,
-  target-crash/network-timeout watchdogs, JavaScript dialog handling, download
-  events, and storage-state lifecycle events are not yet exposed with the same
-  breadth.
+  diagnostics for core browser/target/navigation/security transitions and
+  stable event shapes for reconnect, target-crash/network-timeout, JavaScript
+  dialog, download, and storage-state lifecycle diagnostics. Live watchdog
+  automation for those remaining exceptional paths is still lighter than
+  upstream's full browser event bus.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

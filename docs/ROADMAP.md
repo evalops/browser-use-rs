@@ -80,9 +80,10 @@ Implemented:
   closure, and event-driven target/frame navigation watchdog enforcement with
   bounded success and failure diagnostics while a session is active. CDP
   sessions expose bounded `BrowserLifecycleEvent` diagnostics for browser
-  connect/close, target create/switch/close, navigation start/complete, and
-  URL-policy block/reset/popup outcomes without placing the full lifecycle
-  stream into normal agent replies.
+  connect/close, target create/switch/close/crash,
+  navigation start/complete/failure/timeout, URL-policy block/reset/popup
+  outcomes, reconnect, JavaScript dialog, download, and storage-state event
+  shapes without placing the full lifecycle stream into normal agent replies.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -183,7 +184,7 @@ Implemented:
 
 Next:
 
-1. Continue the active remaining browser-lifecycle event hook track with
-   upstream gaps: reconnection, target-crash/network-timeout, dialog, download,
-   and storage-state event hooks.
+1. Continue the active remaining browser-lifecycle event hook track by wiring
+   the new reconnect, target-crash/network-timeout, dialog, download, and
+   storage-state event shapes into live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

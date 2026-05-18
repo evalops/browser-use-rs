@@ -44,17 +44,20 @@ The frozen upstream target exposes a broad browser event bus with
 state events, download events, and JavaScript dialog handling through watchdogs.
 
 The Rust port currently exposes bounded `BrowserLifecycleEvent` diagnostics for
-browser connect/close requests, target create/switch/close, navigation
-start/complete, URL-policy navigation blocks, current-tab resets, popup closes,
-and popup close/reset failures. These lifecycle events are available through the
-CDP session API and are intentionally kept out of normal agent replies; prompt
-state still only includes security-relevant recent events and closed-popup
-messages.
+browser connect/close requests, target create/switch/close/crash, navigation
+start/complete/failure/timeout, URL-policy navigation blocks, current-tab
+resets, popup closes and popup close/reset failures, browser reconnects,
+JavaScript dialog handling, download start/progress/completion, and
+storage-state save/load notifications. These lifecycle events are available
+through the CDP session API and are intentionally kept out of normal agent
+replies; prompt state still only includes security-relevant recent events and
+closed-popup messages. The public JSON shape is locked by normal and
+exceptional lifecycle fixtures.
 
-Remaining lifecycle gaps: upstream-style browser reconnection events,
-target-crash and network-timeout watchdogs, JavaScript dialog automation,
-download progress/completion events, storage-state save/load events, and a full
-general-purpose event bus are not yet implemented.
+Remaining lifecycle gaps: live CDP/watchdog wiring for reconnect recovery,
+target-crash and network-timeout monitoring, JavaScript dialog automation,
+download detection/completion, storage-state persistence, and a full
+general-purpose event bus are still lighter than upstream.
 
 ## Drift Policy
 
