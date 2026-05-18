@@ -146,8 +146,9 @@ agent prompt. Agent-owned `upload_file` actions are limited to those declared
 paths or files created in the managed agent filesystem. Repeated
 `--save-conversation-path <dir>` writes UTF-8 conversation transcripts named
 `conversation_<agent-id>_<step>.txt` after each successfully parsed model
-output; `--save-conversation-path-encoding <encoding>` is preserved for
-upstream compatibility and currently accepts UTF-8/UTF8. Repeated
+output by default; `--save-conversation-path-encoding <encoding>` accepts
+standard text encoding labels and fails rather than writing lossy transcripts.
+Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns
 one, while keeping `done` available for completion. Use repeated

@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#69 Add upstream-style conversation transcript saving](https://github.com/evalops/browser-use-rs/issues/69)
+No active tracked slice is open right now; the next parity slice should be
+filed from the upstream gap scan before implementation starts.
 
 ## Completed Tracks
 
+- [#69 Add upstream-style conversation transcript saving](https://github.com/evalops/browser-use-rs/issues/69)
 - [#68 Add upstream-style upload_file availability validation](https://github.com/evalops/browser-use-rs/issues/68)
 - [#67 Add upstream-style auto vision mode and screenshot action gating](https://github.com/evalops/browser-use-rs/issues/67)
 - [#66 Add display_files_in_done_text setting](https://github.com/evalops/browser-use-rs/issues/66)
