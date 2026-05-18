@@ -62,7 +62,9 @@ Implemented:
   route through that sandbox while absolute external paths bypass it. Agent
   prompts include upstream-style `<file_system>` and `<todo_contents>` context,
   and large extract results can spill into managed `extracted_content_N.md`
-  files.
+  files. Restored agents can continue prompt and tool execution from serialized
+  `FileSystemState`, including restored `read_file` behavior, todo/report
+  context, and extracted-content numbering that survives replay.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -126,9 +128,11 @@ Implemented:
   graceful signal shutdown, and supervisor pid/ready files.
 - Packaged systemd and launchd daemon supervision templates with documented
   paths, environment, lifecycle files, and health-check smokes.
-- Conformance fixtures cover a scripted agent replay with schema-guided model
-  outputs, previous-result context, browser action execution, `done`, and
-  serialized history, plus semantic step timing metadata checks.
+- Conformance fixtures cover scripted agent replay with schema-guided model
+  outputs, previous-result context, browser action execution, `done`,
+  serialized history, and managed `FileSystemState` replay through restored
+  prompts, todo context, restored `read_file`, and extracted-content numbering,
+  plus semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,
@@ -168,8 +172,9 @@ Implemented:
 
 Next:
 
-1. Tighten managed `FileSystem` lifecycle/replay parity beyond prompt context,
-   including restored agent state and longer cross-step conformance fixtures.
+1. Expand the restored managed `FileSystem` work into a stable full-agent
+   checkpoint/resume API if callers need durable agent progress outside the
+   current `FileSystemState` replay surface.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
 3. Expand agent planning depth and replay coverage for longer multi-step tasks.

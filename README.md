@@ -72,6 +72,9 @@ includes:
   while absolute external paths continue to bypass it. Agent prompts include
   upstream-style `<file_system>` and `<todo_contents>` context, and large
   extract results can spill into managed `extracted_content_N.md` files.
+  Restored agents can continue prompt and tool execution from serialized
+  `FileSystemState`, including preserved todo/report context and incrementing
+  extracted-content numbering.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, upstream-style page-stat prompt

@@ -72,3 +72,8 @@ Upstream bumps must include:
   action execution, `done`, and serialized history. Runtime step timing
   metadata is asserted semantically before dynamic timestamps are stripped for
   golden comparison.
+- `managed_file_system_replay.json`: deterministic managed `FileSystemState`
+  replay fixture covering normalized serialized filesystem state, restored
+  agent prompt context for `<file_system>` and `<todo_contents>`, restored
+  `read_file` one-time read-state replay, and extracted-content numbering that
+  continues after restore.

@@ -72,7 +72,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   route through that sandbox while absolute external paths bypass it. Agent
   prompts include upstream-style `<file_system>` and `<todo_contents>` context,
   and large extract results can spill into managed `extracted_content_N.md`
-  files.
+  files. Restored agents can continue from serialized `FileSystemState` with
+  prompt-visible todo/file context, restored `read_file` behavior, and
+  extracted-content numbering that survives replay.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
@@ -99,9 +101,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.
-- Scripted agent replay conformance fixture for schema-guided model output,
-  previous-result prompt context, action execution, `done`, and serialized
-  history, with semantic checks for dynamic step timing metadata.
+- Scripted agent replay conformance fixtures for schema-guided model output,
+  previous-result prompt context, action execution, `done`, serialized
+  history, and managed `FileSystemState` replay through restored prompts,
+  `read_file`, todo context, and extracted-content numbering, with semantic
+  checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
@@ -147,11 +151,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
-- Deeper managed filesystem lifecycle/replay parity is still lighter than
-  upstream's full `FileSystem` lifecycle, though the Rust core now has
-  serializable `FileSystem` state, executor-owned relative action routing
-  through a `browseruse_agent_data` sandbox, prompt-visible file/todo context,
-  CSV normalization, relative filename sanitization, page-aware PDF read
-  envelopes, and PDF/DOCX write/append artifact support with matching
-  unsupported binary extension guards.
+- Managed filesystem replay now covers serialized restore into a new agent,
+  restored prompt context, restored `read_file`, todo context, and
+  extracted-content numbering. Remaining filesystem gaps are narrower:
+  upstream's broader `AgentState` checkpoint/resume surface and external
+  lifecycle hooks are not yet exposed as a stable Rust API.
 - Package publishing is limited to the GitHub release artifact.
