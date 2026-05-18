@@ -90,8 +90,9 @@ pub struct AgentSettings {
 /// Python browser-use accepts `True`, `False`, or `"auto"` for `use_vision`.
 /// The JSON contract preserves that shape so existing MCP/CLI callers can send
 /// booleans while Rust code gets an explicit mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum VisionMode {
+    #[default]
     Always,
     Never,
     Auto,
@@ -120,12 +121,6 @@ impl VisionMode {
     #[must_use]
     pub fn accepts_prompt_image(self) -> bool {
         !matches!(self, Self::Never)
-    }
-}
-
-impl Default for VisionMode {
-    fn default() -> Self {
-        Self::Always
     }
 }
 
