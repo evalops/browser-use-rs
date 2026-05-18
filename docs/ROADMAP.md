@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is open at this checkpoint.
+- [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
 
 ## Completed Tracks
 
