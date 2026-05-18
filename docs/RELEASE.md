@@ -119,8 +119,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
   sessions; stale-node fallback still searches the current main-frame DOM.
 - Browser profile URL access policies now include a CDP event watchdog for
-  active sessions with bounded recent-event and closed-popup diagnostics, but
-  lifecycle hooks are still lighter than upstream's full browser event bus.
+  active sessions with bounded recent-event, closed-popup, and enforcement
+  failure diagnostics, but lifecycle hooks are still lighter than upstream's
+  full browser event bus.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

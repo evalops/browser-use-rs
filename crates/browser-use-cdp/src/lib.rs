@@ -2345,7 +2345,7 @@ JSON.stringify((() => {{
 
             let reason = self.url_policy.block_reason(&tab.url).to_owned();
             if tab.target_id == current_page.target_id {
-                let _ = self
+                let outcome = self
                     .connection
                     .command(
                         "Page.navigate",
@@ -2353,24 +2353,42 @@ JSON.stringify((() => {{
                         Some(&current_page.session_id),
                     )
                     .await;
-                self.record_security_event(BrowserSecurityEvent::reset_current(
-                    tab.url.clone(),
-                    reason.clone(),
-                ))
-                .await;
+                let event = match outcome {
+                    Ok(_) => BrowserSecurityEvent::reset_current(tab.url.clone(), reason.clone()),
+                    Err(error) => BrowserSecurityEvent::reset_current_failed(
+                        tab.url.clone(),
+                        reason.clone(),
+                        error.to_string(),
+                    ),
+                };
+                self.record_security_event(event).await;
             } else {
-                self.connection
+                let outcome = self
+                    .connection
                     .command(
                         "Target.closeTarget",
                         json!({ "targetId": &tab.target_id }),
                         None,
                     )
-                    .await?;
-                self.record_security_event(BrowserSecurityEvent::closed_popup(
-                    tab.url.clone(),
-                    reason.clone(),
-                ))
-                .await;
+                    .await;
+                match outcome {
+                    Ok(_) => {
+                        self.record_security_event(BrowserSecurityEvent::closed_popup(
+                            tab.url.clone(),
+                            reason.clone(),
+                        ))
+                        .await;
+                    }
+                    Err(error) => {
+                        self.record_security_event(BrowserSecurityEvent::close_popup_failed(
+                            tab.url.clone(),
+                            reason.clone(),
+                            error.to_string(),
+                        ))
+                        .await;
+                        return Err(error);
+                    }
+                }
             }
             self.clear_cached_dom_state().await;
 
@@ -2462,6 +2480,7 @@ enum UrlPolicyWatchdogAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BrowserSecurityEvent {
     message: String,
+    browser_error_message: Option<String>,
     closed_popup_message: Option<String>,
 }
 
@@ -2471,6 +2490,18 @@ impl BrowserSecurityEvent {
             message: format!(
                 "Blocked navigation to {url} ({reason}); reset current tab to about:blank"
             ),
+            browser_error_message: None,
+            closed_popup_message: None,
+        }
+    }
+
+    fn reset_current_failed(url: String, reason: String, error: String) -> Self {
+        let message = format!(
+            "Failed to reset blocked navigation to {url} ({reason}) to about:blank: {error}"
+        );
+        Self {
+            browser_error_message: Some(message.clone()),
+            message,
             closed_popup_message: None,
         }
     }
@@ -2478,7 +2509,17 @@ impl BrowserSecurityEvent {
     fn closed_popup(url: String, reason: String) -> Self {
         let message = format!("Closed popup {url} ({reason})");
         Self {
+            browser_error_message: None,
             closed_popup_message: Some(message.clone()),
+            message,
+        }
+    }
+
+    fn close_popup_failed(url: String, reason: String, error: String) -> Self {
+        let message = format!("Failed to close popup {url} ({reason}): {error}");
+        Self {
+            browser_error_message: Some(message.clone()),
+            closed_popup_message: None,
             message,
         }
     }
@@ -2598,7 +2639,17 @@ async fn apply_url_policy_watchdog_action(
         ),
     };
 
-    if outcome.is_err() {
+    if let Err(error) = outcome {
+        let failure_event = match &action {
+            UrlPolicyWatchdogAction::ResetCurrent { .. } => {
+                BrowserSecurityEvent::reset_current_failed(url, reason, error.to_string())
+            }
+            UrlPolicyWatchdogAction::CloseTarget { .. } => {
+                BrowserSecurityEvent::close_popup_failed(url, reason, error.to_string())
+            }
+        };
+        let mut events = security_events.lock().await;
+        push_security_event(&mut events, failure_event);
         return;
     }
 
@@ -2622,7 +2673,7 @@ fn push_security_event(events: &mut VecDeque<BrowserSecurityEvent>, event: Brows
 
 fn security_event_state_fields(
     events: &VecDeque<BrowserSecurityEvent>,
-) -> (Option<String>, Vec<String>) {
+) -> (Option<String>, Vec<String>, Vec<String>) {
     let recent_events = (!events.is_empty()).then(|| {
         events
             .iter()
@@ -2634,7 +2685,11 @@ fn security_event_state_fields(
         .iter()
         .filter_map(|event| event.closed_popup_message.clone())
         .collect();
-    (recent_events, closed_popup_messages)
+    let browser_errors = events
+        .iter()
+        .filter_map(|event| event.browser_error_message.clone())
+        .collect();
+    (recent_events, closed_popup_messages, browser_errors)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3797,7 +3852,7 @@ impl BrowserSession for CdpBrowserSession {
         let pagination_buttons = detect_pagination_buttons(&dom_state);
         let current_page = self.current_page().await;
         let tabs = page_tabs(&self.connection).await?;
-        let (recent_events, closed_popup_messages) = {
+        let (recent_events, closed_popup_messages, browser_errors) = {
             let events = self.security_events.lock().await;
             security_event_state_fields(&events)
         };
@@ -3826,7 +3881,7 @@ impl BrowserSession for CdpBrowserSession {
             page_info: Some(page_info),
             pixels_above: page_info.pixels_above,
             pixels_below: page_info.pixels_below,
-            browser_errors: vec![],
+            browser_errors,
             is_pdf_viewer: false,
             recent_events,
             pending_network_requests: vec![],
@@ -4950,15 +5005,31 @@ mod tests {
                 "not_in_allowed_domains".to_owned(),
             ),
         );
+        push_security_event(
+            &mut events,
+            BrowserSecurityEvent::close_popup_failed(
+                "https://stuck.test/popup".to_owned(),
+                "in_prohibited_domains".to_owned(),
+                "CDP target is already detached".to_owned(),
+            ),
+        );
 
-        let (recent_events, closed_popup_messages) = security_event_state_fields(&events);
+        let (recent_events, closed_popup_messages, browser_errors) =
+            security_event_state_fields(&events);
         let recent_events = recent_events.expect("recent security events");
 
         assert!(recent_events.contains("Closed popup https://evil.test/popup"));
         assert!(recent_events.contains("reset current tab to about:blank"));
+        assert!(recent_events.contains("Failed to close popup https://stuck.test/popup"));
         assert_eq!(
             closed_popup_messages,
             vec!["Closed popup https://evil.test/popup (in_prohibited_domains)"]
+        );
+        assert_eq!(
+            browser_errors,
+            vec![
+                "Failed to close popup https://stuck.test/popup (in_prohibited_domains): CDP target is already detached"
+            ]
         );
     }
 
@@ -4975,11 +5046,13 @@ mod tests {
             );
         }
 
-        let (recent_events, closed_popup_messages) = security_event_state_fields(&events);
+        let (recent_events, closed_popup_messages, browser_errors) =
+            security_event_state_fields(&events);
         let recent_events = recent_events.expect("recent security events");
 
         assert_eq!(events.len(), MAX_SECURITY_EVENTS);
         assert_eq!(closed_popup_messages.len(), MAX_SECURITY_EVENTS);
+        assert!(browser_errors.is_empty());
         assert!(!recent_events.contains("blocked-0.test"));
         assert!(!recent_events.contains("blocked-1.test"));
         assert!(recent_events.contains("blocked-2.test"));
