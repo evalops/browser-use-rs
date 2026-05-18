@@ -187,7 +187,8 @@ Implemented:
   last-result completion helpers, upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation,
   upstream-style judge trace validation and judgement results, per-step error
-  slots, model-output/action/thought accessors,
+  slots, contract-preserved `generate_gif`, `calculate_cost`, and
+  `include_tool_call_examples` settings, model-output/action/thought accessors,
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,
