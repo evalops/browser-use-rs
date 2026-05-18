@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #90 lands and CI is green.
+- [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
 
 ## Completed Tracks
 
