@@ -3538,6 +3538,10 @@ where
         self.executor.file_system()
     }
 
+    pub fn file_system_mut(&mut self) -> &mut ManagedFileSystem {
+        self.executor.file_system_mut()
+    }
+
     pub fn file_system_state(&self) -> FileSystemState {
         self.executor.file_system().get_state()
     }
@@ -7786,6 +7790,131 @@ mod tests {
         assert!(state.files.contains_key("report.md"));
         let restored = ManagedFileSystem::from_state(state).expect("restore file system");
         assert_eq!(restored.display_file("report.md").as_deref(), Some("alpha"));
+    }
+
+    #[tokio::test]
+    async fn restored_agent_continues_with_serialized_file_system_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "todo.md".to_owned(),
+                content: "- read the restored report".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("write todo");
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "report.md".to_owned(),
+                content: "alpha\nbeta".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("write report");
+
+        let page_text = "EvalOps restored extracted content. ".repeat(700);
+        let extract_result = extract_action_result(
+            &ExtractAction {
+                query: "restored context".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 0,
+                output_schema: None,
+                already_collected: Vec::new(),
+            },
+            &page_text,
+            Some("https://example.test/restored"),
+            false,
+            None,
+            None,
+            Some(&mut file_system),
+        );
+        assert!(
+            extract_result
+                .long_term_memory
+                .as_deref()
+                .expect("extract memory")
+                .contains("Content in extracted_content_0.md and once in <read_state>.")
+        );
+
+        let state = file_system.get_state();
+        assert_eq!(state.extracted_content_count, 1);
+        let restored = ManagedFileSystem::from_state(state).expect("restore file system");
+        let read_output = serde_json::json!({
+            "current_state": {
+                "thinking": "read restored report"
+            },
+            "action": [
+                {
+                    "read_file": {
+                        "file_name": "report.md"
+                    }
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "restored report read",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::with_settings_and_file_system(
+            "continue after restore",
+            AgentSettings::default(),
+            QueueModel::new(vec![read_output, done_output]),
+            MockSession::new(),
+            restored,
+        );
+
+        let history = agent.run(2).await.expect("restored agent run");
+        assert!(history.is_done());
+        assert_eq!(history.final_result(), Some("restored report read"));
+        assert!(
+            history.items[0].result[0]
+                .extracted_content
+                .as_deref()
+                .expect("read result")
+                .contains("<content>\nalpha\nbeta\n</content>")
+        );
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 2);
+        let first_prompt = request_text(&requests[0]);
+        assert!(first_prompt.contains("<file_system>\n<file>\nextracted_content_0.md -"));
+        assert!(first_prompt.contains("<file>\nreport.md - 2 lines"));
+        assert!(first_prompt.contains("<content>\nalpha\nbeta\n</content>"));
+        assert!(
+            first_prompt.contains("<todo_contents>\n- read the restored report\n</todo_contents>")
+        );
+        let second_prompt = request_text(&requests[1]);
+        assert!(second_prompt.contains("<read_state_0>"));
+        assert!(second_prompt.contains("Read from file report.md."));
+        drop(requests);
+
+        let next_file = agent
+            .file_system_mut()
+            .save_extracted_content("second restored extract")
+            .expect("next extracted content");
+        assert_eq!(next_file, "extracted_content_1.md");
+        assert_eq!(agent.file_system_state().extracted_content_count, 2);
+        assert_eq!(
+            agent
+                .file_system()
+                .display_file("extracted_content_1.md")
+                .as_deref(),
+            Some("second restored extract")
+        );
     }
 
     #[tokio::test]

@@ -397,7 +397,8 @@ mod tests {
     use browser_use_cdp::{BrowserError, BrowserSession, FoundElement, Pdf, Screenshot};
     use browser_use_core::{
         ActionExecutor, ActionResult, Agent, AgentSettings, ChatCompletion, ChatModel, ChatRequest,
-        LlmError, execute_action_sequence,
+        ContentPart, FileSystemState, LlmError, ManagedFileSystem, MessageRole,
+        execute_action_sequence,
     };
     use browser_use_tools::BrowserAction;
     use schemars::schema_for;
@@ -663,6 +664,144 @@ mod tests {
         assert!(request_text.contains("Clicked element 1"));
     }
 
+    #[tokio::test]
+    async fn managed_file_system_replay_matches_golden_fixture() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let (writer_llm, _writer_requests) = ScriptedChatModel::new(vec![json!({
+            "current_state": {
+                "thinking": "write restored files",
+                "evaluation_previous_goal": "No previous goal",
+                "memory": "Need filesystem replay",
+                "next_goal": "Seed managed files"
+            },
+            "action": [
+                {
+                    "write_file": {
+                        "file_name": "todo.md",
+                        "content": "- inspect restored report",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                },
+                {
+                    "write_file": {
+                        "file_name": "report.md",
+                        "content": "alpha\nbeta",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                }
+            ]
+        })]);
+        let mut writer = Agent::with_settings_and_file_system(
+            "seed managed files",
+            AgentSettings::default(),
+            writer_llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::new(Mutex::new(Vec::new())),
+            },
+            file_system,
+        );
+
+        writer.step().await.expect("writer step");
+        let first_extracted = writer
+            .file_system_mut()
+            .save_extracted_content("<extraction>\nseed restored extract\n</extraction>")
+            .expect("seed extracted content");
+        assert_eq!(first_extracted, "extracted_content_0.md");
+        let saved_state = writer.file_system_state();
+
+        let restored = ManagedFileSystem::from_state(saved_state.clone()).expect("restore state");
+        let (reader_llm, reader_requests) = ScriptedChatModel::new(vec![
+            json!({
+                "current_state": {
+                    "thinking": "read restored report",
+                    "evaluation_previous_goal": "Seeded managed files",
+                    "memory": "Need report contents",
+                    "next_goal": "Read report"
+                },
+                "action": [
+                    {
+                        "read_file": {
+                            "file_name": "report.md"
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "finish replay",
+                    "evaluation_previous_goal": "Read report",
+                    "memory": "Report contained alpha and beta",
+                    "next_goal": "Finish"
+                },
+                "action": [
+                    {
+                        "done": {
+                            "text": "restored replay complete",
+                            "success": true,
+                            "files_to_display": []
+                        }
+                    }
+                ]
+            }),
+        ]);
+        let mut reader = Agent::with_settings_and_file_system(
+            "continue managed filesystem replay",
+            AgentSettings::default(),
+            reader_llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::new(Mutex::new(Vec::new())),
+            },
+            restored,
+        );
+
+        reader.run(2).await.expect("reader run");
+        assert!(reader.history().is_done());
+        let (first_prompt, second_prompt) = {
+            let requests = reader_requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 2);
+            (request_text(&requests[0]), request_text(&requests[1]))
+        };
+        let next_extracted = reader
+            .file_system_mut()
+            .save_extracted_content("after restored replay")
+            .expect("next extracted content");
+
+        let first_result = &reader.history().items[0].result[0];
+        let second_result = &reader.history().items[1].result[0];
+        let actual = json!({
+            "state_after_writer": normalize_file_system_state(saved_state),
+            "restored_first_prompt": {
+                "file_system": tagged_section(&first_prompt, "file_system"),
+                "todo_contents": tagged_section(&first_prompt, "todo_contents")
+            },
+            "restored_second_prompt": {
+                "read_state": tagged_section(&second_prompt, "read_state")
+            },
+            "restored_history_summary": {
+                "steps": reader.history().items.len(),
+                "is_done": reader.history().is_done(),
+                "final_result": reader.history().final_result(),
+                "first_step_result": first_result.extracted_content.as_deref(),
+                "first_step_long_term_memory": first_result.long_term_memory.as_deref(),
+                "second_step_result": second_result.extracted_content.as_deref()
+            },
+            "next_extracted_file": next_extracted,
+            "final_file_names": reader.file_system().list_files()
+        });
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/managed_file_system_replay.json"),
+        );
+    }
+
     fn assert_agent_step_metadata(history: &Value) {
         let items = history["items"].as_array().expect("history items");
         assert_eq!(items.len(), 2);
@@ -693,6 +832,37 @@ mod tests {
                 .expect("history item object")
                 .remove("metadata");
         }
+    }
+
+    fn normalize_file_system_state(state: FileSystemState) -> Value {
+        let mut value = serde_json::to_value(state).expect("serialize file system state");
+        value["base_dir"] = Value::String("__BASE_DIR__".to_owned());
+        value
+    }
+
+    fn request_text(request: &ChatRequest) -> String {
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::User)
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::ImageUrl { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn tagged_section(text: &str, tag: &str) -> String {
+        let start = format!("<{tag}>\n");
+        let end = format!("\n</{tag}>");
+        let start_index = text.find(&start).expect("tag start") + start.len();
+        let end_index = text[start_index..]
+            .find(&end)
+            .map(|index| start_index + index)
+            .expect("tag end");
+        text[start_index..end_index].to_owned()
     }
 
     fn fixture_browser_state() -> BrowserStateSummary {

@@ -1,0 +1,51 @@
+{
+  "final_file_names": [
+    "extracted_content_0.md",
+    "extracted_content_1.md",
+    "report.md",
+    "todo.md"
+  ],
+  "next_extracted_file": "extracted_content_1.md",
+  "restored_first_prompt": {
+    "file_system": "<file>\nextracted_content_0.md - 3 lines\n<content>\n<extraction>\nseed restored extract\n</extraction>\n</content>\n</file>\n<file>\nreport.md - 2 lines\n<content>\nalpha\nbeta\n</content>\n</file>",
+    "todo_contents": "- inspect restored report"
+  },
+  "restored_history_summary": {
+    "final_result": "restored replay complete",
+    "first_step_long_term_memory": "alpha\nbeta",
+    "first_step_result": "Read from file report.md.\n<content>\nalpha\nbeta\n</content>",
+    "is_done": true,
+    "second_step_result": "restored replay complete",
+    "steps": 2
+  },
+  "restored_second_prompt": {
+    "read_state": "<read_state_0>\nRead from file report.md.\n<content>\nalpha\nbeta\n</content>\n</read_state_0>"
+  },
+  "state_after_writer": {
+    "base_dir": "__BASE_DIR__",
+    "extracted_content_count": 1,
+    "files": {
+      "extracted_content_0.md": {
+        "data": {
+          "content": "<extraction>\nseed restored extract\n</extraction>",
+          "name": "extracted_content_0"
+        },
+        "type": "MarkdownFile"
+      },
+      "report.md": {
+        "data": {
+          "content": "alpha\nbeta",
+          "name": "report"
+        },
+        "type": "MarkdownFile"
+      },
+      "todo.md": {
+        "data": {
+          "content": "- inspect restored report",
+          "name": "todo"
+        },
+        "type": "MarkdownFile"
+      }
+    }
+  }
+}

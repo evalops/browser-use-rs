@@ -17,4 +17,5 @@ serde_json.workspace = true
 async-trait.workspace = true
 browser-use-cdp = { path = "../browser-use-cdp" }
 browser-use-core = { path = "../browser-use-core" }
+tempfile.workspace = true
 tokio.workspace = true
