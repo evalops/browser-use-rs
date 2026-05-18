@@ -16,7 +16,8 @@ browser-use where compatibility is claimed.
 1. Schema snapshots: action JSON schemas, browser state JSON, and agent output.
 2. DOM fixtures: numbered clickable elements, text representation, configurable
    prompt attributes, selector maps, iframes, hidden elements, dropdowns, ARIA
-   widget roles, accessibility names, and eval/judge DOM tree output.
+   widget roles, accessibility names/descriptions, compact AX metadata, and
+   eval/judge DOM tree output.
 3. Browser actions: navigation, URL access policy guards for explicit
    navigation, action boundaries, redirects, and new tabs, search, click,
    input, scroll, keyboard, tab switching, downloads, screenshots, PDF output,
@@ -40,18 +41,20 @@ The Rust port keeps accessibility data in the compact numbered DOM contract
 rather than exposing raw full AX snapshots to the model. Indexed elements are
 joined to Chrome `Accessibility.getFullAXTree` nodes through temporary DOM
 markers and backend node ids. The supported AX surface now includes role, name,
-common state/value properties, top-level AX `value` and `description` fields,
+description, common state/value properties, top-level AX `value` and
+`description` fields, compact `ax_name`/`ax_description` metadata,
 backend/frontend node ids, and the upstream clickability veto for AX
 `hidden=true` or `disabled=true`.
 
 Prompt rendering stays intentionally small. Default DOM text includes
 automation-relevant aliases such as `expanded`, `pressed`, `selected`,
-`keyshortcuts`, `valuemin`, `valuemax`, `valuenow`, `valuetext`, live-region
-metadata, hierarchy metadata, multiselect metadata, and form values where
-safe. Longer or lower-frequency metadata such as AX `description`, `focusable`,
-`editable`, and `settable` is preserved in selector-map attributes and can be
-rendered through `include_attributes`, but is not emitted by default. Password
-fields continue to suppress `value` and `valuetext`.
+`keyshortcuts`, `valuemin`, `valuemax`, `valuenow`, `valuetext`,
+live-region metadata, hierarchy metadata, multiselect metadata, compact
+`ax_description`, and form values where safe. Longer or lower-frequency
+metadata such as raw AX `description`, `focusable`, `editable`, and `settable`
+is preserved in selector-map attributes and can be rendered through
+`include_attributes`, but is not emitted by default. Password fields continue
+to suppress `value` and `valuetext`.
 
 This boundary is deliberately narrower than a full browser-use AX object graph.
 The port does not currently serialize AX child-id relationships, ignored
@@ -145,15 +148,15 @@ Upstream bumps must include:
 
 - `simple_interactive_state.json`: compact DOM text and selector-map fixture.
 - `mixed_interactive_state.json`: selector-map fixture for accessible labels,
-  attributes, prompt-visible ARIA state aliases, top-level AX values,
-  opt-in AX descriptions, quiet AX clickability metadata, bounds, dropdown
-  current values, compound control metadata, scrollable metadata, rich-text
-  editors, and media controls.
+  compact accessibility names/descriptions, top-level AX values, raw opt-in AX
+  descriptions, attributes, prompt-visible ARIA state aliases, quiet AX
+  clickability metadata, bounds, dropdown current values, compound control
+  metadata, scrollable metadata, rich-text editors, and media controls.
 - `frame_shadow_state.json`: selector-map fixture for iframe target identity,
   merged child-frame bounds, and open-shadow-style indexed controls.
 - `eval_tree_state.txt`: tree-shaped eval representation fixture covering
-  structural tags, backend-node `[i_*]` markers, shadow-root markers, and
-  iframe-content markers.
+  structural tags, backend-node `[i_*]` markers, compact accessibility
+  metadata, shadow-root markers, and iframe-content markers.
 - `browser_action_schema.json`: JSON Schema snapshot for the implemented
   one-key browser action contract.
 - `browser_state_summary_schema.json`: JSON Schema snapshot for serialized

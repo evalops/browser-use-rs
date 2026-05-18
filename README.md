@@ -53,8 +53,9 @@ includes:
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and
-  cached-node actions, accessibility-tree role/name/state/value enrichment,
-  top-level AX values, opt-in AX descriptions, AX hidden/disabled suppression,
+  cached-node actions, accessibility-tree role/name/description/state/value
+  enrichment, compact `ax_name`/`ax_description` metadata, AX hidden/disabled
+  suppression,
   backend and frontend node ids, accessible labels, image-alt control names,
   selected dropdown values, compound control metadata, compact select option
   summaries, bounds, automation-friendly data/ARIA/value attributes,

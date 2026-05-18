@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#35 Expand accessibility snapshot parity](https://github.com/evalops/browser-use-rs/issues/35)
+- Next parity track will be selected from fresh upstream drift after this
+  checkpoint.
 
 ## Completed Tracks
 
@@ -38,6 +39,7 @@ small pushed checkpoints as each surface becomes real.
 - [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
 - [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
 - [#34 Improve stale-node fallback across iframe target sessions](https://github.com/evalops/browser-use-rs/issues/34)
+- [#35 Expand accessibility snapshot parity](https://github.com/evalops/browser-use-rs/issues/35)
 
 ## Current Checkpoint
 
@@ -173,11 +175,12 @@ Implemented:
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names,
-  state/value properties, top-level AX values, opt-in AX descriptions, AX
-  hidden/disabled suppression, quiet AX focusable/editable/settable metadata,
-  and backend/frontend node ids, carries image alt text into image-only control
-  names, renders selected dropdown values, compound control metadata, and
-  compact select option summaries, preserves
+  descriptions, state/value properties, compact `ax_name`/`ax_description`
+  metadata, AX hidden/disabled suppression, quiet AX
+  focusable/editable/settable metadata, and backend/frontend node ids, carries
+  image alt text into image-only control names, renders selected dropdown
+  values, compound control metadata, and compact select option summaries,
+  preserves
   automation-friendly data/ARIA/value attributes, native boolean/read-only
   state, validation patterns, `data-state`,
   input mask/autocomplete/date-format datepicker hints, live-region and
@@ -210,6 +213,5 @@ Implemented:
 
 Next:
 
-1. Continue [#35](https://github.com/evalops/browser-use-rs/issues/35) by
-   expanding accessibility snapshot parity without bloating the compact prompt
-   representation.
+1. Select the next highest-value upstream drift gap and open a tracked issue
+   with fixture-backed acceptance criteria.

@@ -59,6 +59,11 @@ pub fn mixed_interactive_state() -> SerializedDomState {
                 ("aria-keyshortcuts".to_owned(), "Control+Enter".to_owned()),
                 ("aria-labelledby".to_owned(), "submit-name".to_owned()),
                 ("aria-live".to_owned(), "polite".to_owned()),
+                (
+                    "ax_description".to_owned(),
+                    "Submits the completed request".to_owned(),
+                ),
+                ("ax_name".to_owned(), "Submit request".to_owned()),
                 ("data-testid".to_owned(), "submit-request".to_owned()),
                 (
                     "description".to_owned(),
@@ -304,6 +309,8 @@ pub fn eval_tree_state() -> SerializedDomState {
                         .with_attribute("required", "true")
                         .interactive(901),
                     DomEvalNode::element("button")
+                        .with_attribute("ax_description", "Completes checkout")
+                        .with_attribute("ax_name", "Pay now")
                         .with_attribute("data-testid", "checkout-submit")
                         .with_children(vec![DomEvalNode::text("Pay now")])
                         .interactive(902),

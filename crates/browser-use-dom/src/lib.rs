@@ -419,6 +419,8 @@ const EVAL_KEY_ATTRIBUTES: &[&str] = &[
     "aria-valuemin",
     "aria-valuemax",
     "aria-valuenow",
+    "ax_name",
+    "ax_description",
 ];
 
 const EVAL_CONTAINER_ELEMENTS: &[&str] = &[
@@ -796,6 +798,7 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
     "busy",
     "live",
     "ax_name",
+    "ax_description",
 ];
 
 #[must_use]
@@ -862,6 +865,11 @@ fn render_element_attributes_with_attribute_names(
             {
                 return None;
             }
+            if matches!(*attribute, "ax_name" | "ax_description")
+                && element_label_values(element).any(|label| value.eq_ignore_ascii_case(label))
+            {
+                return None;
+            }
             Some((*attribute, value))
         })
         .collect::<Vec<_>>();
@@ -888,6 +896,14 @@ fn remove_duplicate_attribute_values(attributes: Vec<(&str, String)>) -> Vec<(&s
             true
         })
         .collect()
+}
+
+fn element_label_values(element: &DomElementRef) -> impl Iterator<Item = &str> {
+    element
+        .name
+        .as_deref()
+        .into_iter()
+        .chain(element.text.as_deref())
 }
 
 fn is_duplicate_protected_attribute(attribute: &str) -> bool {
@@ -1827,6 +1843,36 @@ mod tests {
         assert_eq!(
             render_element_attributes_with_attributes(&element, &["description".to_owned()]),
             "description=Sends the completed form"
+        );
+    }
+
+    #[test]
+    fn rendered_attributes_include_distinct_accessibility_snapshot_metadata() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Submit".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("ax_name".to_owned(), "Submit".to_owned()),
+                (
+                    "ax_description".to_owned(),
+                    "Sends the completed checkout form".to_owned(),
+                ),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        assert_eq!(
+            render_element_attributes(&element),
+            "ax_description=Sends the completed checkout form"
         );
     }
 

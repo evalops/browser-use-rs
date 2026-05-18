@@ -4484,18 +4484,8 @@ fn dom_eval_node_from_value(
             ));
         }
     };
-    let attributes = value
-        .get("attributes")
-        .and_then(Value::as_object)
-        .map(|attrs| {
-            attrs
-                .iter()
-                .filter_map(|(key, value)| {
-                    value.as_str().map(|value| (key.clone(), value.to_owned()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let ax_info = accessibility_info_for_value(value, accessibility);
+    let attributes = enriched_attributes_from_value(value, ax_info);
     let children = value
         .get("children")
         .and_then(Value::as_array)
@@ -4507,13 +4497,7 @@ fn dom_eval_node_from_value(
         .get("backend_node_id")
         .and_then(Value::as_u64)
         .filter(|backend_node_id| *backend_node_id != 0)
-        .or_else(|| {
-            value
-                .get("ax_ref")
-                .and_then(Value::as_str)
-                .and_then(|ax_ref| accessibility.get(ax_ref))
-                .map(|info| info.backend_node_id)
-        });
+        .or_else(|| ax_info.map(|info| info.backend_node_id));
 
     Ok(DomEvalNode {
         node_type,
@@ -4813,25 +4797,8 @@ fn dom_element_from_value(
         .and_then(Value::as_u64)
         .and_then(|index| u32::try_from(index).ok())
         .ok_or_else(|| BrowserError::MissingResponseData("element index".to_owned()))?;
-    let mut attributes: BTreeMap<String, String> = value
-        .get("attributes")
-        .and_then(Value::as_object)
-        .map(|attrs| {
-            attrs
-                .iter()
-                .filter_map(|(key, value)| {
-                    value.as_str().map(|value| (key.clone(), value.to_owned()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let ax_info = value
-        .get("ax_ref")
-        .and_then(Value::as_str)
-        .and_then(|ax_ref| accessibility.get(ax_ref));
-    if let Some(ax_info) = ax_info {
-        attributes.extend(ax_info.properties.clone());
-    }
+    let ax_info = accessibility_info_for_value(value, accessibility);
+    let attributes = enriched_attributes_from_value(value, ax_info);
     let ax_role = ax_info.and_then(|info| info.role.as_deref());
     let dom_role = value.get("role").and_then(Value::as_str).map(str::to_owned);
     let role = dom_role.or_else(|| {
@@ -4966,6 +4933,50 @@ fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, Accessibilit
             ))
         })
         .collect()
+}
+
+fn accessibility_info_for_value<'a>(
+    value: &Value,
+    accessibility: &'a BTreeMap<String, AccessibilityNodeInfo>,
+) -> Option<&'a AccessibilityNodeInfo> {
+    value
+        .get("ax_ref")
+        .and_then(Value::as_str)
+        .and_then(|ax_ref| accessibility.get(ax_ref))
+}
+
+fn enriched_attributes_from_value(
+    value: &Value,
+    ax_info: Option<&AccessibilityNodeInfo>,
+) -> BTreeMap<String, String> {
+    let mut attributes: BTreeMap<String, String> = value
+        .get("attributes")
+        .and_then(Value::as_object)
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(ax_info) = ax_info {
+        attributes.extend(ax_info.properties.clone());
+        if let Some(name) = nonempty_value(ax_info.name.as_deref()) {
+            attributes.insert("ax_name".to_owned(), name.to_owned());
+        }
+        if let Some(description) = ax_info
+            .properties
+            .get("description")
+            .and_then(|value| nonempty_value(Some(value)))
+        {
+            attributes.insert("ax_description".to_owned(), description.to_owned());
+        }
+    }
+
+    attributes
 }
 
 fn ax_node_properties(node: &Value) -> BTreeMap<String, String> {
@@ -8877,7 +8888,10 @@ mod tests {
                 node_id: Some(84),
                 role: Some("button".to_owned()),
                 name: Some("Save settings".to_owned()),
-                properties: BTreeMap::from([("expanded".to_owned(), "true".to_owned())]),
+                properties: BTreeMap::from([
+                    ("description".to_owned(), "Primary action".to_owned()),
+                    ("expanded".to_owned(), "true".to_owned()),
+                ]),
             },
         )]);
         let element = dom_element_from_value(
@@ -8903,6 +8917,14 @@ mod tests {
         assert_eq!(
             element.attributes.get("expanded").map(String::as_str),
             Some("true")
+        );
+        assert_eq!(
+            element.attributes.get("ax_name").map(String::as_str),
+            Some("Save settings")
+        );
+        assert_eq!(
+            element.attributes.get("ax_description").map(String::as_str),
+            Some("Primary action")
         );
     }
 
@@ -9010,6 +9032,10 @@ mod tests {
             Some("list")
         );
         assert_eq!(
+            editable.attributes.get("ax_name").map(String::as_str),
+            Some("Search")
+        );
+        assert_eq!(
             state.llm_representation(),
             "[3] <input type=text id=search autocomplete=list> Search"
         );
@@ -9111,7 +9137,10 @@ mod tests {
                 node_id: Some(77),
                 role: Some("button".to_owned()),
                 name: Some("Save settings".to_owned()),
-                properties: BTreeMap::new(),
+                properties: BTreeMap::from([(
+                    "description".to_owned(),
+                    "Persists account settings".to_owned(),
+                )]),
             },
         )]);
         let state = dom_state_from_interactive_value(
@@ -9151,7 +9180,7 @@ mod tests {
 
         assert_eq!(
             state.eval_representation(),
-            "<body />\n\t[i_55] <button data-testid=\"save-settings\">Save"
+            "<body />\n\t[i_55] <button data-testid=\"save-settings\" ax_name=\"Save settings\" ax_description=\"Persists account settings\">Save"
         );
     }
 

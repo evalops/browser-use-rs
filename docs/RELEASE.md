@@ -41,9 +41,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   element metadata, Chrome OOPIF cross-origin iframe target content indexing
   and cached-node actions, automation-friendly data/ARIA/value attributes,
   native boolean/read-only state, validation patterns, `data-state`, static
-  history-matching attributes, accessibility-tree role/name/state/value
-  enrichment with backend/frontend node ids, AX hidden/disabled suppression,
-  hidden-element and
+  history-matching attributes, accessibility-tree
+  role/name/description/state/value enrichment with compact
+  `ax_name`/`ax_description` metadata and backend/frontend node ids,
+  AX hidden/disabled suppression, hidden-element and
   `data-browser-use-exclude` subtree filtering, topmost/occlusion filtering,
   hidden file-input upload targets, plain scroll-container indexing,
   non-content tag pruning, prompt-visible pages-above/below context for indexed
@@ -174,11 +175,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   it to normal agent replies. Profile-wide local/session storage discovery
   outside the current page plus attached frame tree remains outside the safe CDP
   boundary documented in `docs/CONFORMANCE.md`.
-- Accessibility-tree parity is partial; the DOM serializer now carries common
-  AX role/name/state/value properties, top-level AX values, opt-in AX
-  descriptions, AX hidden/disabled suppression, and quiet AX
-  focusable/editable/settable metadata, but still uses a pragmatic compact
-  representation rather than full browser-use AX snapshots.
+- Raw full AX snapshots are intentionally not emitted into normal prompt or
+  state surfaces by default; the compact DOM carries the browser-use AX fields
+  needed for action selection, evaluator context, hidden/disabled suppression,
+  and conformance fixtures.
 - Browser/action calls that implicitly create MCP sessions are still in-process
   only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised
