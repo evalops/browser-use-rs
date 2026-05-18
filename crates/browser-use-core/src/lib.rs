@@ -15,7 +15,11 @@ use base64::Engine;
 use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
 use url::form_urlencoded;
 
-pub use browser_use_dom::{BrowserStateSummary, DomInteractedElement};
+pub use browser_use_dom::{
+    BrowserStateSummary, DomInteractedElement, DomInteractedElementMatch,
+    DomInteractedElementMatchFailure, DomInteractedElementMatchFailureReason,
+    DomInteractedElementMatchLevel, SerializedDomState,
+};
 pub use browser_use_llm::{
     AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ContentPart,
     GeminiChatModel, LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
@@ -433,6 +437,55 @@ pub struct AgentHistory {
     pub items: Vec<AgentHistoryItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionReplayRematch {
+    pub action: BrowserAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rematched_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_result: Option<DomInteractedElementMatch>,
+    #[serde(default)]
+    pub changed: bool,
+}
+
+pub fn rematch_action_for_replay(
+    action: &BrowserAction,
+    interacted_element: Option<&DomInteractedElement>,
+    current_dom: &SerializedDomState,
+) -> Result<ActionReplayRematch, DomInteractedElementMatchFailure> {
+    let Some(original_index) = action.interacted_element_index() else {
+        return Ok(ActionReplayRematch {
+            action: action.clone(),
+            original_index: None,
+            rematched_index: None,
+            match_result: None,
+            changed: false,
+        });
+    };
+    let Some(interacted_element) = interacted_element else {
+        return Ok(ActionReplayRematch {
+            action: action.clone(),
+            original_index: Some(original_index),
+            rematched_index: None,
+            match_result: None,
+            changed: false,
+        });
+    };
+
+    let match_result = interacted_element.rematch(current_dom)?;
+    let rematched_index = match_result.index;
+    let changed = rematched_index != original_index;
+    Ok(ActionReplayRematch {
+        action: action_with_interacted_index(action, rematched_index),
+        original_index: Some(original_index),
+        rematched_index: Some(rematched_index),
+        match_result: Some(match_result),
+        changed,
+    })
+}
+
 impl AgentHistory {
     #[must_use]
     pub fn final_result(&self) -> Option<&str> {
@@ -670,6 +723,32 @@ fn action_value_with_interacted_element(
         attributes.insert("interacted_element".to_owned(), interacted_element);
     }
     Some(action_output)
+}
+
+fn action_with_interacted_index(action: &BrowserAction, index: u32) -> BrowserAction {
+    let mut action = action.clone();
+    match &mut action {
+        BrowserAction::Click(params) if params.index.is_some() => {
+            params.index = Some(index);
+        }
+        BrowserAction::Input(params) => {
+            params.index = index;
+        }
+        BrowserAction::Scroll(params) if params.index.is_some() => {
+            params.index = Some(index);
+        }
+        BrowserAction::UploadFile(params) => {
+            params.index = index;
+        }
+        BrowserAction::GetDropdownOptions(params) => {
+            params.index = index;
+        }
+        BrowserAction::SelectDropdownOption(params) => {
+            params.index = index;
+        }
+        _ => {}
+    }
+    action
 }
 
 #[async_trait]
@@ -5693,6 +5772,141 @@ mod tests {
     }
 
     #[test]
+    fn replay_rematch_updates_supported_indexed_actions() {
+        let historical_element = replay_dom_element(
+            1,
+            "input",
+            BTreeMap::from([("id".to_owned(), "email".to_owned())]),
+        );
+        let interacted = DomInteractedElement::from_element(&historical_element);
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            7,
+            "input",
+            BTreeMap::from([("id".to_owned(), "email".to_owned())]),
+        )]);
+        let actions = vec![
+            BrowserAction::Click(ClickElementAction {
+                index: Some(1),
+                coordinate_x: None,
+                coordinate_y: None,
+            }),
+            BrowserAction::Input(InputTextAction {
+                index: 1,
+                text: "ada@example.test".to_owned(),
+                clear: true,
+            }),
+            BrowserAction::Scroll(ScrollAction {
+                down: true,
+                pages: 1.0,
+                index: Some(1),
+            }),
+            BrowserAction::UploadFile(UploadFileAction {
+                index: 1,
+                path: "/tmp/file.txt".to_owned(),
+            }),
+            BrowserAction::GetDropdownOptions(GetDropdownOptionsAction { index: 1 }),
+            BrowserAction::SelectDropdownOption(SelectDropdownOptionAction {
+                index: 1,
+                text: "Team".to_owned(),
+            }),
+        ];
+
+        for action in actions {
+            let rematch = rematch_action_for_replay(&action, Some(&interacted), &current_dom)
+                .expect("rematched action");
+            assert_eq!(rematch.original_index, Some(1));
+            assert_eq!(rematch.rematched_index, Some(7));
+            assert!(rematch.changed);
+            assert_eq!(rematch.action.interacted_element_index(), Some(7));
+            assert_eq!(
+                rematch.match_result.expect("match result").level,
+                DomInteractedElementMatchLevel::Exact
+            );
+        }
+    }
+
+    #[test]
+    fn replay_rematch_preserves_non_indexed_or_missing_history_actions() {
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            3,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        )]);
+        let coordinate_click = BrowserAction::Click(ClickElementAction {
+            index: None,
+            coordinate_x: Some(10),
+            coordinate_y: Some(20),
+        });
+        let wait = BrowserAction::Wait(WaitAction { seconds: 0 });
+        let input = BrowserAction::Input(InputTextAction {
+            index: 1,
+            text: "unchanged".to_owned(),
+            clear: true,
+        });
+
+        let click_rematch =
+            rematch_action_for_replay(&coordinate_click, None, &current_dom).expect("click");
+        assert_eq!(click_rematch.action, coordinate_click);
+        assert_eq!(click_rematch.original_index, None);
+        assert!(!click_rematch.changed);
+
+        let wait_rematch = rematch_action_for_replay(&wait, None, &current_dom).expect("wait");
+        assert_eq!(wait_rematch.action, wait);
+        assert_eq!(wait_rematch.original_index, None);
+        assert!(!wait_rematch.changed);
+
+        let input_rematch = rematch_action_for_replay(&input, None, &current_dom).expect("input");
+        assert_eq!(input_rematch.action, input);
+        assert_eq!(input_rematch.original_index, Some(1));
+        assert_eq!(input_rematch.rematched_index, None);
+        assert!(!input_rematch.changed);
+    }
+
+    #[test]
+    fn replay_rematch_reports_noop_and_ambiguous_matches() {
+        let historical_element = replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        );
+        let interacted = DomInteractedElement::from_element(&historical_element);
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        )]);
+        let action = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+
+        let rematch = rematch_action_for_replay(&action, Some(&interacted), &current_dom)
+            .expect("same-index match");
+        assert_eq!(rematch.action, action);
+        assert_eq!(rematch.original_index, Some(1));
+        assert_eq!(rematch.rematched_index, Some(1));
+        assert!(!rematch.changed);
+
+        let mut ambiguous = DomInteractedElement::from_element(&historical_element);
+        ambiguous.element_hash = 0;
+        ambiguous.stable_hash = None;
+        ambiguous.x_path = String::new();
+        ambiguous.ax_name = Some("Duplicate".to_owned());
+        let mut first = replay_dom_element(1, "button", BTreeMap::new());
+        first.name = Some("Duplicate".to_owned());
+        let mut second = replay_dom_element(2, "button", BTreeMap::new());
+        second.name = Some("Duplicate".to_owned());
+        let current_dom = SerializedDomState::from_elements(vec![first, second]);
+        let error =
+            rematch_action_for_replay(&action, Some(&ambiguous), &current_dom).expect_err("error");
+        assert_eq!(
+            error.reason,
+            DomInteractedElementMatchFailureReason::Ambiguous
+        );
+    }
+
+    #[test]
     fn history_screenshots_match_browser_use_accessor() {
         let mut first_state = blank_state();
         first_state.screenshot = Some("first-shot".to_owned());
@@ -5794,6 +6008,28 @@ mod tests {
             pending_network_requests: vec![],
             pagination_buttons: vec![],
             closed_popup_messages: vec![],
+        }
+    }
+
+    fn replay_dom_element(
+        index: u32,
+        tag_name: &str,
+        attributes: BTreeMap<String, String>,
+    ) -> browser_use_dom::DomElementRef {
+        browser_use_dom::DomElementRef {
+            index,
+            target_id: format!("target-{index}"),
+            backend_node_id: u64::from(index),
+            node_id: Some(u64::from(index)),
+            tag_name: tag_name.to_owned(),
+            role: None,
+            name: None,
+            text: None,
+            attributes,
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
         }
     }
 
