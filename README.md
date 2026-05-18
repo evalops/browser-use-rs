@@ -115,7 +115,9 @@ includes:
   parts, screenshot action next-observation image prompts, action-result image
   prompt parts, upstream-style page-stat prompt context with loading/skeleton
   hints, validated `llm_screenshot_size` prompt-only PNG resizing with
-  coordinate-click scaling back to the observed viewport, one-time extraction
+  coordinate-click scaling back to the observed viewport, upstream-style long
+  URL shortening for user/assistant prompt text with recursive restoration
+  before action execution/history, one-time extraction
   replay handling,
   step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,

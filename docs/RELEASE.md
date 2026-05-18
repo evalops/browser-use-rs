@@ -122,7 +122,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   upstream-style per-action wall-clock timeout
   guard with `BROWSER_USE_ACTION_TIMEOUT_S`/`action_timeout_seconds`,
   validated `llm_screenshot_size` prompt-only PNG resizing with coordinate-click
-  scaling back to the observed viewport,
+  scaling back to the observed viewport, upstream-style long URL shortening for
+  user/assistant prompt text with recursive restoration before action
+  execution/history,
   upstream-style final `done` responses after repeated failures, upstream-style
   final-step done-only guard when `max_steps` is reached, upstream-style 75%
   step-budget warning before finalization, normalized repeated-action loop
