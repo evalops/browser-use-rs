@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is open at this checkpoint.
+- [#58 Teach Homebrew formula to select macOS release assets](https://github.com/evalops/browser-use-rs/issues/58)
 
 ## Completed Tracks
 
