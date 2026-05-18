@@ -108,9 +108,11 @@ uses the same persistent session registry as the CLI and MCP session tool.
 - MCP can reconnect to persistent sessions created by `browser-use-rs session
   start` or the `browser_use_session` tool; browser/action calls that create a
   session implicitly are still in-process only.
-- DOM indexing is compact and useful, but not yet browser-use DOM/AX parity.
-- Indexed actions currently target same-document interactive elements; iframe
-  and shadow-root support belong to the DOM parity track.
+- DOM indexing is compact and accessibility-aware, including same-origin iframe
+  traversal, open shadow-root traversal, AX role/name enrichment,
+  backend/frontend node ids, and cached observed-node resolution for
+  click/type/scroll/dropdown/upload actions. Full browser-use DOM/AX snapshot
+  parity is still tracked separately.
 - Agent runs currently support OpenAI-compatible Chat Completions, Anthropic
   Messages, Gemini GenerateContent, and Ollama Chat structured-output adapters.
 - MCP tools are real over stdio and can reuse in-process sessions by
