@@ -473,6 +473,7 @@ mod tests {
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("use_judge"));
         assert!(schema_text.contains("ground_truth"));
+        assert!(schema_text.contains("extraction_schema"));
         assert!(schema_text.contains("message_compaction"));
         assert!(schema_text.contains("compact_every_n_steps"));
         assert!(schema_text.contains("trigger_char_count"));
@@ -527,6 +528,12 @@ mod tests {
                 "include_tool_call_examples": true,
                 "use_judge": false,
                 "ground_truth": "Must include a receipt.",
+                "extraction_schema": {
+                    "type": "object",
+                    "properties": {
+                        "company": { "type": "string" }
+                    }
+                },
                 "message_compaction": {
                     "compact_every_n_steps": 3,
                     "trigger_char_count": 1024,
@@ -563,6 +570,14 @@ mod tests {
         assert_eq!(
             input.settings.ground_truth.as_deref(),
             Some("Must include a receipt.")
+        );
+        assert_eq!(
+            input
+                .settings
+                .extraction_schema
+                .as_ref()
+                .and_then(|schema| { schema["properties"]["company"]["type"].as_str() }),
+            Some("string")
         );
         let browser_use_core::MessageCompaction::Settings(message_compaction) =
             &input.settings.message_compaction

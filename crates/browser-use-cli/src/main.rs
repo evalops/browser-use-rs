@@ -155,6 +155,8 @@ enum Command {
         no_judge: bool,
         #[arg(long = "ground-truth")]
         ground_truth: Option<String>,
+        #[arg(long = "extraction-schema", value_parser = parse_json_value)]
+        extraction_schema: Option<Value>,
         #[arg(long, default_value_t = false)]
         calculate_cost: bool,
         #[arg(long, default_value_t = false)]
@@ -528,6 +530,7 @@ async fn main() -> anyhow::Result<()> {
             flash_mode,
             no_judge,
             ground_truth,
+            extraction_schema,
             calculate_cost,
             include_tool_call_examples,
             save_conversation_path,
@@ -591,6 +594,7 @@ async fn main() -> anyhow::Result<()> {
                 flash_mode,
                 no_judge,
                 ground_truth,
+                extraction_schema,
                 calculate_cost,
                 include_tool_call_examples,
                 save_conversation_path,
@@ -676,6 +680,7 @@ struct CliAgentSettingsArgs {
     flash_mode: bool,
     no_judge: bool,
     ground_truth: Option<String>,
+    extraction_schema: Option<Value>,
     calculate_cost: bool,
     include_tool_call_examples: bool,
     save_conversation_path: Option<String>,
@@ -760,6 +765,7 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
         settings.use_judge = false;
     }
     settings.ground_truth = args.ground_truth;
+    settings.extraction_schema = args.extraction_schema;
     settings.calculate_cost = args.calculate_cost;
     settings.include_tool_call_examples = args.include_tool_call_examples;
     settings.save_conversation_path = args.save_conversation_path;
@@ -852,6 +858,10 @@ fn cli_generate_gif(value: String) -> GenerateGif {
         "false" => GenerateGif::Disabled,
         _ => GenerateGif::Path(value),
     }
+}
+
+fn parse_json_value(value: &str) -> Result<Value, String> {
+    serde_json::from_str(value).map_err(|error| format!("expected JSON value: {error}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2224,6 +2234,8 @@ mod tests {
             "--no-judge",
             "--ground-truth",
             "Must include a receipt.",
+            "--extraction-schema",
+            r#"{"type":"object","properties":{"company":{"type":"string"}}}"#,
             "--calculate-cost",
             "--include-tool-call-examples",
             "--save-conversation-path",
@@ -2304,6 +2316,7 @@ mod tests {
                 flash_mode,
                 no_judge,
                 ground_truth,
+                extraction_schema,
                 calculate_cost,
                 include_tool_call_examples,
                 save_conversation_path,
@@ -2354,6 +2367,12 @@ mod tests {
                 assert!(flash_mode);
                 assert!(no_judge);
                 assert_eq!(ground_truth.as_deref(), Some("Must include a receipt."));
+                assert_eq!(
+                    extraction_schema
+                        .as_ref()
+                        .and_then(|schema| schema["properties"]["company"]["type"].as_str()),
+                    Some("string")
+                );
                 assert!(calculate_cost);
                 assert!(include_tool_call_examples);
                 assert_eq!(
@@ -2691,6 +2710,12 @@ mod tests {
             flash_mode: true,
             no_judge: true,
             ground_truth: Some("Must include a receipt.".to_owned()),
+            extraction_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "company": { "type": "string" }
+                }
+            })),
             calculate_cost: true,
             include_tool_call_examples: true,
             save_conversation_path: Some("/tmp/browser-use-conversations".to_owned()),
@@ -2755,6 +2780,13 @@ mod tests {
         assert_eq!(
             settings.ground_truth.as_deref(),
             Some("Must include a receipt.")
+        );
+        assert_eq!(
+            settings
+                .extraction_schema
+                .as_ref()
+                .and_then(|schema| schema["properties"]["company"]["type"].as_str()),
+            Some("string")
         );
         assert!(settings.calculate_cost);
         assert!(settings.include_tool_call_examples);

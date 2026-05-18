@@ -142,6 +142,8 @@ pub struct AgentSettings {
     pub use_judge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground_truth: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_schema: Option<Value>,
     #[serde(default, skip_serializing_if = "is_default_message_compaction")]
     pub message_compaction: MessageCompaction,
     #[serde(default)]
@@ -322,6 +324,7 @@ impl Default for AgentSettings {
             flash_mode: false,
             use_judge: default_use_judge(),
             ground_truth: None,
+            extraction_schema: None,
             message_compaction: MessageCompaction::default(),
             calculate_cost: false,
             include_tool_call_examples: false,
@@ -6367,20 +6370,41 @@ fn actions_for_execution(
     current_url: &str,
 ) -> Vec<BrowserAction> {
     let sensitive_data = applicable_sensitive_data_values(&settings.sensitive_data, current_url);
-    if sensitive_data.is_empty() {
+    if sensitive_data.is_empty() && settings.extraction_schema.is_none() {
         return actions.to_vec();
     }
 
     actions
         .iter()
         .map(|action| {
-            let Ok(mut value) = serde_json::to_value(action) else {
+            let action =
+                action_with_default_extraction_schema(action, settings.extraction_schema.as_ref());
+            if sensitive_data.is_empty() {
+                return action;
+            }
+            let Ok(mut value) = serde_json::to_value(&action) else {
                 return action.clone();
             };
             replace_sensitive_placeholders_in_value(&mut value, &sensitive_data);
             serde_json::from_value(value).unwrap_or_else(|_| action.clone())
         })
         .collect()
+}
+
+fn action_with_default_extraction_schema(
+    action: &BrowserAction,
+    extraction_schema: Option<&Value>,
+) -> BrowserAction {
+    let (BrowserAction::Extract(params), Some(schema)) = (action, extraction_schema) else {
+        return action.clone();
+    };
+    if params.output_schema.is_some() {
+        return action.clone();
+    }
+
+    let mut params = params.clone();
+    params.output_schema = Some(schema.clone());
+    BrowserAction::Extract(params)
 }
 
 fn scale_coordinate_click_actions_for_prompt(
@@ -7981,6 +8005,7 @@ mod tests {
         assert!(!settings.flash_mode);
         assert!(settings.use_judge);
         assert_eq!(settings.ground_truth, None);
+        assert_eq!(settings.extraction_schema, None);
         assert_eq!(settings.message_compaction, MessageCompaction::Enabled);
         assert!(!settings.calculate_cost);
         assert!(!settings.include_tool_call_examples);
@@ -12518,8 +12543,18 @@ mod tests {
             "company": "EvalOps",
             "links": ["https://evalops.dev/run"]
         });
-        let mut agent = Agent::new(
+        let settings = AgentSettings {
+            extraction_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ignored": { "type": "string" }
+                }
+            })),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
             "extract structured company data",
+            settings,
             QueueModel::new(vec![agent_output, extract_output]),
             MockSession::new(),
         );
@@ -12552,6 +12587,74 @@ mod tests {
         let extract_request_text = request_text(&requests[1]);
         assert!(extract_request_text.contains("<links>"));
         assert!(extract_request_text.contains("<already_collected>"));
+    }
+
+    #[tokio::test]
+    async fn agent_extract_action_uses_agent_extraction_schema_when_action_omits_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "company": { "type": "string" }
+            },
+            "required": ["company"]
+        });
+        let agent_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "extract": {
+                        "query": "company",
+                        "extract_links": false,
+                        "extract_images": false,
+                        "start_from_char": 0,
+                        "already_collected": []
+                    }
+                }
+            ]
+        });
+        let extract_output = serde_json::json!({
+            "company": "EvalOps"
+        });
+        let settings = AgentSettings {
+            extraction_schema: Some(schema.clone()),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "extract company with default schema",
+            settings,
+            QueueModel::new(vec![agent_output, extract_output]),
+            MockSession::new(),
+        );
+
+        let (result, model_output) = {
+            let item = agent.step().await.expect("agent step");
+            (
+                item.result[0].clone(),
+                item.model_output.clone().expect("model output"),
+            )
+        };
+
+        let content = result.extracted_content.as_deref().expect("extract result");
+        assert!(content.contains("<structured_result>"));
+        assert!(content.contains(r#""company":"EvalOps""#));
+        let metadata = result.metadata.as_ref().expect("structured metadata");
+        assert_eq!(
+            metadata["extraction_result"]["schema_used"]["required"][0],
+            "company"
+        );
+        let BrowserAction::Extract(history_params) = &model_output.action[0] else {
+            panic!("expected extract action");
+        };
+        assert_eq!(history_params.output_schema, None);
+
+        let requests = agent.llm.requests.lock().expect("requests lock").clone();
+        assert_eq!(
+            requests[1].output_schema.as_ref().expect("extract schema"),
+            &schema
+        );
+        let extract_request_text = request_text(&requests[1]);
+        assert!(extract_request_text.contains("<output_schema>"));
+        assert!(extract_request_text.contains("\"company\""));
     }
 
     #[tokio::test]
@@ -13095,6 +13198,62 @@ mod tests {
                 clear: true,
             })
         );
+    }
+
+    #[test]
+    fn actions_for_execution_injects_default_extraction_schema_without_mutating_history_action() {
+        let default_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "company": { "type": "string" }
+            }
+        });
+        let action_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string" }
+            }
+        });
+        let settings = AgentSettings {
+            extraction_schema: Some(default_schema.clone()),
+            ..AgentSettings::default()
+        };
+        let actions = vec![
+            BrowserAction::Extract(ExtractAction {
+                query: "company".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 0,
+                output_schema: None,
+                already_collected: vec![],
+            }),
+            BrowserAction::Extract(ExtractAction {
+                query: "title".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 0,
+                output_schema: Some(action_schema.clone()),
+                already_collected: vec![],
+            }),
+        ];
+
+        let execution_actions = actions_for_execution(&actions, &settings, "https://example.test");
+
+        let BrowserAction::Extract(defaulted_params) = &execution_actions[0] else {
+            panic!("expected extract action");
+        };
+        assert_eq!(
+            defaulted_params.output_schema.as_ref(),
+            Some(&default_schema)
+        );
+        let BrowserAction::Extract(action_params) = &execution_actions[1] else {
+            panic!("expected extract action");
+        };
+        assert_eq!(action_params.output_schema.as_ref(), Some(&action_schema));
+        let BrowserAction::Extract(original_params) = &actions[0] else {
+            panic!("expected extract action");
+        };
+        assert_eq!(original_params.output_schema, None);
     }
 
     #[test]
