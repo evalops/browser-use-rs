@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next parity track will be selected from fresh upstream drift after this
-  checkpoint.
+- [#36 Persist implicit MCP session_id launches](https://github.com/evalops/browser-use-rs/issues/36)
 
 ## Completed Tracks
 
@@ -120,7 +119,9 @@ Implemented:
   including in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list across
   CLI invocations.
-- MCP stdio reconnection to persistent CLI session records by `session_id`.
+- MCP stdio reconnection to persistent CLI session records by `session_id`, and
+  persistent record creation for new `session_id` state/action/agent calls with
+  a supplied URL.
 - MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, max-step, max-failure handling,
@@ -213,5 +214,5 @@ Implemented:
 
 Next:
 
-1. Select the next highest-value upstream drift gap and open a tracked issue
-   with fixture-backed acceptance criteria.
+1. Continue [#36](https://github.com/evalops/browser-use-rs/issues/36) by
+   locking implicit MCP `session_id` persistence across stdio/daemon restarts.

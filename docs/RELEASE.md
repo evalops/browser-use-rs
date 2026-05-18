@@ -145,7 +145,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - MCP stdio tools for state, actions, and agent runs, including typed
   `AgentSettings`, OpenAI-wire structured-output mode overrides, in-process
   session reuse by `session_id`, and reconnection to persistent CLI session
-  records.
+  records, plus persistent record creation for new `session_id` calls when a
+  URL is supplied.
 - MCP stdio persistent session lifecycle for start, stop, and list.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
   the MCP tool surface with shared in-process sessions across active
@@ -179,8 +180,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   state surfaces by default; the compact DOM carries the browser-use AX fields
   needed for action selection, evaluator context, hidden/disabled suppression,
   and conformance fixtures.
-- Browser/action calls that implicitly create MCP sessions are still in-process
-  only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised
   background service that owns their lifecycle.
 - The packaged daemon service files are local user-service templates; distro

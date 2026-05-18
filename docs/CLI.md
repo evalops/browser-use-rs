@@ -139,7 +139,9 @@ supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 `browser_use_state`, `browser_use_actions`, `browser_use_agent`, and
 `browser_use_session`. MCP browser and agent tool inputs accept an optional
 `session_id`; calls with the same `session_id` reuse the same in-process Chrome
-session. The MCP `browser_use_agent` tool also accepts
+session, reconnect to an existing persistent record after restarts, or create a
+persistent record when the `session_id` is new and a URL is supplied. The MCP
+`browser_use_agent` tool also accepts
 `structured_output_mode` values `json-schema`, `json-object`, `prompt-only`,
 and `tool-call`, matching the CLI override for OpenAI-wire provider fallbacks.
 `browser_use_session` can start, stop, and list persistent session records. If
@@ -165,9 +167,6 @@ templates live under `packaging/`; see
 
 ## Current Limits
 
-- MCP can reconnect to persistent sessions created by `browser-use-rs session
-  start` or the `browser_use_session` tool; browser/action calls that create a
-  session implicitly are still in-process only.
 - DOM indexing is compact and accessibility-aware, including same-origin iframe
   traversal, open shadow-root traversal, AX role/name/state/value enrichment,
   backend/frontend node ids, and cached observed-node resolution for
@@ -182,8 +181,8 @@ templates live under `packaging/`; see
   adapters, with DeepSeek forced tool-call output, Cerebras prompt-only output,
   and explicit OpenAI-wire output-mode overrides for fallback paths.
 - MCP tools are real over stdio and can reuse in-process sessions by
-  `session_id`; persistent sessions must be created explicitly with the CLI
-  session command or `browser_use_session`.
+  `session_id`; new `session_id` calls with a URL create persistent records,
+  and calls without `session_id` stay one-shot and ephemeral.
 - The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
   authentication, pid/ready files, and packaged systemd/launchd templates for
   external supervisors.

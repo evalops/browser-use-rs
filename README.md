@@ -137,7 +137,8 @@ includes:
   modes for DeepSeek forced tool calls and Cerebras prompt-only guidance.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
   bearer/header auth, supervisor pid/ready files, packaged systemd/launchd
-  templates, persistent session registry, typed MCP/CLI agent settings
+  templates, persistent session registry for explicit and implicit
+  `session_id` MCP calls, typed MCP/CLI agent settings
   including available-file-path and sensitive-data placeholder context plus
   system-message control, and conformance fixtures.
 

@@ -1247,39 +1247,77 @@ struct McpRuntime {
     sessions: HashMap<String, Arc<CdpBrowserSession>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpSessionPlan {
+    ReuseInMemory,
+    ReconnectPersistentRecord,
+    CreatePersistentRecord,
+}
+
+fn mcp_session_plan(
+    has_in_memory_session: bool,
+    has_persistent_record: bool,
+    has_url: bool,
+    session_id: &str,
+) -> anyhow::Result<McpSessionPlan> {
+    if has_in_memory_session {
+        return Ok(McpSessionPlan::ReuseInMemory);
+    }
+    if has_persistent_record {
+        return Ok(McpSessionPlan::ReconnectPersistentRecord);
+    }
+    if has_url {
+        return Ok(McpSessionPlan::CreatePersistentRecord);
+    }
+    anyhow::bail!("url is required to create MCP session {session_id}")
+}
+
 impl McpRuntime {
     async fn session(
         &mut self,
         session_id: &str,
         url: Option<String>,
     ) -> anyhow::Result<Arc<CdpBrowserSession>> {
-        if let Some(session) = self.sessions.get(session_id).cloned() {
-            if let Some(url) = url {
-                session.navigate(&url, false).await?;
-                sleep(Duration::from_millis(150)).await;
-            }
-            return Ok(session);
-        }
-
         let record_path = session_record_path(session_id)?;
-        if record_path.exists() {
-            let record = read_session_record(session_id)?;
-            let session = Arc::new(CdpBrowserSession::connect(record.endpoint).await?);
-            if let Some(url) = url {
-                session.navigate(&url, false).await?;
-                sleep(Duration::from_millis(150)).await;
+        match mcp_session_plan(
+            self.sessions.contains_key(session_id),
+            record_path.exists(),
+            url.is_some(),
+            session_id,
+        )? {
+            McpSessionPlan::ReuseInMemory => {
+                let session = self
+                    .sessions
+                    .get(session_id)
+                    .cloned()
+                    .expect("session plan confirmed in-memory session");
+                if let Some(url) = url {
+                    session.navigate(&url, false).await?;
+                    sleep(Duration::from_millis(150)).await;
+                }
+                Ok(session)
             }
-            self.sessions
-                .insert(session_id.to_owned(), Arc::clone(&session));
-            return Ok(session);
+            McpSessionPlan::ReconnectPersistentRecord => {
+                let record = read_session_record(session_id)?;
+                let session = Arc::new(CdpBrowserSession::connect(record.endpoint).await?);
+                if let Some(url) = url {
+                    session.navigate(&url, false).await?;
+                    sleep(Duration::from_millis(150)).await;
+                }
+                self.sessions
+                    .insert(session_id.to_owned(), Arc::clone(&session));
+                Ok(session)
+            }
+            McpSessionPlan::CreatePersistentRecord => {
+                let url = url.expect("session plan confirmed URL is present");
+                let (_record, session, _state) =
+                    start_persistent_session(session_id, &url, false).await?;
+                let session = Arc::new(session);
+                self.sessions
+                    .insert(session_id.to_owned(), Arc::clone(&session));
+                Ok(session)
+            }
         }
-
-        let url = url
-            .ok_or_else(|| anyhow::anyhow!("url is required to create MCP session {session_id}"))?;
-        let session = Arc::new(launch_and_navigate(&url).await?);
-        self.sessions
-            .insert(session_id.to_owned(), Arc::clone(&session));
-        Ok(session)
     }
 }
 
@@ -2066,6 +2104,29 @@ mod tests {
             }
             _ => panic!("expected daemon command"),
         }
+    }
+
+    #[test]
+    fn mcp_session_plan_persists_implicit_session_ids() {
+        assert_eq!(
+            mcp_session_plan(true, false, false, "existing").expect("in memory"),
+            McpSessionPlan::ReuseInMemory
+        );
+        assert_eq!(
+            mcp_session_plan(false, true, false, "recorded").expect("record"),
+            McpSessionPlan::ReconnectPersistentRecord
+        );
+        assert_eq!(
+            mcp_session_plan(false, false, true, "implicit").expect("create"),
+            McpSessionPlan::CreatePersistentRecord
+        );
+
+        let error = mcp_session_plan(false, false, false, "missing-url")
+            .expect_err("missing url should fail");
+        assert_eq!(
+            error.to_string(),
+            "url is required to create MCP session missing-url"
+        );
     }
 
     #[test]
