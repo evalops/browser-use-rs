@@ -79,7 +79,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   envelopes, PDF/DOCX write/append artifacts with paginated PDF text layout,
   and append-only-to-existing-file semantics, upstream-aligned binary/image
   extension rejection, DOCX text extraction, PNG/JPEG image-file reads with
-  one-shot image prompt parts, PDF capture, extraction, page search, element
+  one-shot image prompt parts, PDF capture, LLM-backed agent extraction with
+  raw direct-executor extraction envelopes preserved, page search, element
   lookup across Chrome OOPIF iframe targets, cached observed-node
   click/input/scroll/dropdown/upload resolution, target-aware stale-node
   fallback for cached iframe actions, and done.
@@ -142,9 +143,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.
-- Schema-guided extraction results include structured metadata with schema,
-  partial status, content statistics, link/image counts, and de-duplication
-  counts.
+- Schema-guided agent extraction passes the requested schema to the extraction
+  LLM, returns upstream-style `<structured_result>` content, and records
+  structured metadata with schema, partial status, and content statistics.
 - Scripted agent replay conformance fixtures for schema-guided model output,
   previous-result prompt context, action execution, `done`, serialized
   history, longer multi-step planning/recovery replay with prompt-history

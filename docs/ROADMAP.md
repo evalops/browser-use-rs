@@ -5,11 +5,13 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
-- [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #75 lands and CI is green.
 
 ## Completed Tracks
 
+- [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
+- [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
 - [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
 - [#72 Add upstream-style message compaction support](https://github.com/evalops/browser-use-rs/issues/72)
 - [#71 Preserve upstream non-judge auxiliary AgentSettings flags](https://github.com/evalops/browser-use-rs/issues/71)
@@ -184,8 +186,10 @@ Implemented:
   controls and pre-execution enforcement, opt-in recent browser events,
   upstream-style vision detail levels, upstream-style `done` file-display
   controls, configurable planning prompt nudges,
-  structured extraction metadata, per-step timing metadata, thinking/flash
-  output-schema controls, upstream-style flattened required output fields,
+  LLM-backed extract action results for free-text and structured-schema
+  extraction while preserving raw extraction envelopes for direct/replay
+  callers, per-step timing metadata, thinking/flash output-schema controls,
+  upstream-style flattened required output fields,
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
   agent-history/agent-state/browser-state prompt sections, upstream-style
