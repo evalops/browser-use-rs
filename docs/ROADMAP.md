@@ -49,8 +49,9 @@ Implemented:
 - MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, max-failure handling, step and LLM timeouts, compact page-stat
-  prompt context, vision-aware screenshot capture and image prompt parts,
-  one-time extraction replay handling, invalid model-output recovery,
+  prompt context, vision-aware screenshot capture, screenshot action
+  next-observation image overrides, one-time extraction replay handling,
+  invalid model-output recovery,
   loop-awareness prompt nudges, upstream flattened planning fields, custom
   prompt-visible DOM attributes, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash

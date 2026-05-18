@@ -735,7 +735,7 @@ where
                     is_done: false,
                     success: None,
                     attachments: Vec::new(),
-                    metadata: None,
+                    metadata: Some(serde_json::json!({ "include_screenshot": true })),
                 })
             }
         }
@@ -1817,11 +1817,8 @@ where
 
     async fn step_inner(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         let step_start_time = now_seconds();
-        let state = self
-            .executor
-            .session()
-            .state(self.settings.use_vision)
-            .await?;
+        let include_screenshot = self.should_include_screenshot();
+        let state = self.executor.session().state(include_screenshot).await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
@@ -1839,11 +1836,8 @@ where
 
     async fn step_recovering_model_errors(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         let step_start_time = now_seconds();
-        let state = self
-            .executor
-            .session()
-            .state(self.settings.use_vision)
-            .await?;
+        let include_screenshot = self.should_include_screenshot();
+        let state = self.executor.session().state(include_screenshot).await?;
         let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
@@ -1949,6 +1943,24 @@ where
             step_interval,
         }
     }
+
+    fn should_include_screenshot(&self) -> bool {
+        self.settings.use_vision
+            || self
+                .history
+                .items
+                .last()
+                .is_some_and(|item| item.result.iter().any(result_requests_screenshot))
+    }
+}
+
+fn result_requests_screenshot(result: &ActionResult) -> bool {
+    result
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("include_screenshot"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn now_seconds() -> f64 {
@@ -3509,6 +3521,14 @@ mod tests {
             result.extracted_content.as_deref(),
             Some("Requested screenshot for next observation")
         );
+        assert_eq!(
+            result
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("include_screenshot"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
         assert_eq!(executor.session().events(), Vec::<String>::new());
     }
 
@@ -3953,6 +3973,50 @@ mod tests {
         let state_requests = agent.executor.session().state_screenshot_requests();
         assert_eq!(state_requests.first(), Some(&false));
         assert!(state_requests.iter().all(|include| !include));
+    }
+
+    #[tokio::test]
+    async fn agent_run_honors_screenshot_action_next_observation() {
+        let screenshot_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "screenshot": {}
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "saw screenshot",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_vision: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "request screenshot then finish",
+            settings,
+            QueueModel::new(vec![screenshot_output, done_output]),
+            MockSession::new(),
+        );
+
+        agent.run(2).await.expect("agent run");
+
+        let state_requests = agent.executor.session().state_screenshot_requests();
+        assert_eq!(state_requests.first(), Some(&false));
+        assert_eq!(state_requests.last(), Some(&true));
+        assert!(
+            state_requests.iter().any(|include| *include),
+            "expected screenshot request override: {state_requests:?}"
+        );
     }
 
     #[tokio::test]

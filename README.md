@@ -38,9 +38,9 @@ includes:
   navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
   `done` with requested text-file display attachments.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
-  vision-aware browser-state capture and screenshot image prompts, compact
-  page-stat prompt context, one-time extraction replay handling, step/LLM
-  timeouts, max-failure handling, page-change guards, loop detection,
+  vision-aware browser-state capture, screenshot action next-observation image
+  prompts, compact page-stat prompt context, one-time extraction replay handling,
+  step/LLM timeouts, max-failure handling, page-change guards, loop detection,
   loop-awareness prompt nudges, upstream flattened planning fields,
   configurable planning prompt nudges, thinking/flash output-schema controls,
   structured extraction metadata, per-step timing metadata, configurable
