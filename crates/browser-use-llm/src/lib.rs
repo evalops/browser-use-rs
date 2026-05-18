@@ -107,6 +107,7 @@ pub struct OpenAiCompatibleChatModel {
     provider_name: String,
     schema_name: String,
     structured_output_mode: OpenAiStructuredOutputMode,
+    default_headers: Vec<(String, String)>,
     client: reqwest::Client,
 }
 
@@ -393,6 +394,7 @@ impl OpenAiCompatibleChatModel {
             provider_name: "openai-compatible".to_owned(),
             schema_name: "agent_output".to_owned(),
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            default_headers: Vec::new(),
             client: reqwest::Client::new(),
         }
     }
@@ -430,6 +432,21 @@ impl OpenAiCompatibleChatModel {
         self
     }
 
+    #[must_use]
+    pub fn with_default_header(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.default_headers.push((name.into(), value.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn default_headers(&self) -> &[(String, String)] {
+        &self.default_headers
+    }
+
     fn chat_completions_url(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
@@ -452,11 +469,15 @@ impl ChatModel for OpenAiCompatibleChatModel {
             self.structured_output_mode,
             request,
         );
-        let response = self
+        let mut builder = self
             .client
             .post(self.chat_completions_url())
             .bearer_auth(&self.api_key)
-            .json(&payload)
+            .json(&payload);
+        for (name, value) in &self.default_headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let response = builder
             .send()
             .await
             .map_err(|error| LlmError::Provider(error.to_string()))?;
@@ -992,6 +1013,21 @@ mod tests {
 
         assert_eq!(model.provider(), "deepseek");
         assert_eq!(model.model(), "test-model");
+    }
+
+    #[test]
+    fn openai_compatible_model_stores_default_headers() {
+        let model = OpenAiCompatibleChatModel::new("test-key", "test-model")
+            .with_default_header("HTTP-Referer", "https://evalops.dev")
+            .with_default_header("X-OpenRouter-Title", "browser-use-rs");
+
+        assert_eq!(
+            model.default_headers(),
+            &[
+                ("HTTP-Referer".to_owned(), "https://evalops.dev".to_owned()),
+                ("X-OpenRouter-Title".to_owned(), "browser-use-rs".to_owned()),
+            ]
+        );
     }
 
     #[test]

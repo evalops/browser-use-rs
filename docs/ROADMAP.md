@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#59 Add OpenRouter app attribution headers](https://github.com/evalops/browser-use-rs/issues/59)
+- None.
 
 ## Completed Tracks
 
+- [#59 Add OpenRouter app attribution headers](https://github.com/evalops/browser-use-rs/issues/59)
 - [#1 Implement CDP-backed local Chrome sessions](https://github.com/evalops/browser-use-rs/issues/1)
 - [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)
 - [#3 Implement DOM and accessibility serializer parity](https://github.com/evalops/browser-use-rs/issues/3)
@@ -185,8 +186,8 @@ Implemented:
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
-  payloads, including DeepSeek forced tool-call and Cerebras prompt-only
-  structured-output modes.
+  payloads, including DeepSeek forced tool-call, Cerebras prompt-only
+  structured-output modes, and OpenRouter app attribution headers.
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
 - MCP tool input/output contract schemas and stdio JSON-RPC tool execution for

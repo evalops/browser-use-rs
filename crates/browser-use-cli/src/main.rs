@@ -1755,9 +1755,16 @@ struct OpenAiWireProviderConfig {
     api_key_env: &'static [&'static str],
     model_env: &'static [&'static str],
     base_url_env: &'static [&'static str],
+    header_env: &'static [OpenAiWireHeaderEnv],
     default_model: Option<&'static str>,
     default_base_url: &'static str,
     structured_output_mode: OpenAiStructuredOutputMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenAiWireHeaderEnv {
+    env: &'static str,
+    header: &'static str,
 }
 
 fn configured_openai_wire_chat_model(
@@ -1788,15 +1795,36 @@ fn configured_openai_wire_chat_model(
         .or_else(|| first_nonempty_env(config.base_url_env))
         .unwrap_or_else(|| config.default_base_url.to_owned());
 
-    Ok(Box::new(
-        OpenAiCompatibleChatModel::new(api_key, model)
-            .with_base_url(base_url)
-            .with_provider_name(config.provider_name)
-            .with_structured_output_mode(
-                structured_output_mode_override.unwrap_or(config.structured_output_mode),
-            ),
-    ))
+    let mut llm = OpenAiCompatibleChatModel::new(api_key, model)
+        .with_base_url(base_url)
+        .with_provider_name(config.provider_name)
+        .with_structured_output_mode(
+            structured_output_mode_override.unwrap_or(config.structured_output_mode),
+        );
+    for header in config.header_env {
+        if let Some(value) = nonempty_env(header.env) {
+            llm = llm.with_default_header(header.header, value);
+        }
+    }
+
+    Ok(Box::new(llm))
 }
+
+const NO_OPENAI_WIRE_HEADERS: &[OpenAiWireHeaderEnv] = &[];
+const OPENROUTER_HEADERS: &[OpenAiWireHeaderEnv] = &[
+    OpenAiWireHeaderEnv {
+        env: "OPENROUTER_HTTP_REFERER",
+        header: "HTTP-Referer",
+    },
+    OpenAiWireHeaderEnv {
+        env: "OPENROUTER_APP_TITLE",
+        header: "X-Title",
+    },
+    OpenAiWireHeaderEnv {
+        env: "OPENROUTER_APP_TITLE",
+        header: "X-OpenRouter-Title",
+    },
+];
 
 fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfig {
     match provider {
@@ -1805,6 +1833,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["OPENAI_API_KEY"],
             model_env: &["OPENAI_MODEL"],
             base_url_env: &["OPENAI_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: None,
             default_base_url: "https://api.openai.com/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
@@ -1814,6 +1843,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["DEEPSEEK_API_KEY"],
             model_env: &["DEEPSEEK_MODEL"],
             base_url_env: &["DEEPSEEK_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: Some("deepseek-chat"),
             default_base_url: "https://api.deepseek.com/v1",
             structured_output_mode: OpenAiStructuredOutputMode::ToolCall,
@@ -1823,6 +1853,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["GROQ_API_KEY"],
             model_env: &["GROQ_MODEL"],
             base_url_env: &["GROQ_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: None,
             default_base_url: "https://api.groq.com/openai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
@@ -1832,6 +1863,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["CEREBRAS_API_KEY"],
             model_env: &["CEREBRAS_MODEL"],
             base_url_env: &["CEREBRAS_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: Some("llama3.1-8b"),
             default_base_url: "https://api.cerebras.ai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::PromptOnly,
@@ -1841,6 +1873,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["MISTRAL_API_KEY"],
             model_env: &["MISTRAL_MODEL"],
             base_url_env: &["MISTRAL_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: Some("mistral-medium-latest"),
             default_base_url: "https://api.mistral.ai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
@@ -1850,6 +1883,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["OPENROUTER_API_KEY"],
             model_env: &["OPENROUTER_MODEL"],
             base_url_env: &["OPENROUTER_BASE_URL"],
+            header_env: OPENROUTER_HEADERS,
             default_model: None,
             default_base_url: "https://openrouter.ai/api/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
@@ -1859,6 +1893,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             api_key_env: &["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"],
             model_env: &["AI_GATEWAY_MODEL", "VERCEL_MODEL"],
             base_url_env: &["AI_GATEWAY_BASE_URL"],
+            header_env: NO_OPENAI_WIRE_HEADERS,
             default_model: None,
             default_base_url: "https://ai-gateway.vercel.sh/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
@@ -2125,6 +2160,15 @@ mod tests {
         assert_eq!(
             openai_wire_provider_config(LlmProvider::Cerebras).structured_output_mode,
             OpenAiStructuredOutputMode::PromptOnly
+        );
+        assert_eq!(
+            openai_wire_provider_config(LlmProvider::OpenRouter).header_env,
+            OPENROUTER_HEADERS
+        );
+        assert!(
+            openai_wire_provider_config(LlmProvider::Vercel)
+                .header_env
+                .is_empty()
         );
     }
 

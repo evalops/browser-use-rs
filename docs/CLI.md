@@ -99,15 +99,18 @@ provider aliases read `DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`, `GROQ_API_KEY`/
 `MISTRAL_MODEL`, `OPENROUTER_API_KEY`/`OPENROUTER_MODEL`, or
 `AI_GATEWAY_API_KEY`/`AI_GATEWAY_MODEL` for Vercel AI Gateway. Vercel also
 accepts `VERCEL_OIDC_TOKEN` and `VERCEL_MODEL`. Each alias has an optional
-matching `*_BASE_URL` override. DeepSeek, Cerebras, and Mistral use their
-upstream default model names when `--model` is omitted. CLI `--api-key`,
-`--model`, and `--base-url` override the provider-specific environment values
-where they apply. Structured-output requests use JSON Schema for OpenAI, Groq,
-Mistral, OpenRouter, and Vercel AI Gateway, a forced schema function tool call
-for DeepSeek, and prompt-only schema guidance for Cerebras. The OpenAI-compatible
-adapter also supports `--structured-output-mode json-schema|json-object|prompt-only|tool-call`
-to override an OpenAI-wire provider when the default mode does not fit the
-selected model.
+matching `*_BASE_URL` override. OpenRouter also reads
+`OPENROUTER_HTTP_REFERER` and `OPENROUTER_APP_TITLE` and sends app attribution
+headers (`HTTP-Referer`, `X-Title`, and `X-OpenRouter-Title`). DeepSeek,
+Cerebras, and Mistral use their upstream default model names when `--model` is
+omitted. CLI `--api-key`, `--model`, and `--base-url` override the
+provider-specific environment values where they apply. Structured-output
+requests use JSON Schema for OpenAI, Groq, Mistral, OpenRouter, and Vercel AI
+Gateway, a forced schema function tool call for DeepSeek, and prompt-only
+schema guidance for Cerebras. The OpenAI-compatible adapter also supports
+`--structured-output-mode json-schema|json-object|prompt-only|tool-call` to
+override an OpenAI-wire provider when the default mode does not fit the selected
+model.
 
 Agent runs accept repeated `--allowed-domain <pattern>` and
 `--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce

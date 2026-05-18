@@ -149,7 +149,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
   including DeepSeek forced tool-call, Cerebras prompt-only, and OpenAI-wire
-  output-mode override payload/parser modes.
+  output-mode override payload/parser modes, plus OpenRouter app attribution
+  headers.
 - CLI one-shot commands plus `actions`, `replay`, and `agent` with typed
   settings flags including available-file-path and sensitive-data placeholder
   context,
@@ -220,9 +221,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   architectures, and installer-managed secret stores are not implemented.
   Tagged releases now emit Linux and macOS tarballs, cross-tarball checksums,
   and a generated Homebrew formula artifact for the published triples.
-- Provider-specific structured-output fallbacks for gateway routing hints and
-  non-chat-completions providers are still partial; DeepSeek now has a forced
-  tool-call fallback.
+- Provider-specific structured-output fallbacks for non-chat-completions
+  providers are still partial; DeepSeek now has a forced tool-call fallback.
 - Managed filesystem and agent checkpoint replay now cover serialized restore
   into a new agent, restored prompt context, restored `read_file`, todo
   context, extracted-content numbering, prior history, and initial-action
