@@ -142,12 +142,26 @@ pub struct SessionToolInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SessionStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stale")]
+    Stale,
+    #[serde(rename = "stopped")]
+    Stopped,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionRecord {
     pub id: String,
     pub endpoint: DevToolsEndpoint,
     pub user_data_dir: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<SessionStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

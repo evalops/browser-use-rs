@@ -673,19 +673,21 @@ async fn start_persistent_session(
         endpoint,
         user_data_dir,
         process_id,
+        status: None,
     };
     write_session_record(&record)?;
     let _ = launched.detach();
-    Ok((record, session, state))
+    Ok((annotate_session_status(record), session, state))
 }
 
 async fn stop_persistent_session(id: &str) -> anyhow::Result<StoredSession> {
-    let record = read_session_record(id)?;
+    let mut record = read_session_record(id)?;
     if let Ok(session) = CdpBrowserSession::connect(record.endpoint.clone()).await {
         let _ = session.close_browser().await;
     }
     wait_for_process_exit(record.process_id, Duration::from_secs(2)).await;
     remove_session_dir(id)?;
+    record.status = Some(browser_use_mcp::SessionStatus::Stopped);
     Ok(record)
 }
 
@@ -706,7 +708,7 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
             );
         }
         SessionCommand::State { id, screenshot } => {
-            let record = read_session_record(&id)?;
+            let record = annotate_session_status(read_session_record(&id)?);
             let session = CdpBrowserSession::connect(record.endpoint).await?;
             print_state(&session, screenshot).await?;
         }
@@ -715,7 +717,7 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
             actions,
             screenshot,
         } => {
-            let record = read_session_record(&id)?;
+            let record = annotate_session_status(read_session_record(&id)?);
             let session = CdpBrowserSession::connect(record.endpoint.clone()).await?;
             let actions = std::fs::read_to_string(&actions)?;
             let actions: Vec<browser_use_tools::BrowserAction> = serde_json::from_str(&actions)?;
@@ -787,8 +789,10 @@ fn write_session_record(record: &StoredSession) -> anyhow::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("session path has no parent"))?;
+    let mut stored_record = record.clone();
+    stored_record.status = None;
     std::fs::create_dir_all(parent)?;
-    std::fs::write(path, serde_json::to_vec_pretty(record)?)?;
+    std::fs::write(path, serde_json::to_vec_pretty(&stored_record)?)?;
     Ok(())
 }
 
@@ -820,11 +824,26 @@ fn list_session_records() -> anyhow::Result<Vec<StoredSession>> {
         }
         let id = entry.file_name().to_string_lossy().to_string();
         if let Ok(record) = read_session_record(&id) {
-            records.push(record);
+            records.push(annotate_session_status(record));
         }
     }
     records.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(records)
+}
+
+fn annotate_session_status(mut record: StoredSession) -> StoredSession {
+    record.status = Some(session_status(&record));
+    record
+}
+
+fn session_status(record: &StoredSession) -> browser_use_mcp::SessionStatus {
+    match record.process_id {
+        Some(process_id) if process_is_running(process_id) => {
+            browser_use_mcp::SessionStatus::Running
+        }
+        Some(_) => browser_use_mcp::SessionStatus::Stale,
+        None => browser_use_mcp::SessionStatus::Unknown,
+    }
 }
 
 async fn wait_for_process_exit(process_id: Option<u32>, timeout: Duration) {
@@ -2126,6 +2145,34 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "url is required to create MCP session missing-url"
+        );
+    }
+
+    #[test]
+    fn session_record_status_is_backward_compatible() {
+        let record: StoredSession = serde_json::from_value(serde_json::json!({
+            "id": "legacy",
+            "endpoint": {
+                "http_url": "http://127.0.0.1:9222",
+                "websocket_url": "ws://127.0.0.1:9222/devtools/browser/legacy"
+            },
+            "user_data_dir": "/tmp/browser-use-rs-legacy",
+            "process_id": 4294967295_u32
+        }))
+        .expect("legacy record");
+
+        assert_eq!(record.status, None);
+        assert_eq!(
+            session_status(&record),
+            browser_use_mcp::SessionStatus::Stale
+        );
+        assert_eq!(
+            annotate_session_status(StoredSession {
+                process_id: None,
+                ..record
+            })
+            .status,
+            Some(browser_use_mcp::SessionStatus::Unknown)
         );
     }
 

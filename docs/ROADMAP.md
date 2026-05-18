@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#36 Persist implicit MCP session_id launches](https://github.com/evalops/browser-use-rs/issues/36)
+- [#37 Report persistent session liveness in registry outputs](https://github.com/evalops/browser-use-rs/issues/37)
 
 ## Completed Tracks
 
@@ -39,6 +39,7 @@ small pushed checkpoints as each surface becomes real.
 - [#33 Expand long-task planning replay coverage](https://github.com/evalops/browser-use-rs/issues/33)
 - [#34 Improve stale-node fallback across iframe target sessions](https://github.com/evalops/browser-use-rs/issues/34)
 - [#35 Expand accessibility snapshot parity](https://github.com/evalops/browser-use-rs/issues/35)
+- [#36 Persist implicit MCP session_id launches](https://github.com/evalops/browser-use-rs/issues/36)
 
 ## Current Checkpoint
 
@@ -122,7 +123,8 @@ Implemented:
 - MCP stdio reconnection to persistent CLI session records by `session_id`, and
   persistent record creation for new `session_id` state/action/agent calls with
   a supplied URL.
-- MCP stdio persistent session lifecycle tool for start/stop/list.
+- MCP stdio persistent session lifecycle tool for start/stop/list, with
+  liveness status on session records.
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
@@ -214,5 +216,6 @@ Implemented:
 
 Next:
 
-1. Continue [#36](https://github.com/evalops/browser-use-rs/issues/36) by
-   locking implicit MCP `session_id` persistence across stdio/daemon restarts.
+1. Continue [#37](https://github.com/evalops/browser-use-rs/issues/37) by
+   exposing persistent session liveness without pretending the registry is a
+   browser-process supervisor.

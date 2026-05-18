@@ -138,7 +138,7 @@ includes:
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
   bearer/header auth, supervisor pid/ready files, packaged systemd/launchd
   templates, persistent session registry for explicit and implicit
-  `session_id` MCP calls, typed MCP/CLI agent settings
+  `session_id` MCP calls with liveness status, typed MCP/CLI agent settings
   including available-file-path and sensitive-data placeholder context plus
   system-message control, and conformance fixtures.
 

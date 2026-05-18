@@ -132,7 +132,10 @@ with `success=false`.
 `session` commands persist a local Chrome session across CLI invocations. The
 session registry defaults to `~/.browser-use-rs/sessions` and can be overridden
 with `BROWSER_USE_RS_STATE_DIR`. Session IDs may contain ASCII letters, digits,
-`-`, and `_`.
+`-`, and `_`. Session start/list/stop output includes a `status` field:
+`running` when the recorded browser process is alive, `stale` when the recorded
+process is gone, `stopped` after an explicit stop, and `unknown` when no process
+id was recorded.
 
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
@@ -146,7 +149,8 @@ persistent record when the `session_id` is new and a URL is supplied. The MCP
 and `tool-call`, matching the CLI override for OpenAI-wire provider fallbacks.
 `browser_use_session` can start, stop, and list persistent session records. If
 `session_id` matches a persistent session record, `mcp-stdio` reconnects to
-that Chrome session even after the stdio server process restarts.
+that Chrome session even after the stdio server process restarts. Session list
+output includes the same liveness `status` as the CLI registry.
 
 `daemon` binds a local listener, prints the bound address on startup, shares one
 in-process session runtime across active connections, and uses the same
@@ -183,6 +187,8 @@ templates live under `packaging/`; see
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
+- Persistent session `status` is a registry liveness hint, not a supervisor;
+  stale records still require an explicit stop/remove or a new session start.
 - The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
   authentication, pid/ready files, and packaged systemd/launchd templates for
   external supervisors.

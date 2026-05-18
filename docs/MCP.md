@@ -83,7 +83,9 @@ Use `browser_use_session` with `operation` set to `list` to inspect records and
 `stop` to close and remove one.
 Persistent sessions created by the CLI are the same record format and can be
 stopped through MCP, and MCP-created persistent sessions can be stopped with
-`browser-use-rs session stop <id>`.
+`browser-use-rs session stop <id>`. Session records include a `status` field:
+`running`, `stale`, `stopped`, or `unknown` depending on the recorded browser
+process metadata.
 
 To inspect the manifest from the CLI:
 
