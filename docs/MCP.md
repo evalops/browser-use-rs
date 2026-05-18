@@ -7,6 +7,8 @@ server exposed through:
 browser-use-rs mcp-stdio
 browser-use-rs daemon --addr 127.0.0.1:8765
 browser-use-rs daemon --transport http --auth-token <token>
+browser-use-rs daemon --pid-file /run/browser-use-rs.pid \
+  --ready-file /run/browser-use-rs.ready.json
 ```
 
 The server implements newline-delimited JSON-RPC over stdin/stdout for the MCP
@@ -16,7 +18,9 @@ newline-delimited JSON-RPC messages over each connection. Its HTTP transport
 exposes unauthenticated `GET /healthz` and JSON `POST /rpc`; when
 `--auth-token` or `BROWSER_USE_RS_DAEMON_TOKEN` is configured, `/rpc` requires
 either `Authorization: Bearer <token>` or
-`X-Browser-Use-Rs-Token: <token>`.
+`X-Browser-Use-Rs-Token: <token>`. For long-lived local installs, the daemon
+can write supervisor-friendly `--pid-file` and `--ready-file` artifacts after a
+successful bind and remove them on graceful Ctrl-C/SIGINT/SIGTERM shutdown.
 
 Current tool contracts:
 

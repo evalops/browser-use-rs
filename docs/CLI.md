@@ -13,7 +13,8 @@ browser-use-rs schema browser-state
 browser-use-rs mcp-tools
 browser-use-rs mcp-stdio
 browser-use-rs daemon [--addr 127.0.0.1:8765] [--transport tcp|http] \
-  [--auth-token <token>]
+  [--auth-token <token>] [--pid-file /run/browser-use-rs.pid] \
+  [--ready-file /run/browser-use-rs.ready.json]
 browser-use-rs open <url>
 browser-use-rs state <url> [--screenshot]
 browser-use-rs screenshot <url> <output.png>
@@ -122,6 +123,10 @@ persistent session registry as the CLI and MCP session tool. The default
 returns the JSON-RPC response as JSON. `--auth-token <token>` or
 `BROWSER_USE_RS_DAEMON_TOKEN=<token>` requires HTTP clients to send either
 `Authorization: Bearer <token>` or `X-Browser-Use-Rs-Token: <token>`.
+For supervised installs, `--pid-file <path>` writes the daemon process id after
+the listener binds, and `--ready-file <path>` writes JSON with `ready`, `pid`,
+`addr`, and `transport`. The daemon handles Ctrl-C/SIGINT/SIGTERM and removes
+those lifecycle files on graceful shutdown.
 
 ## Current Limits
 
@@ -141,4 +146,5 @@ returns the JSON-RPC response as JSON. `--auth-token <token>` or
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.
 - The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
-  authentication; production process supervision is still out of scope.
+  authentication and pid/ready files for external supervisors; packaged
+  systemd/launchd units are still out of scope.

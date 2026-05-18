@@ -65,9 +65,10 @@ includes:
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
-  bearer/header auth, persistent session registry, typed MCP/CLI agent settings
-  including available-file-path and sensitive-data placeholder context plus
-  system-message control, and conformance fixtures.
+  bearer/header auth and supervisor pid/ready files, persistent session
+  registry, typed MCP/CLI agent settings including available-file-path and
+  sensitive-data placeholder context plus system-message control, and
+  conformance fixtures.
 
 ## Design Rules
 

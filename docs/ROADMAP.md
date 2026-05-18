@@ -81,7 +81,8 @@ Implemented:
 - CLI agent settings expose available-file-path and sensitive-data placeholder
   context plus system-message override/extension.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
-  the same MCP tools as stdio, including health checks and optional HTTP auth.
+  the same MCP tools as stdio, including health checks, optional HTTP auth,
+  graceful signal shutdown, and supervisor pid/ready files.
 - Conformance fixtures cover a scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`, and
   serialized history, plus semantic step timing metadata checks.
@@ -102,6 +103,7 @@ Implemented:
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Add supervised daemon lifecycle options for long-lived operator installs.
+2. Add packaged supervised daemon service templates for long-lived operator
+   installs.
 3. Expand agent planning depth, replay coverage, and provider parity beyond
    OpenAI-compatible, Anthropic, Gemini, and Ollama.

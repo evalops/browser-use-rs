@@ -46,6 +46,10 @@ enum Command {
         transport: DaemonTransport,
         #[arg(long, env = "BROWSER_USE_RS_DAEMON_TOKEN")]
         auth_token: Option<String>,
+        #[arg(long)]
+        pid_file: Option<PathBuf>,
+        #[arg(long)]
+        ready_file: Option<PathBuf>,
     },
     /// Create, reuse, and stop local Chrome sessions across CLI invocations.
     Session {
@@ -163,6 +167,15 @@ enum DaemonTransport {
     Http,
 }
 
+impl DaemonTransport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Http => "http",
+        }
+    }
+}
+
 impl LlmProvider {
     fn from_mcp(provider: Option<browser_use_mcp::AgentProvider>) -> Self {
         match provider.unwrap_or(browser_use_mcp::AgentProvider::OpenAiCompatible) {
@@ -240,8 +253,19 @@ async fn main() -> anyhow::Result<()> {
             addr,
             transport,
             auth_token,
+            pid_file,
+            ready_file,
         }) => {
-            run_daemon(&addr, transport, auth_token).await?;
+            run_daemon(
+                &addr,
+                transport,
+                auth_token,
+                DaemonLifecycleOptions {
+                    pid_file,
+                    ready_file,
+                },
+            )
+            .await?;
         }
         Some(Command::Session { command }) => {
             run_session_command(command).await?;
@@ -776,24 +800,91 @@ async fn run_daemon(
     addr: &str,
     transport: DaemonTransport,
     auth_token: Option<String>,
+    lifecycle_options: DaemonLifecycleOptions,
 ) -> anyhow::Result<()> {
     match transport {
-        DaemonTransport::Tcp => run_tcp_daemon(addr).await,
-        DaemonTransport::Http => run_http_daemon(addr, auth_token).await,
+        DaemonTransport::Tcp => run_tcp_daemon(addr, lifecycle_options).await,
+        DaemonTransport::Http => run_http_daemon(addr, auth_token, lifecycle_options).await,
     }
 }
 
-async fn run_tcp_daemon(addr: &str) -> anyhow::Result<()> {
+#[derive(Debug, Clone, Default)]
+struct DaemonLifecycleOptions {
+    pid_file: Option<PathBuf>,
+    ready_file: Option<PathBuf>,
+}
+
+struct DaemonLifecycleFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl DaemonLifecycleFiles {
+    fn write(
+        options: DaemonLifecycleOptions,
+        transport: DaemonTransport,
+        addr: &str,
+    ) -> anyhow::Result<Self> {
+        let mut paths = Vec::new();
+        let pid = std::process::id();
+        if let Some(path) = options.pid_file {
+            write_supervisor_file(&path, format!("{pid}\n").as_bytes())?;
+            paths.push(path);
+        }
+        if let Some(path) = options.ready_file {
+            let ready = serde_json::json!({
+                "ready": true,
+                "pid": pid,
+                "addr": addr,
+                "transport": transport.as_str(),
+            });
+            write_supervisor_file(&path, serde_json::to_vec_pretty(&ready)?.as_slice())?;
+            paths.push(path);
+        }
+
+        Ok(Self { paths })
+    }
+}
+
+impl Drop for DaemonLifecycleFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn write_supervisor_file(path: &PathBuf, contents: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, contents)?;
+    Ok(())
+}
+
+async fn run_tcp_daemon(
+    addr: &str,
+    lifecycle_options: DaemonLifecycleOptions,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    println!("{}", listener.local_addr()?);
+    let local_addr = listener.local_addr()?.to_string();
+    println!("{local_addr}");
+    let _lifecycle =
+        DaemonLifecycleFiles::write(lifecycle_options, DaemonTransport::Tcp, &local_addr)?;
     let runtime = Arc::new(tokio::sync::Mutex::new(McpRuntime::default()));
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
 
     loop {
-        let (stream, _) = listener.accept().await?;
-        let runtime = Arc::clone(&runtime);
-        tokio::spawn(async move {
-            let _ = handle_daemon_connection(stream, runtime).await;
-        });
+        tokio::select! {
+            () = &mut shutdown => return Ok(()),
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                let runtime = Arc::clone(&runtime);
+                tokio::spawn(async move {
+                    let _ = handle_daemon_connection(stream, runtime).await;
+                });
+            }
+        }
     }
 }
 
@@ -823,19 +914,66 @@ async fn handle_daemon_connection(
     Ok(())
 }
 
-async fn run_http_daemon(addr: &str, auth_token: Option<String>) -> anyhow::Result<()> {
+async fn run_http_daemon(
+    addr: &str,
+    auth_token: Option<String>,
+    lifecycle_options: DaemonLifecycleOptions,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    println!("{}", listener.local_addr()?);
+    let local_addr = listener.local_addr()?.to_string();
+    println!("{local_addr}");
+    let _lifecycle =
+        DaemonLifecycleFiles::write(lifecycle_options, DaemonTransport::Http, &local_addr)?;
     let runtime = Arc::new(tokio::sync::Mutex::new(McpRuntime::default()));
     let auth_token = auth_token.map(Arc::new);
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
 
     loop {
-        let (stream, _) = listener.accept().await?;
-        let runtime = Arc::clone(&runtime);
-        let auth_token = auth_token.clone();
-        tokio::spawn(async move {
-            let _ = handle_http_daemon_connection(stream, runtime, auth_token).await;
-        });
+        tokio::select! {
+            () = &mut shutdown => return Ok(()),
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                let runtime = Arc::clone(&runtime);
+                let auth_token = auth_token.clone();
+                tokio::spawn(async move {
+                    let _ = handle_http_daemon_connection(stream, runtime, auth_token).await;
+                });
+            }
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut terminate = signal(SignalKind::terminate()).ok();
+        let mut interrupt = signal(SignalKind::interrupt()).ok();
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async {
+                if let Some(signal) = terminate.as_mut() {
+                    signal.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+            _ = async {
+                if let Some(signal) = interrupt.as_mut() {
+                    signal.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 
@@ -1577,6 +1715,10 @@ mod tests {
             "http",
             "--auth-token",
             "secret",
+            "--pid-file",
+            "/tmp/browser-use-rs.pid",
+            "--ready-file",
+            "/tmp/browser-use-rs.ready.json",
         ])
         .expect("daemon flags should parse");
 
@@ -1585,13 +1727,58 @@ mod tests {
                 addr,
                 transport,
                 auth_token,
+                pid_file,
+                ready_file,
             } => {
                 assert_eq!(addr, "127.0.0.1:0");
                 assert_eq!(transport, DaemonTransport::Http);
                 assert_eq!(auth_token.as_deref(), Some("secret"));
+                assert_eq!(pid_file, Some(PathBuf::from("/tmp/browser-use-rs.pid")));
+                assert_eq!(
+                    ready_file,
+                    Some(PathBuf::from("/tmp/browser-use-rs.ready.json"))
+                );
             }
             _ => panic!("expected daemon command"),
         }
+    }
+
+    #[test]
+    fn daemon_lifecycle_files_write_supervisor_artifacts() {
+        let dir = std::env::temp_dir().join(format!(
+            "browser-use-rs-daemon-lifecycle-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let pid_file = dir.join("daemon.pid");
+        let ready_file = dir.join("daemon.ready.json");
+
+        {
+            let files = DaemonLifecycleFiles::write(
+                DaemonLifecycleOptions {
+                    pid_file: Some(pid_file.clone()),
+                    ready_file: Some(ready_file.clone()),
+                },
+                DaemonTransport::Http,
+                "127.0.0.1:8765",
+            )
+            .expect("write lifecycle files");
+            let pid = std::fs::read_to_string(&pid_file).expect("pid file");
+            assert_eq!(pid.trim(), std::process::id().to_string());
+            let ready: Value =
+                serde_json::from_slice(&std::fs::read(&ready_file).expect("ready file"))
+                    .expect("ready json");
+            assert_eq!(ready["ready"], true);
+            assert_eq!(ready["transport"], "http");
+            assert_eq!(ready["addr"], "127.0.0.1:8765");
+            assert_eq!(ready["pid"], std::process::id());
+            drop(files);
+        }
+
+        assert!(!pid_file.exists());
+        assert!(!ready_file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
