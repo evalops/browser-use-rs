@@ -24,10 +24,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   ids, hidden-element and `data-browser-use-exclude` subtree filtering, and
   topmost/occlusion filtering, while keeping hidden file-input upload targets,
   plain scroll-container indexing, non-content tag pruning, and prompt-visible
-  pages-above/below context for indexed scroll containers, plus accessible names
-  from labels, ARIA references, and image alt text, selected dropdown values,
-  compound control metadata, compact select option summaries, common ARIA widget
-  roles, search affordance signals, small icon controls,
+  pages-above/below context for indexed scroll containers, plus href-less anchor
+  tags, accessible names from labels, ARIA references, and image alt text,
+  selected dropdown values, compound control metadata, compact select option
+  summaries, common ARIA widget roles, search affordance signals, small icon
+  controls,
   input mask/autocomplete/date-format hints, JavaScript click/pointer
   listener-backed controls, cursor-pointer controls, decorative SVG child
   pruning, static mouse/keyboard handler attributes, contained

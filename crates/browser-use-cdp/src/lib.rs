@@ -33,7 +33,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
   const axRefAttribute = 'data-browser-use-rs-ax-ref';
   const selector = [
-    'a[href]',
+    'a',
     'button',
     'input',
     'textarea',
@@ -544,7 +544,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
         r#"
 (() => {{
   const selector = [
-    'a[href]',
+    'a',
     'button',
     'input',
     'textarea',
@@ -4371,6 +4371,16 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_indexes_anchor_tags_without_href() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'a',"));
+        assert!(!INTERACTIVE_ELEMENTS_JS.contains("'a[href]'"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("'a',"));
+        assert!(!action_script.contains("'a[href]'"));
+    }
+
+    #[test]
     fn interactive_snapshot_filters_occluded_elements() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("isTopmostAtCenter"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("elementFromPoint"));
@@ -5399,6 +5409,56 @@ mod tests {
             .await
             .expect("details open");
         assert_eq!(details_open.as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_anchor_without_href() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>plain anchor smoke</title></head><body><a id='plain-anchor'>Plain Anchor</a><a id='href-anchor' href='/target'>Href Anchor</a><button id='button'>Button</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing interactive element with id {id}"))
+        };
+
+        let plain_anchor = element_by_id("plain-anchor");
+        assert_eq!(plain_anchor.tag_name, "a");
+        assert_eq!(plain_anchor.name.as_deref(), Some("Plain Anchor"));
+        assert!(!plain_anchor.attributes.contains_key("href"));
+
+        let href_anchor = element_by_id("href-anchor");
+        assert_eq!(href_anchor.tag_name, "a");
+        assert_eq!(
+            href_anchor.attributes.get("href").map(String::as_str),
+            Some("/target")
+        );
+
+        session
+            .click(plain_anchor.index)
+            .await
+            .expect("click plain anchor by index");
     }
 
     #[tokio::test]
