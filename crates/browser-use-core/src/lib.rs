@@ -4929,6 +4929,8 @@ pub struct Agent<M, S> {
     task: String,
     settings: AgentSettings,
     llm: M,
+    fallback_llm: Option<M>,
+    using_fallback_llm: bool,
     executor: BrowserActionExecutor<S>,
     history: AgentHistory,
     initial_actions_executed: bool,
@@ -4943,6 +4945,23 @@ enum StepRequestKind {
     Normal,
     BudgetWarning { steps_used: usize, max_steps: usize },
     FinalStep { max_steps: usize },
+}
+
+#[derive(Debug)]
+enum AgentLlmCallError {
+    TimedOut { seconds: u64 },
+    Provider(LlmError),
+}
+
+fn is_fallback_eligible_llm_error(error: &LlmError) -> bool {
+    matches!(error, LlmError::Provider(_) | LlmError::RateLimited(_))
+}
+
+fn agent_llm_call_error_to_run_error(error: AgentLlmCallError) -> AgentRunError {
+    match error {
+        AgentLlmCallError::TimedOut { seconds } => AgentRunError::LlmTimedOut { seconds },
+        AgentLlmCallError::Provider(error) => AgentRunError::Llm(error),
+    }
 }
 
 impl<M, S> Agent<M, S>
@@ -4987,6 +5006,8 @@ where
             task,
             settings,
             llm,
+            fallback_llm: None,
+            using_fallback_llm: false,
             executor,
             history: AgentHistory::default(),
             initial_actions_executed: false,
@@ -5013,6 +5034,8 @@ where
             task: checkpoint.task,
             settings: checkpoint.settings,
             llm,
+            fallback_llm: None,
+            using_fallback_llm: false,
             executor,
             history: checkpoint.history,
             initial_actions_executed: checkpoint.initial_actions_executed,
@@ -5029,6 +5052,24 @@ where
 
     pub fn id(&self) -> Uuid {
         self.id
+    }
+
+    pub fn with_fallback_llm(mut self, fallback_llm: M) -> Self {
+        self.set_fallback_llm(fallback_llm);
+        self
+    }
+
+    pub fn set_fallback_llm(&mut self, fallback_llm: M) {
+        self.fallback_llm = Some(fallback_llm);
+    }
+
+    pub fn clear_fallback_llm(&mut self) {
+        self.fallback_llm = None;
+    }
+
+    #[must_use]
+    pub fn is_using_fallback_llm(&self) -> bool {
+        self.using_fallback_llm
     }
 
     pub fn checkpoint(&self) -> AgentCheckpoint {
@@ -5187,6 +5228,42 @@ where
         Ok(())
     }
 
+    async fn invoke_json_with_fallback(
+        &mut self,
+        request: ChatRequest,
+    ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
+        let first = self.invoke_json_once(request.clone()).await;
+        match first {
+            Err(AgentLlmCallError::Provider(error)) if self.try_switch_to_fallback_llm(&error) => {
+                self.invoke_json_once(request).await
+            }
+            result => result,
+        }
+    }
+
+    async fn invoke_json_once(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
+        let seconds = self.settings.llm_timeout_seconds;
+        timeout(Duration::from_secs(seconds), self.llm.invoke_json(request))
+            .await
+            .map_err(|_| AgentLlmCallError::TimedOut { seconds })?
+            .map_err(AgentLlmCallError::Provider)
+    }
+
+    fn try_switch_to_fallback_llm(&mut self, error: &LlmError) -> bool {
+        if self.using_fallback_llm || !is_fallback_eligible_llm_error(error) {
+            return false;
+        }
+        let Some(fallback_llm) = self.fallback_llm.take() else {
+            return false;
+        };
+        self.llm = fallback_llm;
+        self.using_fallback_llm = true;
+        true
+    }
+
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
 
@@ -5289,14 +5366,10 @@ where
         let request_for_transcript = request.clone();
         let (request, url_replacements) =
             request_with_shortened_urls(request, self.settings.url_shortening_limit);
-        let completion = timeout(
-            Duration::from_secs(self.settings.llm_timeout_seconds),
-            self.llm.invoke_json(request),
-        )
-        .await
-        .map_err(|_| AgentRunError::LlmTimedOut {
-            seconds: self.settings.llm_timeout_seconds,
-        })??;
+        let completion = self
+            .invoke_json_with_fallback(request)
+            .await
+            .map_err(agent_llm_call_error_to_run_error)?;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
         let model_output = restore_shortened_urls_in_agent_output(model_output, &url_replacements)
@@ -5350,27 +5423,19 @@ where
         let request_for_transcript = request.clone();
         let (request, url_replacements) =
             request_with_shortened_urls(request, self.settings.url_shortening_limit);
-        let completion = match timeout(
-            Duration::from_secs(self.settings.llm_timeout_seconds),
-            self.llm.invoke_json(request),
-        )
-        .await
-        {
-            Ok(Ok(completion)) => completion,
-            Ok(Err(error)) => {
+        let completion = match self.invoke_json_with_fallback(request).await {
+            Ok(completion) => completion,
+            Err(AgentLlmCallError::Provider(error)) => {
                 return self.record_model_error(
                     state,
                     format!("LLM provider error: {error}"),
                     Some(step_start_time),
                 );
             }
-            Err(_) => {
+            Err(AgentLlmCallError::TimedOut { seconds }) => {
                 return self.record_model_error(
                     state,
-                    format!(
-                        "LLM call timed out after {} seconds",
-                        self.settings.llm_timeout_seconds
-                    ),
+                    format!("LLM call timed out after {seconds} seconds"),
                     Some(step_start_time),
                 );
             }
@@ -5606,26 +5671,20 @@ where
         let request_for_transcript = request.clone();
         let (request, url_replacements) =
             request_with_shortened_urls(request, self.settings.url_shortening_limit);
-        let completion = match timeout(
-            Duration::from_secs(self.settings.llm_timeout_seconds),
-            self.llm.invoke_json(request),
-        )
-        .await
-        {
-            Ok(Ok(completion)) => completion,
-            Ok(Err(error)) => {
+        let completion = match self.invoke_json_with_fallback(request).await {
+            Ok(completion) => completion,
+            Err(AgentLlmCallError::Provider(error)) => {
                 return self.record_model_error(
                     state,
                     format!("LLM provider error during final response after failure: {error}"),
                     Some(step_start_time),
                 );
             }
-            Err(_) => {
+            Err(AgentLlmCallError::TimedOut { seconds }) => {
                 return self.record_model_error(
                     state,
                     format!(
-                        "LLM call timed out after {} seconds during final response after failure",
-                        self.settings.llm_timeout_seconds
+                        "LLM call timed out after {seconds} seconds during final response after failure"
                     ),
                     Some(step_start_time),
                 );
@@ -12403,6 +12462,95 @@ mod tests {
                 .as_ref()
                 .is_some_and(|schema| schema["properties"]["result"]["type"] == "string")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_switches_to_fallback_llm_on_retryable_model_error() {
+        let done_output = serde_json::json!({
+            "current_state": {
+                "next_goal": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "fallback finished",
+                        "success": true
+                    }
+                }
+            ]
+        });
+        let primary = QueueModel::with_model_and_results(
+            "primary",
+            vec![Err(LlmError::RateLimited("primary limited".to_owned()))],
+        );
+        let fallback = QueueModel::with_model("fallback", vec![done_output]);
+        let mut agent = Agent::new("finish with fallback", primary, MockSession::new())
+            .with_fallback_llm(fallback);
+
+        let result = {
+            let item = agent.step().await.expect("agent step");
+            item.result[0].clone()
+        };
+
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("fallback finished")
+        );
+        assert!(agent.is_using_fallback_llm());
+        assert_eq!(agent.llm.model(), "fallback");
+        assert_eq!(agent.llm.requests.lock().expect("requests lock").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_does_not_switch_to_fallback_llm_for_invalid_structured_output() {
+        let primary = QueueModel::with_model_and_results(
+            "primary",
+            vec![Err(LlmError::InvalidStructuredOutput(
+                "bad json".to_owned(),
+            ))],
+        );
+        let fallback = QueueModel::with_model(
+            "fallback",
+            vec![serde_json::json!({
+                "current_state": {},
+                "action": []
+            })],
+        );
+        let mut agent =
+            Agent::new("do not fallback", primary, MockSession::new()).with_fallback_llm(fallback);
+
+        let error = agent.step().await.expect_err("invalid output should fail");
+
+        assert!(matches!(
+            error,
+            AgentRunError::Llm(LlmError::InvalidStructuredOutput(message)) if message == "bad json"
+        ));
+        assert!(!agent.is_using_fallback_llm());
+        assert!(agent.fallback_llm.is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_does_not_switch_fallback_llm_twice_after_fallback_failure() {
+        let primary = QueueModel::with_model_and_results(
+            "primary",
+            vec![Err(LlmError::RateLimited("primary limited".to_owned()))],
+        );
+        let fallback = QueueModel::with_model_and_results(
+            "fallback",
+            vec![Err(LlmError::Provider("fallback failed".to_owned()))],
+        );
+        let mut agent =
+            Agent::new("fallback fails", primary, MockSession::new()).with_fallback_llm(fallback);
+
+        let error = agent.step().await.expect_err("fallback should fail");
+
+        assert!(matches!(
+            error,
+            AgentRunError::Llm(LlmError::Provider(message)) if message == "fallback failed"
+        ));
+        assert!(agent.is_using_fallback_llm());
+        assert!(agent.fallback_llm.is_none());
+        assert_eq!(agent.llm.model(), "fallback");
     }
 
     #[test]
