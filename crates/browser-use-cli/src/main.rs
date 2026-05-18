@@ -837,10 +837,15 @@ fn annotate_session_status(mut record: StoredSession) -> StoredSession {
 }
 
 fn session_status(record: &StoredSession) -> browser_use_mcp::SessionStatus {
+    session_status_with_checker(record, process_is_running)
+}
+
+fn session_status_with_checker(
+    record: &StoredSession,
+    is_running: impl Fn(u32) -> bool,
+) -> browser_use_mcp::SessionStatus {
     match record.process_id {
-        Some(process_id) if process_is_running(process_id) => {
-            browser_use_mcp::SessionStatus::Running
-        }
+        Some(process_id) if is_running(process_id) => browser_use_mcp::SessionStatus::Running,
         Some(_) => browser_use_mcp::SessionStatus::Stale,
         None => browser_use_mcp::SessionStatus::Unknown,
     }
@@ -2163,8 +2168,12 @@ mod tests {
 
         assert_eq!(record.status, None);
         assert_eq!(
-            session_status(&record),
+            session_status_with_checker(&record, |_| false),
             browser_use_mcp::SessionStatus::Stale
+        );
+        assert_eq!(
+            session_status_with_checker(&record, |_| true),
+            browser_use_mcp::SessionStatus::Running
         );
         assert_eq!(
             annotate_session_status(StoredSession {
