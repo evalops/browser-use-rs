@@ -27,6 +27,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   CDP websocket closure records a browser-stopped lifecycle diagnostic.
   `BrowserProfile.navigation_timeout_ms` bounds direct `Page.navigate` calls
   and records network-timeout lifecycle diagnostics on timeout.
+  `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
+  requests that remain active beyond the watchdog budget.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -155,8 +157,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   records target crash, JavaScript dialog, navigation failure, configured
   download events, and cookie plus current-origin storage-state save/load
   events; reconnect recovery beyond explicit websocket-closure diagnostics,
-  multi-origin storage discovery, and broader request-level timeout monitoring
-  remain lighter than upstream's full browser event bus.
+  multi-origin storage discovery, and active reconnect attempts remain lighter
+  than upstream's full browser event bus.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

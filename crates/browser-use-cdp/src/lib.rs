@@ -1134,6 +1134,8 @@ pub struct BrowserProfile {
     pub browser_start_timeout_ms: u64,
     #[serde(default = "default_navigation_timeout_ms")]
     pub navigation_timeout_ms: u64,
+    #[serde(default = "default_network_request_timeout_ms")]
+    pub network_request_timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxySettings>,
 }
@@ -1155,6 +1157,7 @@ impl Default for BrowserProfile {
             viewport: BrowserViewport::default(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
             navigation_timeout_ms: default_navigation_timeout_ms(),
+            network_request_timeout_ms: default_network_request_timeout_ms(),
             proxy: None,
         }
     }
@@ -1170,6 +1173,10 @@ fn default_browser_start_timeout_ms() -> u64 {
 
 fn default_navigation_timeout_ms() -> u64 {
     20_000
+}
+
+fn default_network_request_timeout_ms() -> u64 {
+    10_000
 }
 
 impl BrowserProfile {
@@ -2280,8 +2287,11 @@ impl CdpBrowserSession {
                 BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
         }
-        let lifecycle_watchdog =
-            BrowserLifecycleWatchdog::start(connection.clone(), lifecycle_events.clone());
+        let lifecycle_watchdog = BrowserLifecycleWatchdog::start(
+            connection.clone(),
+            lifecycle_events.clone(),
+            default_network_request_timeout_ms(),
+        );
 
         Ok(Self {
             connection,
@@ -2338,8 +2348,11 @@ impl CdpBrowserSession {
                 push_lifecycle_event(&mut events, event);
             }
         }
-        let lifecycle_watchdog =
-            BrowserLifecycleWatchdog::start(connection.clone(), lifecycle_events.clone());
+        let lifecycle_watchdog = BrowserLifecycleWatchdog::start(
+            connection.clone(),
+            lifecycle_events.clone(),
+            profile.network_request_timeout_ms,
+        );
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
             page.clone(),
@@ -2969,11 +2982,42 @@ impl BrowserLifecycleWatchdog {
     fn start(
         connection: Arc<CdpConnection>,
         lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+        network_request_timeout_ms: u64,
     ) -> Self {
         let mut events = connection.subscribe_events();
         let handle = tokio::spawn(async move {
-            while let Ok(event) = events.recv().await {
-                handle_lifecycle_cdp_event(&connection, &lifecycle_events, event).await;
+            let mut active_network_requests = HashMap::new();
+            let mut interval = tokio::time::interval(Duration::from_millis(1_000));
+            let network_request_timeout = (network_request_timeout_ms > 0)
+                .then(|| Duration::from_millis(network_request_timeout_ms));
+
+            loop {
+                tokio::select! {
+                    event = events.recv() => {
+                        match event {
+                            Ok(event) => {
+                                handle_lifecycle_cdp_event(
+                                    &connection,
+                                    &lifecycle_events,
+                                    &mut active_network_requests,
+                                    event,
+                                )
+                                .await;
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    _ = interval.tick(), if network_request_timeout.is_some() => {
+                        let timeout = network_request_timeout.expect("guarded by is_some");
+                        let events = lifecycle_events_for_timed_out_network_requests(
+                            &mut active_network_requests,
+                            Instant::now(),
+                            timeout,
+                        );
+                        record_lifecycle_events(&lifecycle_events, events).await;
+                    }
+                }
             }
         });
 
@@ -2987,12 +3031,28 @@ impl Drop for BrowserLifecycleWatchdog {
     }
 }
 
+struct ActiveNetworkRequest {
+    request_id: String,
+    url: String,
+    method: String,
+    resource_type: Option<String>,
+    session_id: Option<String>,
+    started_at: Instant,
+}
+
 async fn handle_lifecycle_cdp_event(
     connection: &CdpConnection,
     lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     event: CdpEvent,
 ) {
     match event.method.as_str() {
+        "Network.requestWillBeSent" => {
+            track_network_request(active_network_requests, &event);
+        }
+        "Network.loadingFinished" | "Network.loadingFailed" => {
+            forget_network_request(active_network_requests, &event);
+        }
         "browser-use-rs.websocket-closed" => {
             record_lifecycle_event_in_buffer(
                 lifecycle_events,
@@ -3022,6 +3082,101 @@ async fn handle_lifecycle_cdp_event(
         }
         _ => {}
     }
+}
+
+fn track_network_request(
+    active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
+    event: &CdpEvent,
+) {
+    let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(request) = event.params.get("request") else {
+        return;
+    };
+    let url = request
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return;
+    }
+    active_network_requests.insert(
+        request_id.to_owned(),
+        ActiveNetworkRequest {
+            request_id: request_id.to_owned(),
+            url: url.to_owned(),
+            method: request
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("GET")
+                .to_owned(),
+            resource_type: event
+                .params
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            session_id: event.session_id.clone(),
+            started_at: Instant::now(),
+        },
+    );
+}
+
+fn forget_network_request(
+    active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
+    event: &CdpEvent,
+) {
+    if let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) {
+        active_network_requests.remove(request_id);
+    }
+}
+
+fn lifecycle_events_for_timed_out_network_requests(
+    active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
+    now: Instant,
+    timeout: Duration,
+) -> Vec<BrowserLifecycleEvent> {
+    let request_ids = active_network_requests
+        .iter()
+        .filter(|(_, request)| now.duration_since(request.started_at) >= timeout)
+        .map(|(request_id, _)| request_id.clone())
+        .collect::<Vec<_>>();
+
+    request_ids
+        .into_iter()
+        .filter_map(|request_id| active_network_requests.remove(&request_id))
+        .map(|request| lifecycle_event_for_network_request_timeout(request, timeout))
+        .collect()
+}
+
+fn lifecycle_event_for_network_request_timeout(
+    request: ActiveNetworkRequest,
+    timeout: Duration,
+) -> BrowserLifecycleEvent {
+    let timeout_seconds = format!("{:.3}", timeout.as_secs_f64());
+    let mut details = BTreeMap::from([
+        ("request_id".to_owned(), request.request_id.clone()),
+        ("method".to_owned(), request.method.clone()),
+        ("timeout_seconds".to_owned(), timeout_seconds.clone()),
+    ]);
+    if let Some(resource_type) = &request.resource_type {
+        details.insert("resource_type".to_owned(), resource_type.clone());
+    }
+    if let Some(session_id) = &request.session_id {
+        details.insert("session_id".to_owned(), session_id.clone());
+    }
+    BrowserLifecycleEvent::new(
+        BrowserLifecycleEventKind::NetworkTimeout,
+        None,
+        Some(request.url.clone()),
+        Some("network_request_timeout".to_owned()),
+        Some(format!("request timed out after {timeout_seconds}s")),
+        details,
+        format!(
+            "Network request {} {} timed out after {timeout_seconds}s",
+            request.method, request.url
+        ),
+    )
 }
 
 fn lifecycle_event_for_websocket_closed(event: &CdpEvent) -> BrowserLifecycleEvent {
@@ -4698,6 +4853,9 @@ async fn attach_to_target(
 
     connection
         .command("Page.enable", json!({}), Some(&session_id))
+        .await?;
+    connection
+        .command("Network.enable", json!({}), Some(&session_id))
         .await?;
 
     Ok(AttachedPage {
@@ -6467,6 +6625,43 @@ mod tests {
 
     #[test]
     fn lifecycle_watchdog_maps_cdp_crash_and_download_events() {
+        let mut active_requests = HashMap::new();
+        track_network_request(
+            &mut active_requests,
+            &CdpEvent {
+                method: "Network.requestWillBeSent".to_owned(),
+                params: json!({
+                    "requestId": "request-1",
+                    "request": {
+                        "url": "https://example.test/api/report",
+                        "method": "POST"
+                    },
+                    "type": "Fetch",
+                }),
+                session_id: Some("session-1".to_owned()),
+            },
+        );
+        let started_at = active_requests
+            .get_mut("request-1")
+            .expect("tracked request")
+            .started_at;
+        active_requests
+            .get_mut("request-1")
+            .expect("tracked request")
+            .started_at = started_at - Duration::from_secs(11);
+        let timeout_events = lifecycle_events_for_timed_out_network_requests(
+            &mut active_requests,
+            started_at,
+            Duration::from_secs(10),
+        );
+        assert_eq!(timeout_events.len(), 1);
+        assert_eq!(
+            timeout_events[0].kind,
+            BrowserLifecycleEventKind::NetworkTimeout
+        );
+        assert_eq!(timeout_events[0].details["request_id"], "request-1");
+        assert!(active_requests.is_empty());
+
         let websocket_closed = lifecycle_event_for_websocket_closed(&CdpEvent {
             method: "browser-use-rs.websocket-closed".to_owned(),
             params: json!({

@@ -88,7 +88,7 @@ Implemented:
   Live CDP wiring records target crash, JavaScript dialog, navigation failure,
   configured download events, cookie plus current-origin storage-state
   save/load events, CDP websocket closure diagnostics, and direct
-  `Page.navigate` timeout diagnostics.
+  `Page.navigate` plus stuck HTTP(S) request timeout diagnostics.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -191,6 +191,6 @@ Next:
 
 1. Continue [#29](https://github.com/evalops/browser-use-rs/issues/29) by
    wiring reconnect recovery beyond websocket-closure diagnostics, multi-origin
-   storage discovery, and request-level timeout diagnostics into live CDP/session
+   storage discovery, and active reconnect attempts into live CDP/session
    behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.
