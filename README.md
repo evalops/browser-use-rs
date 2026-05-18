@@ -24,8 +24,9 @@ includes:
   state with browser-use-style short tab ids. Launch profiles include
   upstream-style proxy-server/proxy-bypass Chrome flags,
   `disable_security` insecure-content/certificate flags, and
-  `deterministic_rendering` screenshot-stability flags, plus typed Browser Use
-  Cloud creation/stop parameters, current-session
+  `deterministic_rendering` screenshot-stability flags, typed `user_agent`
+  launch flags, plus typed Browser Use Cloud creation/stop parameters,
+  current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint
   conversion that preserve upstream's omitted/null/proxy-country distinction,
