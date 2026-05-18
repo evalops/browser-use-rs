@@ -26,8 +26,11 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
+const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
+
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
+  const axRefAttribute = 'data-browser-use-rs-ax-ref';
   const selector = [
     'a[href]',
     'button',
@@ -169,6 +172,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   visitChildren(document, { x: 0, y: 0 });
   return elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
+    const axRef = `browser-use-rs-${index + 1}`;
+    try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
     for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-value', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
@@ -198,9 +203,32 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       },
       is_visible: true,
       is_interactive: true,
-      is_scrollable: isScrollable(el)
+      is_scrollable: isScrollable(el),
+      ax_ref: axRef
     };
   });
+})()
+"#;
+
+const CLEANUP_AX_REFS_JS: &str = r#"
+(() => {
+  const attr = 'data-browser-use-rs-ax-ref';
+  const cleanRoot = (root) => {
+    for (const el of Array.from(root.querySelectorAll?.(`[${attr}]`) || [])) {
+      el.removeAttribute(attr);
+    }
+    for (const el of Array.from(root.querySelectorAll?.('*') || [])) {
+      if (el.shadowRoot) cleanRoot(el.shadowRoot);
+      const tag = el.tagName ? el.tagName.toLowerCase() : '';
+      if (tag === 'iframe' || tag === 'frame') {
+        try {
+          if (el.contentDocument) cleanRoot(el.contentDocument);
+        } catch (_) {}
+      }
+    }
+  };
+  cleanRoot(document);
+  return true;
 })()
 "#;
 
@@ -1096,20 +1124,77 @@ impl CdpBrowserSession {
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let page = self.current_page().await;
         let value = self.evaluate_json(INTERACTIVE_ELEMENTS_JS).await?;
+        let accessibility = self
+            .accessibility_enrichment(&page)
+            .await
+            .unwrap_or_default();
+        let _ = self.evaluate_effect(CLEANUP_AX_REFS_JS.to_owned()).await;
         let elements = value
             .as_array()
             .ok_or_else(|| {
                 BrowserError::MissingResponseData("interactive element array".to_owned())
             })?
             .iter()
-            .map(|element| dom_element_from_value(&page.target_id, element))
+            .map(|element| dom_element_from_value(&page.target_id, element, &accessibility))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(SerializedDomState::from_elements(elements))
     }
+
+    async fn accessibility_enrichment(
+        &self,
+        page: &AttachedPage,
+    ) -> Result<BTreeMap<String, AccessibilityNodeInfo>, BrowserError> {
+        let snapshot = self
+            .connection
+            .command(
+                "DOMSnapshot.captureSnapshot",
+                json!({ "computedStyles": [] }),
+                Some(&page.session_id),
+            )
+            .await?;
+        let backend_by_ref = snapshot_backend_ids_by_ax_ref(&snapshot);
+        if backend_by_ref.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let ax_by_backend = self
+            .connection
+            .command(
+                "Accessibility.getFullAXTree",
+                json!({}),
+                Some(&page.session_id),
+            )
+            .await
+            .map(|tree| accessibility_nodes_by_backend_id(&tree))
+            .unwrap_or_default();
+
+        Ok(backend_by_ref
+            .into_iter()
+            .map(|(ax_ref, backend_node_id)| {
+                let mut info = ax_by_backend
+                    .get(&backend_node_id)
+                    .cloned()
+                    .unwrap_or_default();
+                info.backend_node_id = backend_node_id;
+                (ax_ref, info)
+            })
+            .collect())
+    }
 }
 
-fn dom_element_from_value(target_id: &str, value: &Value) -> Result<DomElementRef, BrowserError> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AccessibilityNodeInfo {
+    backend_node_id: u64,
+    role: Option<String>,
+    name: Option<String>,
+}
+
+fn dom_element_from_value(
+    target_id: &str,
+    value: &Value,
+    accessibility: &BTreeMap<String, AccessibilityNodeInfo>,
+) -> Result<DomElementRef, BrowserError> {
     let index = value
         .get("index")
         .and_then(Value::as_u64)
@@ -1127,19 +1212,34 @@ fn dom_element_from_value(target_id: &str, value: &Value) -> Result<DomElementRe
                 .collect()
         })
         .unwrap_or_default();
+    let ax_info = value
+        .get("ax_ref")
+        .and_then(Value::as_str)
+        .and_then(|ax_ref| accessibility.get(ax_ref));
+    let ax_role = ax_info.and_then(|info| info.role.as_deref());
+    let dom_role = value.get("role").and_then(Value::as_str).map(str::to_owned);
+    let role = dom_role.or_else(|| {
+        ax_role
+            .filter(|role| is_useful_ax_role(role))
+            .map(str::to_owned)
+    });
+    let name = ax_info
+        .and_then(|info| nonempty_value(info.name.as_deref()))
+        .map(str::to_owned)
+        .or_else(|| value.get("name").and_then(Value::as_str).map(str::to_owned));
 
     Ok(DomElementRef {
         index,
         target_id: target_id.to_owned(),
-        backend_node_id: 0,
+        backend_node_id: ax_info.map(|info| info.backend_node_id).unwrap_or_default(),
         node_id: None,
         tag_name: value
             .get("tag_name")
             .and_then(Value::as_str)
             .unwrap_or("element")
             .to_owned(),
-        role: value.get("role").and_then(Value::as_str).map(str::to_owned),
-        name: value.get("name").and_then(Value::as_str).map(str::to_owned),
+        role,
+        name,
         text: value.get("text").and_then(Value::as_str).map(str::to_owned),
         attributes,
         bounds: element_bounds_from_value(value),
@@ -1156,6 +1256,104 @@ fn dom_element_from_value(target_id: &str, value: &Value) -> Result<DomElementRe
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+fn snapshot_backend_ids_by_ax_ref(snapshot: &Value) -> BTreeMap<String, u64> {
+    let strings = snapshot
+        .get("strings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut backend_by_ref = BTreeMap::new();
+
+    for document in snapshot
+        .get("documents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(nodes) = document.get("nodes") else {
+            continue;
+        };
+        let backend_node_ids = nodes
+            .get("backendNodeId")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let attributes = nodes
+            .get("attributes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        for (node_index, node_attributes) in attributes.iter().enumerate() {
+            let Some(backend_node_id) = backend_node_ids.get(node_index).and_then(Value::as_u64)
+            else {
+                continue;
+            };
+            if let Some(ax_ref) =
+                snapshot_attribute_value(node_attributes, &strings, AX_REF_ATTRIBUTE)
+            {
+                backend_by_ref.insert(ax_ref.to_owned(), backend_node_id);
+            }
+        }
+    }
+
+    backend_by_ref
+}
+
+fn snapshot_attribute_value<'a>(
+    attributes: &'a Value,
+    strings: &'a [Value],
+    attribute_name: &str,
+) -> Option<&'a str> {
+    let attributes = attributes.as_array()?;
+    for pair in attributes.chunks(2) {
+        let [name, value] = pair else {
+            continue;
+        };
+        if snapshot_string(strings, name) == Some(attribute_name) {
+            return snapshot_string(strings, value);
+        }
+    }
+    None
+}
+
+fn snapshot_string<'a>(strings: &'a [Value], index: &Value) -> Option<&'a str> {
+    let index = usize::try_from(index.as_u64()?).ok()?;
+    strings.get(index)?.as_str()
+}
+
+fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, AccessibilityNodeInfo> {
+    tree.get("nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|node| node.get("ignored").and_then(Value::as_bool) != Some(true))
+        .filter_map(|node| {
+            let backend_node_id = node.get("backendDOMNodeId").and_then(Value::as_u64)?;
+            Some((
+                backend_node_id,
+                AccessibilityNodeInfo {
+                    backend_node_id,
+                    role: ax_property_value(node, "role").map(str::to_owned),
+                    name: ax_property_value(node, "name").map(str::to_owned),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn ax_property_value<'a>(node: &'a Value, property: &str) -> Option<&'a str> {
+    nonempty_value(node.get(property)?.get("value")?.as_str())
+}
+
+fn nonempty_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn is_useful_ax_role(role: &str) -> bool {
+    !matches!(role, "generic" | "none" | "presentation" | "StaticText")
 }
 
 fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
@@ -2740,6 +2938,95 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_marks_elements_for_accessibility_join() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains(AX_REF_ATTRIBUTE));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("ax_ref: axRef"));
+        assert!(CLEANUP_AX_REFS_JS.contains(AX_REF_ATTRIBUTE));
+    }
+
+    #[test]
+    fn dom_snapshot_refs_map_to_backend_node_ids() {
+        let snapshot = json!({
+            "strings": [
+                AX_REF_ATTRIBUTE,
+                "browser-use-rs-1",
+                "id",
+                "native-button"
+            ],
+            "documents": [{
+                "nodes": {
+                    "backendNodeId": [41, 42],
+                    "attributes": [
+                        [],
+                        [0, 1, 2, 3]
+                    ]
+                }
+            }]
+        });
+
+        let refs = snapshot_backend_ids_by_ax_ref(&snapshot);
+
+        assert_eq!(refs.get("browser-use-rs-1"), Some(&42));
+    }
+
+    #[test]
+    fn accessibility_tree_nodes_map_by_backend_id() {
+        let tree = json!({
+            "nodes": [
+                {
+                    "backendDOMNodeId": 42,
+                    "role": { "type": "role", "value": "button" },
+                    "name": { "type": "computedString", "value": "Save settings" }
+                },
+                {
+                    "backendDOMNodeId": 43,
+                    "ignored": true,
+                    "role": { "type": "role", "value": "button" },
+                    "name": { "type": "computedString", "value": "Ignored" }
+                }
+            ]
+        });
+
+        let nodes = accessibility_nodes_by_backend_id(&tree);
+        let button = nodes.get(&42).expect("button ax node");
+
+        assert_eq!(button.role.as_deref(), Some("button"));
+        assert_eq!(button.name.as_deref(), Some("Save settings"));
+        assert!(!nodes.contains_key(&43));
+    }
+
+    #[test]
+    fn dom_element_uses_accessibility_enrichment() {
+        let accessibility = BTreeMap::from([(
+            "browser-use-rs-1".to_owned(),
+            AccessibilityNodeInfo {
+                backend_node_id: 42,
+                role: Some("button".to_owned()),
+                name: Some("Save settings".to_owned()),
+            },
+        )]);
+        let element = dom_element_from_value(
+            "target-1",
+            &json!({
+                "index": 1,
+                "tag_name": "button",
+                "name": "DOM fallback",
+                "text": "DOM fallback",
+                "attributes": { "id": "native-button" },
+                "ax_ref": "browser-use-rs-1",
+                "is_visible": true,
+                "is_interactive": true
+            }),
+            &accessibility,
+        )
+        .expect("dom element");
+
+        assert_eq!(element.backend_node_id, 42);
+        assert_eq!(element.role.as_deref(), Some("button"));
+        assert_eq!(element.name.as_deref(), Some("Save settings"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_search_affordances() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasSearchIndicator"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("search-icon"));
@@ -2985,6 +3272,50 @@ mod tests {
             .get(&2)
             .expect("labelled button");
         assert_eq!(button.name.as_deref(), Some("Submit request"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_enriches_dom_from_accessibility_tree() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>ax smoke</title></head><body><button id='native-button'>Save settings</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let button = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "native-button")
+            })
+            .expect("native button");
+
+        assert!(button.backend_node_id > 0);
+        assert_eq!(button.role.as_deref(), Some("button"));
+        assert_eq!(button.name.as_deref(), Some("Save settings"));
+
+        let leaked_probe = session
+            .evaluate_json(&format!(
+                "document.querySelector('[{}]') !== null",
+                AX_REF_ATTRIBUTE
+            ))
+            .await
+            .expect("probe leak check");
+        assert_eq!(leaked_probe.as_bool(), Some(false));
     }
 
     #[tokio::test]
