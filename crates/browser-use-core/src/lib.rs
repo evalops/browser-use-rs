@@ -5504,12 +5504,16 @@ mod tests {
     }
 
     struct QueueModel {
-        outputs: Mutex<VecDeque<Value>>,
+        outputs: Mutex<VecDeque<Result<Value, LlmError>>>,
         requests: Mutex<Vec<ChatRequest>>,
     }
 
     impl QueueModel {
         fn new(outputs: Vec<Value>) -> Self {
+            Self::with_results(outputs.into_iter().map(Ok).collect())
+        }
+
+        fn with_results(outputs: Vec<Result<Value, LlmError>>) -> Self {
             Self {
                 outputs: Mutex::new(outputs.into()),
                 requests: Mutex::new(Vec::new()),
@@ -5557,7 +5561,7 @@ mod tests {
                 .lock()
                 .expect("outputs lock")
                 .pop_front()
-                .ok_or_else(|| LlmError::Provider("no queued model output".to_owned()))?;
+                .ok_or_else(|| LlmError::Provider("no queued model output".to_owned()))??;
             Ok(ChatCompletion {
                 model: self.model().to_owned(),
                 content,
@@ -6049,6 +6053,76 @@ mod tests {
         );
         assert_eq!(errors[1], None);
         assert!(history.has_errors());
+    }
+
+    #[tokio::test]
+    async fn agent_run_recovers_from_provider_structured_output_errors() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "recovered from provider errors",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_failures: 4,
+            final_response_after_failure: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "recover provider failures",
+            settings,
+            QueueModel::with_results(vec![
+                Err(LlmError::InvalidStructuredOutput(
+                    "chat completion tool call arguments: expected value".to_owned(),
+                )),
+                Err(LlmError::Provider(
+                    "model refused request: safety policy".to_owned(),
+                )),
+                Err(LlmError::Provider(
+                    "chat completion stopped with length before completing structured output"
+                        .to_owned(),
+                )),
+                Ok(done_output),
+            ]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(5).await.expect("agent run");
+
+        assert_eq!(history.items.len(), 4);
+        assert_eq!(
+            history.final_result(),
+            Some("recovered from provider errors")
+        );
+        let errors = history.errors();
+        assert!(
+            errors[0]
+                .expect("malformed error")
+                .contains("chat completion tool call arguments"),
+            "unexpected error: {:?}",
+            errors[0]
+        );
+        assert!(
+            errors[1]
+                .expect("refusal error")
+                .contains("model refused request"),
+            "unexpected error: {:?}",
+            errors[1]
+        );
+        assert!(
+            errors[2]
+                .expect("truncation error")
+                .contains("stopped with length"),
+            "unexpected error: {:?}",
+            errors[2]
+        );
+        assert_eq!(errors[3], None);
     }
 
     #[tokio::test]
