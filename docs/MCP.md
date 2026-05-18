@@ -36,6 +36,11 @@ optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or
 `model` argument or `OLLAMA_MODEL`; `OLLAMA_BASE_URL` or `OLLAMA_HOST` is
 optional and defaults to `http://localhost:11434`.
 
+`browser_use_agent` also accepts an optional typed `settings` object matching
+`browser-use-core`'s `AgentSettings`, including vision, action limits,
+timeouts, prompt-history limits, planning controls, thinking/flash output modes,
+and prompt-visible DOM attributes.
+
 Browser and agent tools support an optional `session_id` argument. When omitted,
 the tool call uses a fresh one-shot browser. When present, the stdio server
 reuses an in-process Chrome session for subsequent calls with the same

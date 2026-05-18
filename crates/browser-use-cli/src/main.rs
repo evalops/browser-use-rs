@@ -715,7 +715,8 @@ async fn execute_mcp_tool(
             } else {
                 Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
             };
-            let mut agent = browser_use_core::Agent::new(input.task, llm, session);
+            let mut agent =
+                browser_use_core::Agent::with_settings(input.task, input.settings, llm, session);
             let history = agent.run(input.max_steps).await?;
             let output = browser_use_mcp::AgentToolOutput {
                 history: history.clone(),

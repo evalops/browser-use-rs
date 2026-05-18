@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use browser_use_cdp::DevToolsEndpoint;
-use browser_use_core::{ActionResult, AgentHistory};
+use browser_use_core::{ActionResult, AgentHistory, AgentSettings};
 use browser_use_dom::BrowserStateSummary;
 use browser_use_tools::BrowserAction;
 use schemars::{JsonSchema, schema_for};
@@ -78,6 +78,8 @@ pub struct AgentToolInput {
     pub base_url: Option<String>,
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
+    #[serde(default, skip_serializing_if = "is_default_agent_settings")]
+    pub settings: AgentSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -154,6 +156,10 @@ fn default_true() -> bool {
 
 fn default_max_steps() -> usize {
     10
+}
+
+fn is_default_agent_settings(settings: &AgentSettings) -> bool {
+    settings == &AgentSettings::default()
 }
 
 #[must_use]
@@ -312,6 +318,10 @@ mod tests {
         assert!(schema_text.contains("ollama"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
+        assert!(schema_text.contains("settings"));
+        assert!(schema_text.contains("max_actions_per_step"));
+        assert!(schema_text.contains("flash_mode"));
+        assert!(schema_text.contains("max_clickable_elements_length"));
     }
 
     #[test]

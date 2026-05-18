@@ -49,9 +49,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   GenerateContent, and Ollama Chat providers with structured-output requests.
 - CLI one-shot commands plus `actions`, `agent`, `mcp-tools`, `mcp-stdio`, and
   local persistent `session` commands.
-- MCP stdio tools for state, actions, and agent runs, including in-process
-  session reuse by `session_id` and reconnection to persistent CLI session
-  records.
+- MCP stdio tools for state, actions, and agent runs, including typed
+  `AgentSettings`, in-process session reuse by `session_id`, and reconnection
+  to persistent CLI session records.
 - MCP stdio persistent session lifecycle for start, stop, and list.
 - Local TCP JSON-RPC daemon exposing the MCP tool surface with shared
   in-process sessions across active connections.

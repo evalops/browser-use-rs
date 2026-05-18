@@ -57,7 +57,7 @@ Implemented:
   payloads.
 - One-shot CLI agent command backed by explicit provider selection.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
-  actions, and provider-selectable agent runs.
+  actions, and provider-selectable agent runs with typed agent settings.
 - Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
 - Conformance fixtures cover a scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`, and
