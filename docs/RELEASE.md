@@ -32,7 +32,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   summaries, common ARIA widget roles, search affordance signals, small icon
   controls, ARIA required/autocomplete/keyshortcut interactivity signals with
   prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
-  human-readable value text, contenteditable editor variants,
+  human-readable value text, contenteditable editor variants, media control
+  compounds,
   duplicate long-attribute pruning, input mask/autocomplete/date-format and
   `data-provide` datepicker hints, live-region, hierarchy, and multiselect
   state aliases,

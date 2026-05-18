@@ -40,6 +40,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     'select',
     'details',
     'summary',
+    'audio[controls]',
+    'video[controls]',
     'option',
     'optgroup',
     '[role="button"]',
@@ -571,6 +573,8 @@ fn element_eval_js(index: u32, body: &str) -> String {
     'select',
     'details',
     'summary',
+    'audio[controls]',
+    'video[controls]',
     'option',
     'optgroup',
     '[role="button"]',
@@ -4624,11 +4628,17 @@ mod tests {
     fn interactive_snapshot_summarizes_compound_controls() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("inputCompoundComponents"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("compoundComponentsFor"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("audio[controls]"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("video[controls]"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("Browse Files"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("Files Selected"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("Color Picker"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("Toggle Disclosure"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("Fullscreen"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("audio[controls]"));
+        assert!(action_script.contains("video[controls]"));
     }
 
     #[test]
@@ -6369,6 +6379,64 @@ mod tests {
                 .attributes
                 .get("id")
                 .is_none_or(|id| id != "false-editor")
+        }));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_media_controls() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>media smoke</title></head><body><audio id='audio-player' controls aria-label='Audio sample' style='width:320px'></audio><video id='video-player' controls aria-label='Video sample' width='320' height='180'></video><audio id='silent-audio' aria-label='Silent sample'></audio></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing media element with id {id}"))
+        };
+
+        let audio = element_by_id("audio-player");
+        assert_eq!(audio.tag_name, "audio");
+        assert!(
+            audio
+                .attributes
+                .get("compound_components")
+                .is_some_and(|value| value.contains("Play/Pause") && value.contains("Volume"))
+        );
+
+        let video = element_by_id("video-player");
+        assert_eq!(video.tag_name, "video");
+        assert!(
+            video
+                .attributes
+                .get("compound_components")
+                .is_some_and(|value| value.contains("Fullscreen"))
+        );
+
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "silent-audio")
         }));
     }
 
