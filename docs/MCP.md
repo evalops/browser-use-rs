@@ -46,8 +46,10 @@ contract with provider-specific environment values: `DEEPSEEK_*`, `GROQ_*`,
 `CEREBRAS_*`, `MISTRAL_*`, `OPENROUTER_*`, or `AI_GATEWAY_*` for API key,
 model, and optional base URL. Vercel also accepts `VERCEL_OIDC_TOKEN` and
 `VERCEL_MODEL`; DeepSeek, Cerebras, and Mistral use their upstream default
-models when a tool `model` argument is omitted. Anthropic runs require
-`ANTHROPIC_API_KEY` plus a tool `model` argument or `ANTHROPIC_MODEL`;
+models when a tool `model` argument is omitted. DeepSeek structured-output
+requests use JSON-object mode with schema guidance, while Cerebras uses
+prompt-only schema guidance. Anthropic runs require `ANTHROPIC_API_KEY` plus a
+tool `model` argument or `ANTHROPIC_MODEL`;
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are
 optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or
 `GEMINI_MODEL`; `GEMINI_BASE_URL` is optional. Ollama runs require a tool

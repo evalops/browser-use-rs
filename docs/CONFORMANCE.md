@@ -26,7 +26,8 @@ browser-use where compatibility is claimed.
    metadata, per-step timing metadata, done semantics, and final history.
 5. Provider contracts: OpenAI-compatible Chat Completions, OpenAI-wire upstream
    aliases, Anthropic, Gemini, and Ollama structured-output payloads first,
-   then provider-specific fallback paths as compatibility expands.
+   including DeepSeek JSON-object guidance and Cerebras prompt-only guidance,
+   then deeper provider-specific fallback paths as compatibility expands.
 6. CLI/MCP: persistent session lifecycle, JSON output stability, and error
    shapes.
 

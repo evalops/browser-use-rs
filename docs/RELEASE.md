@@ -26,9 +26,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   ARIA references, and image alt text, plus selected dropdown values, common
   ARIA widget roles, search affordance signals, small icon controls, input
   mask/autocomplete/date-format hints, JavaScript click/pointer listener-backed
-  controls, cursor-pointer controls, decorative SVG child pruning, static
-  mouse/keyboard handler attributes, pagination affordance detection,
-  configurable prompt-visible attributes, and the upstream empty-DOM load hint.
+  controls, cursor-pointer controls, static mouse/keyboard handler attributes,
+  pagination affordance detection, configurable prompt-visible attributes, and
+  the upstream empty-DOM load hint.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
@@ -76,7 +76,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   history, with semantic checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
-  GenerateContent, and Ollama Chat providers with structured-output requests.
+  GenerateContent, and Ollama Chat providers with structured-output requests,
+  including DeepSeek JSON-object and Cerebras prompt-only modes.
 - CLI one-shot commands plus `actions`, `agent` with typed settings flags
   including available-file-path and sensitive-data placeholder context plus
   system-message control, `mcp-tools`, `mcp-stdio`, and local persistent
@@ -111,9 +112,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - The packaged daemon service files are local user-service templates; distro
   packages, Homebrew formulas, and installer-managed secret stores are not
   implemented.
-- Provider-specific structured-output fallbacks beyond OpenAI-compatible Chat
-  Completions, Anthropic Messages, Gemini GenerateContent, and Ollama Chat are
-  still partial.
+- Provider-specific structured-output fallbacks for tool-calling-only models,
+  gateway routing hints, and non-chat-completions providers are still partial.
 - Rich filesystem state and sandboxing are still lighter than upstream's
   `FileSystem` service.
 - Package publishing is limited to the GitHub release artifact.

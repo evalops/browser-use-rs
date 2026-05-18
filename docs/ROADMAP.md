@@ -81,7 +81,8 @@ Implemented:
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
-  payloads.
+  payloads, including DeepSeek JSON-object and Cerebras prompt-only
+  structured-output modes.
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
@@ -106,17 +107,17 @@ Implemented:
   history-matching attributes, renders native and text datepicker input format
   hints, detects search affordance signals and small icon controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
-  controls, prunes decorative SVG child elements, detects static mouse/keyboard
-  handler attributes, detects pagination affordances, carries page-shape stats
-  for agent prompts, supports caller-selected prompt attributes, renders the
-  upstream empty-DOM load hint, keeps hidden file-input upload targets, and
-  excludes hidden, disabled, or `data-browser-use-exclude` subtrees from the
-  selector map.
+  controls, detects static mouse/keyboard handler attributes, detects
+  pagination affordances, carries page-shape stats for agent prompts, supports
+  caller-selected prompt attributes, renders the upstream empty-DOM load hint,
+  keeps hidden file-input upload targets, and excludes hidden, disabled, or
+  `data-browser-use-exclude` subtrees from the selector map.
 
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
 2. Continue browser-profile security parity toward an event-driven watchdog
    when the CDP layer grows background event dispatch.
-3. Expand agent planning depth, replay coverage, and provider-specific
-   structured-output fallbacks for non-OpenAI-wire providers.
+3. Expand agent planning depth, replay coverage, and deeper provider-specific
+   structured-output fallbacks for model families that need tool-calling or
+   provider-routing hints.
