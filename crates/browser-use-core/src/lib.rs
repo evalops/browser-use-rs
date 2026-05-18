@@ -2335,7 +2335,7 @@ fn repeated_action_loop(history: &AgentHistory, window: usize) -> bool {
         .map(|item| {
             item.model_output
                 .as_ref()
-                .and_then(|output| serde_json::to_string(&output.action).ok())
+                .and_then(|output| action_sequence_similarity_signature(&output.action))
         })
         .collect();
 
@@ -2347,6 +2347,19 @@ fn repeated_action_loop(history: &AgentHistory, window: usize) -> bool {
     };
 
     signatures.iter().all(|signature| signature == first)
+}
+
+fn action_sequence_similarity_signature(actions: &[BrowserAction]) -> Option<String> {
+    let signatures = actions
+        .iter()
+        .filter(|action| !matches!(action.name(), "wait" | "done" | "go_back"))
+        .filter_map(action_similarity_signature)
+        .collect::<Vec<_>>();
+    if signatures.is_empty() {
+        None
+    } else {
+        Some(signatures.join("||"))
+    }
 }
 
 /// Execute actions with the same high-level guard shape as browser-use:
@@ -2704,6 +2717,24 @@ mod tests {
             pending_network_requests: vec![],
             pagination_buttons: vec![],
             closed_popup_messages: vec![],
+        }
+    }
+
+    fn history_item_with_actions(actions: Vec<BrowserAction>) -> AgentHistoryItem {
+        AgentHistoryItem {
+            model_output: Some(AgentOutput {
+                current_state: AgentCurrentState::default(),
+                thinking: None,
+                evaluation_previous_goal: None,
+                memory: None,
+                next_goal: None,
+                current_plan_item: None,
+                plan_update: None,
+                action: actions,
+            }),
+            result: vec![ActionResult::extracted("ok")],
+            state: blank_state(),
+            metadata: None,
         }
     }
 
@@ -4256,6 +4287,44 @@ mod tests {
             AgentRunError::StepLimitReached { max_steps: 2 }
         ));
         assert_eq!(agent.history().items.len(), 2);
+    }
+
+    #[test]
+    fn repeated_action_loop_uses_normalized_action_signatures() {
+        let history = AgentHistory {
+            items: vec![
+                history_item_with_actions(vec![BrowserAction::Search(
+                    browser_use_tools::SearchAction {
+                        query: "EvalOps browser-use".to_owned(),
+                        engine: SearchEngine::Google,
+                    },
+                )]),
+                history_item_with_actions(vec![BrowserAction::Search(
+                    browser_use_tools::SearchAction {
+                        query: "browser use EvalOps!!!".to_owned(),
+                        engine: SearchEngine::Google,
+                    },
+                )]),
+            ],
+        };
+
+        assert!(repeated_action_loop(&history, 2));
+    }
+
+    #[test]
+    fn repeated_action_loop_ignores_wait_only_steps() {
+        let history = AgentHistory {
+            items: vec![
+                history_item_with_actions(vec![BrowserAction::Wait(
+                    browser_use_tools::WaitAction { seconds: 3 },
+                )]),
+                history_item_with_actions(vec![BrowserAction::Wait(
+                    browser_use_tools::WaitAction { seconds: 3 },
+                )]),
+            ],
+        };
+
+        assert!(!repeated_action_loop(&history, 2));
     }
 
     #[test]

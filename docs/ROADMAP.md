@@ -52,7 +52,8 @@ Implemented:
   prompt context, vision-aware screenshot capture, screenshot action
   next-observation image overrides, one-time extraction replay handling,
   invalid model-output recovery,
-  loop-awareness prompt nudges, upstream flattened planning fields, custom
+  normalized repeated-action loop detection, loop-awareness prompt nudges,
+  upstream flattened planning fields, custom
   prompt-visible DOM attributes, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash
   output-schema controls, configurable prompt-history and clickable-element text

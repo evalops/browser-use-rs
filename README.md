@@ -42,8 +42,9 @@ includes:
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, compact page-stat prompt context, one-time extraction replay handling,
-  step/LLM timeouts, max-failure handling, page-change guards, loop detection,
-  loop-awareness prompt nudges, upstream flattened planning fields,
+  step/LLM timeouts, max-failure handling, page-change guards, normalized
+  repeated-action loop detection, loop-awareness prompt nudges, upstream
+  flattened planning fields,
   configurable planning prompt nudges, thinking/flash output-schema controls,
   structured extraction metadata, per-step timing metadata, configurable
   prompt-history and clickable-element text limits, upstream-style last-result
