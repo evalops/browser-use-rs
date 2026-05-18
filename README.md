@@ -23,10 +23,9 @@ includes:
   navigation-capable actions, redirects, and newly observed tabs, and page
   state with browser-use-style short tab ids,
   plus typed Browser Use Cloud creation/stop parameters, current-session
-  tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second Cloud
-  HTTP timeouts, per-call extra headers, and response-to-CDP endpoint
-  conversion that preserve upstream's
-  omitted/null/proxy-country distinction,
+  tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
+  request timeout, extra request headers, and response-to-CDP endpoint
+  conversion that preserve upstream's omitted/null/proxy-country distinction,
   including cached observed-node click/input/scroll/dropdown/upload resolution
   and target-aware stale-node fallback for cached iframe actions when
   available. CDP sessions expose a bounded public lifecycle event history for

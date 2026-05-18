@@ -12,7 +12,7 @@ small pushed checkpoints as each surface becomes real.
 
 - [#80 Add Browser Use Cloud extra headers and timeout parity](https://github.com/evalops/browser-use-rs/issues/80)
 - [#79 Add Browser Use Cloud auth config fallback](https://github.com/evalops/browser-use-rs/issues/79)
-- [#78 Add Browser Use Cloud stop session contract](https://github.com/evalops/browser-use-rs/issues/78)
+- [#77 Add Browser Use Cloud stop lifecycle](https://github.com/evalops/browser-use-rs/issues/77)
 - [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
 - [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
 - [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
@@ -126,12 +126,11 @@ Implemented:
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
-  API-token fallback, 30-second Cloud HTTP timeouts, per-call extra headers
-  merged after default auth/content-type headers, current-session tracking
-  after create, explicit or current-session stop requests, auth errors,
-  missing-session errors, current-session cleanup on successful stop or 404,
-  `cdpUrl` to CDP endpoint conversion, and upstream-compatible
-  omitted/null/country proxy-country serialization.
+  API-token fallback, 30-second request timeout, extra request headers,
+  current-session tracking after create, explicit or current-session stop
+  requests, auth errors, missing-session errors, current-session cleanup on
+  successful stop or 404, `cdpUrl` to CDP endpoint conversion, and
+  upstream-compatible omitted/null/country proxy-country serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
