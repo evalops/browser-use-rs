@@ -47,8 +47,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, thinking/flash output-schema controls, upstream-style
   flattened required output fields, configurable prompt-history and
-  clickable-element text limits, upstream-style prompt error truncation, typed
-  upstream-style last-result completion helpers, upstream-compatible
+  clickable-element text limits, upstream-style prompt context/error
+  truncation, typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, and step-error, model-output, model-action,
   thought, duration, and URL accessors.
 - Schema-guided extraction results include structured metadata with schema,

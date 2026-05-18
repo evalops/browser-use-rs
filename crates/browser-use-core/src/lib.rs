@@ -1012,6 +1012,7 @@ fn display_done_file(file_name: &str) -> Option<(String, String)> {
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
 const MAX_EXTRACT_RELATED_ELEMENTS: usize = 200;
+const MAX_PROMPT_CONTENT_CHARS: usize = 60_000;
 const MAX_PROMPT_ERROR_CHARS: usize = 200;
 const PROMPT_ERROR_EDGE_CHARS: usize = 100;
 const IMAGE_QUERY_KEYWORDS: &[&str] = &[
@@ -2373,11 +2374,12 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
         })
         .collect();
 
-    if rendered.is_empty() {
+    let previous_results = if rendered.is_empty() {
         "None".to_owned()
     } else {
         rendered.join("\n")
-    }
+    };
+    truncate_prompt_content(previous_results)
 }
 
 fn render_planning_context(history: &AgentHistory, settings: &AgentSettings) -> Option<String> {
@@ -2541,6 +2543,18 @@ fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> Stri
         .or(result.long_term_memory.as_deref())
         .unwrap_or("no content")
         .to_owned()
+}
+
+fn truncate_prompt_content(content: String) -> String {
+    if content.chars().count() <= MAX_PROMPT_CONTENT_CHARS {
+        return content;
+    }
+
+    let truncated = content
+        .chars()
+        .take(MAX_PROMPT_CONTENT_CHARS)
+        .collect::<String>();
+    format!("{truncated}\n... [Content truncated at 60k characters]")
 }
 
 fn truncate_error_for_prompt(error: &str) -> String {
@@ -5148,6 +5162,27 @@ mod tests {
 
         assert!(rendered.contains(&expected));
         assert!(!rendered.contains(&error));
+    }
+
+    #[test]
+    fn previous_results_truncate_large_prompt_context_like_upstream() {
+        let huge_result = "x".repeat(MAX_PROMPT_CONTENT_CHARS + 100);
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::extracted(huge_result)],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        let rendered = render_previous_results(&history, None);
+
+        assert_eq!(
+            rendered.chars().count(),
+            MAX_PROMPT_CONTENT_CHARS + "\n... [Content truncated at 60k characters]".len()
+        );
+        assert!(rendered.ends_with("\n... [Content truncated at 60k characters]"));
     }
 
     #[test]
