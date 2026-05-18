@@ -1321,7 +1321,7 @@ impl CloudBrowserClient {
             .body(body)
             .send()
             .await
-            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+            .map_err(|error| cloud_request_error("creating", error))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(BrowserError::CloudAuth(
@@ -1338,14 +1338,16 @@ impl CloudBrowserClient {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(BrowserError::Cloud(format!(
-                "HTTP {status}{}",
+                "Failed to create cloud browser: HTTP {status}{}",
                 render_cloud_error_body(&body)
             )));
         }
         let response = response
             .json::<CloudBrowserResponse>()
             .await
-            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+            .map_err(|error| {
+                BrowserError::Cloud(format!("Unexpected error creating cloud browser: {error}"))
+            })?;
         *self.current_session_id.lock().await = Some(response.id.clone());
         Ok(response)
     }
@@ -1388,7 +1390,7 @@ impl CloudBrowserClient {
             .body(body)
             .send()
             .await
-            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+            .map_err(|error| cloud_request_error("stopping", error))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(BrowserError::CloudAuth(
@@ -1405,14 +1407,16 @@ impl CloudBrowserClient {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(BrowserError::Cloud(format!(
-                "HTTP {status}{}",
+                "Failed to stop cloud browser: HTTP {status}{}",
                 render_cloud_error_body(&body)
             )));
         }
         let response = response
             .json::<CloudBrowserResponse>()
             .await
-            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+            .map_err(|error| {
+                BrowserError::Cloud(format!("Unexpected error stopping cloud browser: {error}"))
+            })?;
         self.clear_current_session_if(&session_id).await;
         Ok(response)
     }
@@ -1482,6 +1486,21 @@ where
         headers.insert(header_name, header_value);
     }
     Ok(headers)
+}
+
+fn cloud_request_error(action: &str, error: reqwest::Error) -> BrowserError {
+    if error.is_timeout() {
+        return BrowserError::Cloud(format!(
+            "Timeout while {action} cloud browser. Please try again."
+        ));
+    }
+    if error.is_connect() {
+        return BrowserError::Cloud(
+            "Failed to connect to cloud browser service. Please check your internet connection."
+                .to_owned(),
+        );
+    }
+    BrowserError::Cloud(format!("Unexpected error {action} cloud browser: {error}"))
 }
 
 fn resolve_cloud_api_key(
@@ -7929,6 +7948,35 @@ mod tests {
                 .to_string()
                 .contains("Invalid cloud extra header value")
         );
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_contextualizes_non_success_errors() {
+        let (base_url, server) =
+            cloud_test_server(vec![(500, json!({ "detail": "create failed" }))]).await;
+        let error = CloudBrowserClient::with_api_key("test-key")
+            .with_base_url(base_url)
+            .create_browser(&CloudBrowserCreateRequest::default())
+            .await
+            .expect_err("create failure should include action context");
+        assert!(error.to_string().contains(
+            "Failed to create cloud browser: HTTP 500 Internal Server Error - create failed"
+        ));
+        server.await.expect("create failure server task");
+
+        let (base_url, server) =
+            cloud_test_server(vec![(503, json!({ "detail": "stop failed" }))]).await;
+        let error = CloudBrowserClient::with_api_key("test-key")
+            .with_base_url(base_url)
+            .stop_browser(Some("browser-failed"))
+            .await
+            .expect_err("stop failure should include action context");
+        assert!(
+            error.to_string().contains(
+                "Failed to stop cloud browser: HTTP 503 Service Unavailable - stop failed"
+            )
+        );
+        server.await.expect("stop failure server task");
     }
 
     #[tokio::test]
