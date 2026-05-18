@@ -1789,31 +1789,141 @@ fn read_document_file_content(file_name: &str) -> Result<String, String> {
 }
 
 fn write_pdf_text(path: &std::path::Path, content: &str) -> Result<(), String> {
-    std::fs::write(path, pdf_bytes_from_text(content)).map_err(|error| error.to_string())
+    std::fs::write(path, pdf_document_bytes(content)).map_err(|error| error.to_string())
 }
 
-fn pdf_bytes_from_text(content: &str) -> Vec<u8> {
-    let mut stream = String::from("BT /F1 12 Tf 72 720 Td 14 TL\n");
-    for line in content.split('\n') {
-        stream.push('(');
-        push_pdf_escaped(&mut stream, line);
-        stream.push_str(") Tj\nT*\n");
-    }
-    stream.push_str("ET");
-    let objects = [
+fn pdf_document_bytes(content: &str) -> Vec<u8> {
+    let streams = pdf_page_streams(content);
+    let page_count = streams.len();
+    let font_object_id = 3usize;
+    let first_page_object_id = 4usize;
+    let first_content_object_id = first_page_object_id + page_count;
+    let kids = (0..page_count)
+        .map(|index| format!("{} 0 R", first_page_object_id + index))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut objects = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
-        "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_owned(),
+        format!("<< /Type /Pages /Kids [{kids}] /Count {page_count} >>"),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
-        format!(
-            "<< /Length {} >>\nstream\n{}\nendstream",
-            stream.len(),
-            stream
-        ),
     ];
 
+    for (index, _) in streams.iter().enumerate() {
+        let page_object_id = first_page_object_id + index;
+        let content_object_id = first_content_object_id + index;
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 {font_object_id} 0 R >> >> /MediaBox [0 0 612 792] /Contents {content_object_id} 0 R >>"
+        ));
+        debug_assert_eq!(objects.len(), page_object_id);
+    }
+
+    for stream in streams {
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{}endstream",
+            stream.len(),
+            stream
+        ));
+    }
+
+    pdf_objects_to_bytes(&objects)
+}
+
+fn pdf_page_streams(content: &str) -> Vec<String> {
+    let mut streams = Vec::new();
+    let mut stream = String::new();
+    let mut y = 720i32;
+    let mut has_text_on_page = false;
+
+    for line in content.split('\n') {
+        let line = pdf_line_style(line);
+        if y - line.advance < 72 && has_text_on_page {
+            streams.push(stream);
+            stream = String::new();
+            y = 720;
+            has_text_on_page = false;
+        }
+
+        if let Some(text) = line.text {
+            stream.push_str("BT\n");
+            stream.push_str(&format!("/F1 {} Tf\n", line.font_size));
+            stream.push_str(&format!("72 {y} Td\n"));
+            stream.push_str(&format!("({}) Tj\n", pdf_escape_literal_text(&text)));
+            stream.push_str("ET\n");
+            has_text_on_page = true;
+        }
+        y -= line.advance;
+    }
+
+    streams.push(stream);
+    streams
+}
+
+struct PdfLineStyle {
+    text: Option<String>,
+    font_size: u32,
+    advance: i32,
+}
+
+fn pdf_line_style(line: &str) -> PdfLineStyle {
+    if line.trim().is_empty() {
+        return PdfLineStyle {
+            text: None,
+            font_size: 12,
+            advance: 6,
+        };
+    }
+
+    if let Some(text) = line.strip_prefix("# ") {
+        return PdfLineStyle {
+            text: Some(text.to_owned()),
+            font_size: 24,
+            advance: 34,
+        };
+    }
+    if let Some(text) = line.strip_prefix("## ") {
+        return PdfLineStyle {
+            text: Some(text.to_owned()),
+            font_size: 18,
+            advance: 26,
+        };
+    }
+    if let Some(text) = line.strip_prefix("### ") {
+        return PdfLineStyle {
+            text: Some(text.to_owned()),
+            font_size: 14,
+            advance: 20,
+        };
+    }
+
+    PdfLineStyle {
+        text: Some(line.to_owned()),
+        font_size: 12,
+        advance: 17,
+    }
+}
+
+fn pdf_escape_literal_text(text: &str) -> String {
+    let mut escaped = String::new();
+    for character in text.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\\"),
+            '(' => escaped.push_str(r"\("),
+            ')' => escaped.push_str(r"\)"),
+            '\t' => escaped.push_str(r"\t"),
+            '\r' => {}
+            character if character.is_control() => {
+                escaped.push_str(&format!(r"\{:03o}", character as u32));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+fn pdf_objects_to_bytes(objects: &[String]) -> Vec<u8> {
     let mut pdf = b"%PDF-1.4\n".to_vec();
-    let mut offsets = Vec::new();
+    let mut offsets = Vec::with_capacity(objects.len());
     for (index, object) in objects.iter().enumerate() {
         offsets.push(pdf.len());
         pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
@@ -1833,18 +1943,6 @@ fn pdf_bytes_from_text(content: &str) -> Vec<u8> {
         .as_bytes(),
     );
     pdf
-}
-
-fn push_pdf_escaped(output: &mut String, text: &str) {
-    for character in text.chars() {
-        match character {
-            '\\' => output.push_str(r"\\"),
-            '(' => output.push_str(r"\("),
-            ')' => output.push_str(r"\)"),
-            '\r' => {}
-            _ => output.push(character),
-        }
-    }
 }
 
 fn read_docx_text(file_name: &str) -> Result<String, String> {
@@ -5498,7 +5596,7 @@ mod tests {
     async fn browser_executor_reads_pdf_files_as_text() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let path = temp_dir.path().join("report.pdf");
-        std::fs::write(&path, pdf_bytes_from_text("Hello PDF EvalOps")).expect("seed pdf");
+        std::fs::write(&path, minimal_pdf("Hello PDF EvalOps")).expect("seed pdf");
         let file_name = path.display().to_string();
         let session = MockSession::new();
         let mut executor = BrowserActionExecutor::new(session);
@@ -5534,7 +5632,7 @@ mod tests {
         let write_result = executor
             .execute(&BrowserAction::WriteFile(WriteFileAction {
                 file_name: file_name.clone(),
-                content: "Title (One)\nAlpha Beta".to_owned(),
+                content: "# Report\nAlpha\tBeta (Gamma)".to_owned(),
                 append: false,
                 trailing_newline: false,
                 leading_newline: false,
@@ -5543,7 +5641,7 @@ mod tests {
         let append_result = executor
             .execute(&BrowserAction::WriteFile(WriteFileAction {
                 file_name: file_name.clone(),
-                content: "Gamma & Delta".to_owned(),
+                content: r"Second \ line".to_owned(),
                 append: true,
                 trailing_newline: false,
                 leading_newline: false,
@@ -5560,12 +5658,70 @@ mod tests {
         let bytes = std::fs::read(&path).expect("pdf bytes");
         assert!(bytes.starts_with(b"%PDF-1.4"));
         let extracted = pdf_extract::extract_text(&path).expect("pdf text");
-        assert!(extracted.contains("Title (One)"));
-        assert!(extracted.contains("Alpha Beta"));
-        assert!(extracted.contains("Gamma & Delta"));
+        assert!(extracted.contains("Report"));
+        assert!(!extracted.contains("# Report"));
+        assert!(extracted.contains("Alpha"));
+        assert!(extracted.contains("Beta (Gamma)"));
+        assert!(extracted.contains(r"Second \ line"));
         let content = read_result.extracted_content.as_deref().expect("pdf read");
         assert!(content.contains(&format!("Read from file {file_name}.")));
-        assert!(content.contains("Gamma & Delta"));
+        assert!(content.contains("Report"));
+        assert!(content.contains("Beta (Gamma)"));
+        assert!(content.contains(r"Second \ line"));
+    }
+
+    #[test]
+    fn pdf_document_bytes_paginates_long_content() {
+        let content = (0..80)
+            .map(|index| format!("Line {index}: PDF pagination parity"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bytes = pdf_document_bytes(&content);
+        let pdf = String::from_utf8_lossy(&bytes);
+
+        assert!(bytes.starts_with(b"%PDF-1.4"));
+        assert!(pdf.matches("/Type /Page /Parent").count() > 1);
+    }
+
+    fn minimal_pdf(text: &str) -> Vec<u8> {
+        let escaped = text
+            .replace('\\', r"\\")
+            .replace('(', r"\(")
+            .replace(')', r"\)");
+        let stream = format!("BT /F1 24 Tf 72 720 Td ({escaped}) Tj ET");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_owned(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{}\nendstream",
+                stream.len(),
+                stream
+            ),
+        ];
+
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
+        }
+        let xref_offset = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+                objects.len() + 1,
+                xref_offset
+            )
+            .as_bytes(),
+        );
+        pdf
     }
 
     #[tokio::test]
