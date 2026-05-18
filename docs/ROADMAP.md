@@ -75,12 +75,13 @@ Implemented:
   enriches indexed elements with browser accessibility-tree roles, names, and
   backend/frontend node ids, carries image alt text into image-only control
   names, renders selected dropdown values, preserves automation-friendly
-  data/ARIA/value attributes, preserves static history-matching attributes,
-  renders native input format hints, detects search affordance signals and
-  small icon controls, detects JavaScript click/pointer listener-backed
-  controls, detects pagination affordances, supports caller-selected prompt
-  attributes, renders the upstream empty-DOM load hint, and excludes hidden or
-  disabled interactive elements from the selector map.
+  data/ARIA/value attributes, preserves input mask/autocomplete/date-format
+  hints, preserves static history-matching attributes, renders native and text
+  datepicker input format hints, detects search affordance signals and small
+  icon controls, detects JavaScript click/pointer listener-backed controls,
+  detects pagination affordances, supports caller-selected prompt attributes,
+  renders the upstream empty-DOM load hint, and excludes hidden or disabled
+  interactive elements from the selector map.
 
 Next:
 

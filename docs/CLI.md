@@ -117,7 +117,8 @@ returns the JSON-RPC response as JSON. `--auth-token <token>` or
 - DOM indexing is compact and accessibility-aware, including same-origin iframe
   traversal, open shadow-root traversal, AX role/name enrichment,
   backend/frontend node ids, and cached observed-node resolution for
-  click/type/scroll/dropdown/upload actions, plus JavaScript click/pointer
+  click/type/scroll/dropdown/upload actions, input
+  mask/autocomplete/date-format hints, plus JavaScript click/pointer
   listener-backed control detection when Chrome exposes command-line inspection
   APIs. Full browser-use DOM/AX snapshot parity is still tracked separately.
 - Agent runs currently support OpenAI-compatible Chat Completions, Anthropic

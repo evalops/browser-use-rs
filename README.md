@@ -26,10 +26,10 @@ includes:
   tags and contents, accessibility-tree role/name enrichment, backend and
   frontend node ids, accessible labels, image-alt control names, selected
   dropdown values, bounds, automation-friendly data/ARIA/value attributes,
-  static history-matching attributes, hidden-element filtering, and scrollable
-  element metadata, plus common ARIA widget roles, search affordance signals,
-  small icon controls, pagination affordances, and configurable prompt-visible
-  attributes.
+  input mask/autocomplete/date-format hints, static history-matching
+  attributes, hidden-element filtering, and scrollable element metadata, plus
+  common ARIA widget roles, search affordance signals, small icon controls,
+  pagination affordances, and configurable prompt-visible attributes.
 - DOM indexing recognizes controls backed only by JavaScript click/pointer
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed

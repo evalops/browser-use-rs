@@ -391,16 +391,23 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
 }
 
 fn synthetic_render_attribute(element: &DomElementRef, attribute: &str) -> Option<String> {
-    let input_type = element.attributes.get("type")?.to_ascii_lowercase();
     if !element.tag_name.eq_ignore_ascii_case("input") {
         return None;
     }
+    let input_type = element
+        .attributes
+        .get("type")
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
 
     match attribute {
-        "format" => native_input_format(&input_type).map(str::to_owned),
-        "placeholder" => {
-            native_input_placeholder(&input_type, &element.attributes).map(str::to_owned)
-        }
+        "format" => native_input_format(&input_type)
+            .map(str::to_owned)
+            .or_else(|| text_datepicker_format(&input_type, &element.attributes)),
+        "expected_format" => text_datepicker_expected_format(&input_type, &element.attributes),
+        "placeholder" => native_input_placeholder(&input_type, &element.attributes)
+            .map(str::to_owned)
+            .or_else(|| text_datepicker_placeholder(&input_type, &element.attributes)),
         _ => None,
     }
 }
@@ -429,6 +436,64 @@ fn native_input_placeholder(
         "tel" if !attributes.contains_key("pattern") => Some("123-456-7890"),
         _ => None,
     }
+}
+
+fn text_datepicker_expected_format(
+    input_type: &str,
+    attributes: &BTreeMap<String, String>,
+) -> Option<String> {
+    if !matches!(input_type, "" | "text") {
+        return None;
+    }
+    nonempty_attribute(attributes, "uib-datepicker-popup").map(str::to_owned)
+}
+
+fn text_datepicker_format(
+    input_type: &str,
+    attributes: &BTreeMap<String, String>,
+) -> Option<String> {
+    if let Some(format) = text_datepicker_expected_format(input_type, attributes) {
+        return Some(format);
+    }
+    text_datepicker_placeholder(input_type, attributes)
+}
+
+fn text_datepicker_placeholder(
+    input_type: &str,
+    attributes: &BTreeMap<String, String>,
+) -> Option<String> {
+    if !matches!(input_type, "" | "text") {
+        return None;
+    }
+    if !has_text_datepicker_signal(attributes) {
+        return None;
+    }
+    Some(
+        nonempty_attribute(attributes, "data-date-format")
+            .unwrap_or("mm/dd/yyyy")
+            .to_owned(),
+    )
+}
+
+fn has_text_datepicker_signal(attributes: &BTreeMap<String, String>) -> bool {
+    attributes
+        .get("class")
+        .map(|value| {
+            let value = value.to_ascii_lowercase();
+            ["datepicker", "datetimepicker", "daterangepicker"]
+                .iter()
+                .any(|indicator| value.contains(indicator))
+        })
+        .unwrap_or(false)
+        || attributes.contains_key("data-datepicker")
+}
+
+fn nonempty_attribute<'a>(attributes: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
+    attributes
+        .get(name)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn cap_attribute_value(value: &str) -> String {
@@ -685,6 +750,80 @@ mod tests {
                 .llm_representation()
                 .contains("[2] <input type=tel placeholder=123-456-7890> Phone")
         );
+    }
+
+    #[test]
+    fn rendered_attributes_add_text_datepicker_format_hints() {
+        let jquery_datepicker = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Travel date".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("class".to_owned(), "form-control datepicker".to_owned()),
+                ("data-date-format".to_owned(), "dd/mm/yyyy".to_owned()),
+                ("type".to_owned(), "text".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let angular_datepicker = DomElementRef {
+            index: 2,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Start".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([(
+                "uib-datepicker-popup".to_owned(),
+                "MM/dd/yyyy".to_owned(),
+            )]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let default_datepicker = DomElementRef {
+            index: 3,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Fallback".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("data-datepicker".to_owned(), "true".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let state = SerializedDomState::from_elements(vec![
+            jquery_datepicker,
+            angular_datepicker,
+            default_datepicker,
+        ]);
+
+        assert!(state.llm_representation().contains(
+            "[1] <input type=text placeholder=dd/mm/yyyy data-date-format=dd/mm/yyyy format=dd/mm/yyyy> Travel date"
+        ));
+        assert!(
+            state
+                .llm_representation()
+                .contains("[2] <input format=MM/dd/yyyy expected_format=MM/dd/yyyy> Start")
+        );
+        assert!(state.llm_representation().contains(
+            "[3] <input placeholder=mm/dd/yyyy data-datepicker=true format=mm/dd/yyyy> Fallback"
+        ));
     }
 
     #[test]

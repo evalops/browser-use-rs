@@ -186,7 +186,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const axRef = `browser-use-rs-${index + 1}`;
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-value', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
@@ -3217,7 +3217,11 @@ mod tests {
             "aria-placeholder",
             "aria-required",
             "aria-valuemax",
+            "autocomplete",
             "data-cy",
+            "data-datepicker",
+            "data-inputmask",
+            "data-mask",
             "data-selenium",
             "data-testid",
             "data-test",
@@ -3227,7 +3231,14 @@ mod tests {
             "itemscope",
             "itemprop",
             "lang",
+            "inputmode",
+            "max",
+            "maxlength",
+            "min",
+            "minlength",
             "readonly",
+            "step",
+            "uib-datepicker-popup",
         ] {
             assert!(
                 INTERACTIVE_ELEMENTS_JS.contains(attribute),
