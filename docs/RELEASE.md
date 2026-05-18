@@ -28,7 +28,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   unexpected websocket drops trigger bounded actor-level reconnect attempts
   with reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP
   target sessions are invalidated after reconnect so stale session-scoped
-  commands fail locally with a clear reattach error.
+  commands fail locally with a clear reattach error, and the current target is
+  reattached automatically on the next session access when Chrome still exposes
+  it.
   `BrowserProfile.navigation_timeout_ms` bounds direct `Page.navigate` calls
   and records network-timeout lifecycle diagnostics on timeout.
   `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
@@ -161,10 +163,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   records target crash, JavaScript dialog, navigation failure, configured
   download events, cookie plus attached frame-tree origin storage-state
   save/load events, explicit CDP websocket closure diagnostics, bounded
-  attempts, deliberate stale-session invalidation after reconnect, direct
-  navigation timeouts, and watchdog-style stuck HTTP(S) request timeouts. #30
-  tracks the remaining automatic session rehydration after reconnect,
-  profile-wide storage discovery outside the attached frame tree, and full
+  actor-level reconnect attempts, deliberate stale-session invalidation and
+  current-target reattach after reconnect, direct navigation timeouts, and
+  watchdog-style stuck HTTP(S) request timeouts. #30 tracks the remaining
+  profile-wide storage discovery outside the attached frame tree and full
   general-purpose event-bus parity.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact

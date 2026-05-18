@@ -93,7 +93,9 @@ Implemented:
   websocket drops trigger bounded actor-level reconnect attempts with
   reconnecting/reconnected/failure lifecycle diagnostics, and registered CDP
   target sessions are invalidated after reconnect so stale session-scoped
-  commands fail locally with a clear reattach error.
+  commands fail locally with a clear reattach error. The current target is
+  reattached automatically on the next session access when Chrome still exposes
+  it.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -195,6 +197,6 @@ Implemented:
 Next:
 
 1. Continue [#30](https://github.com/evalops/browser-use-rs/issues/30) by
-   wiring automatic session rehydration after reconnect and profile-wide storage
-   discovery outside the attached frame tree into live CDP/session behavior.
+   wiring profile-wide storage discovery outside the attached frame tree into
+   live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

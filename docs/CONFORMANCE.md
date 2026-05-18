@@ -60,11 +60,13 @@ closure records a browser-stopped lifecycle diagnostic, and direct
 lifecycle diagnostics. Unexpected websocket drops trigger bounded actor-level
 attempts with reconnecting/reconnected/failure lifecycle diagnostics. Registered
 CDP target sessions are invalidated after reconnect so stale session-scoped
-commands fail locally with a clear reattach error.
+commands fail locally with a clear reattach error, and the current target is
+reattached automatically on the next session access when Chrome still exposes
+it.
 
-Remaining lifecycle gaps are tracked in #30: automatic session rehydration after
-reconnect, profile-wide storage discovery outside the attached frame tree, and a
-full general-purpose event bus are still lighter than upstream.
+Remaining lifecycle gaps are tracked in #30: profile-wide storage discovery
+outside the attached frame tree and a full general-purpose event bus are still
+lighter than upstream.
 
 ## Drift Policy
 

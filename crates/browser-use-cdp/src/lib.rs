@@ -1942,6 +1942,15 @@ impl CdpConnection {
         let Some(session_id) = session_id else {
             return Ok(());
         };
+        if self.is_registered_session_stale(session_id).await {
+            return Err(BrowserError::Transport(format!(
+                "CDP session {session_id} is stale after reconnect; reattach target before sending session-scoped commands"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn is_registered_session_stale(&self, session_id: &str) -> bool {
         let Some(session_generation) = self
             .session_generations
             .lock()
@@ -1949,15 +1958,9 @@ impl CdpConnection {
             .get(session_id)
             .copied()
         else {
-            return Ok(());
+            return false;
         };
-        let current_generation = self.current_generation();
-        if session_generation == current_generation {
-            return Ok(());
-        }
-        Err(BrowserError::Transport(format!(
-            "CDP session {session_id} is stale after reconnect; reattach target before sending session-scoped commands"
-        )))
+        session_generation != self.current_generation()
     }
 
     pub async fn command(
@@ -2643,11 +2646,41 @@ impl CdpBrowserSession {
     }
 
     async fn current_page(&self) -> AttachedPage {
-        self.page.lock().await.clone()
+        let page = self.page.lock().await.clone();
+        if self
+            .connection
+            .is_registered_session_stale(&page.session_id)
+            .await
+        {
+            return self
+                .reattach_current_page(page.clone())
+                .await
+                .unwrap_or(page);
+        }
+        page
     }
 
     async fn set_current_page(&self, page: AttachedPage) {
         *self.page.lock().await = page;
+    }
+
+    async fn reattach_current_page(
+        &self,
+        stale_page: AttachedPage,
+    ) -> Result<AttachedPage, BrowserError> {
+        let page = match attach_to_target(&self.connection, stale_page.target_id.clone()).await {
+            Ok(page) => page,
+            Err(error) if is_missing_target_error(&error) => {
+                attach_or_create_page(&self.connection).await?
+            }
+            Err(error) => return Err(error),
+        };
+        let target_id = page.target_id.clone();
+        self.set_current_page(page.clone()).await;
+        self.clear_cached_dom_state().await;
+        self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id))
+            .await;
+        Ok(page)
     }
 
     async fn set_cached_dom_state(&self, dom_state: SerializedDomState) {
