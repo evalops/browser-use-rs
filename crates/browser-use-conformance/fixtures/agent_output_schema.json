@@ -1,0 +1,845 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AgentCurrentState": {
+      "properties": {
+        "evaluation_previous_goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "memory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thinking": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserAction": {
+      "description": "Browser-use action model: each serialized action is a one-key object.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "extract": {
+              "$ref": "#/definitions/ExtractAction"
+            }
+          },
+          "required": [
+            "extract"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "search_page": {
+              "$ref": "#/definitions/SearchPageAction"
+            }
+          },
+          "required": [
+            "search_page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "find_elements": {
+              "$ref": "#/definitions/FindElementsAction"
+            }
+          },
+          "required": [
+            "find_elements"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "search": {
+              "$ref": "#/definitions/SearchAction"
+            }
+          },
+          "required": [
+            "search"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "navigate": {
+              "$ref": "#/definitions/NavigateAction"
+            }
+          },
+          "required": [
+            "navigate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "go_back": {
+              "$ref": "#/definitions/NoParamsAction"
+            }
+          },
+          "required": [
+            "go_back"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "click": {
+              "$ref": "#/definitions/ClickElementAction"
+            }
+          },
+          "required": [
+            "click"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/InputTextAction"
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "done": {
+              "$ref": "#/definitions/DoneAction"
+            }
+          },
+          "required": [
+            "done"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "switch_tab": {
+              "$ref": "#/definitions/SwitchTabAction"
+            }
+          },
+          "required": [
+            "switch_tab"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "close_tab": {
+              "$ref": "#/definitions/CloseTabAction"
+            }
+          },
+          "required": [
+            "close_tab"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "scroll": {
+              "$ref": "#/definitions/ScrollAction"
+            }
+          },
+          "required": [
+            "scroll"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "find_text": {
+              "$ref": "#/definitions/FindTextAction"
+            }
+          },
+          "required": [
+            "find_text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "evaluate": {
+              "$ref": "#/definitions/EvaluateAction"
+            }
+          },
+          "required": [
+            "evaluate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "wait": {
+              "$ref": "#/definitions/WaitAction"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "send_keys": {
+              "$ref": "#/definitions/SendKeysAction"
+            }
+          },
+          "required": [
+            "send_keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "upload_file": {
+              "$ref": "#/definitions/UploadFileAction"
+            }
+          },
+          "required": [
+            "upload_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "write_file": {
+              "$ref": "#/definitions/WriteFileAction"
+            }
+          },
+          "required": [
+            "write_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "read_file": {
+              "$ref": "#/definitions/ReadFileAction"
+            }
+          },
+          "required": [
+            "read_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "replace_file": {
+              "$ref": "#/definitions/ReplaceFileAction"
+            }
+          },
+          "required": [
+            "replace_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "screenshot": {
+              "$ref": "#/definitions/ScreenshotAction"
+            }
+          },
+          "required": [
+            "screenshot"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "save_as_pdf": {
+              "$ref": "#/definitions/SaveAsPdfAction"
+            }
+          },
+          "required": [
+            "save_as_pdf"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "get_dropdown_options": {
+              "$ref": "#/definitions/GetDropdownOptionsAction"
+            }
+          },
+          "required": [
+            "get_dropdown_options"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "select_dropdown_option": {
+              "$ref": "#/definitions/SelectDropdownOptionAction"
+            }
+          },
+          "required": [
+            "select_dropdown_option"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ClickElementAction": {
+      "properties": {
+        "coordinate_x": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "coordinate_y": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 1.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CloseTabAction": {
+      "properties": {
+        "tab_id": {
+          "maxLength": 4,
+          "minLength": 4,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "DoneAction": {
+      "properties": {
+        "files_to_display": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "success": {
+          "default": true,
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "EvaluateAction": {
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "ExtractAction": {
+      "description": "Free-text or schema-guided page extraction.",
+      "properties": {
+        "already_collected": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extract_images": {
+          "default": false,
+          "type": "boolean"
+        },
+        "extract_links": {
+          "default": false,
+          "type": "boolean"
+        },
+        "output_schema": true,
+        "query": {
+          "type": "string"
+        },
+        "start_from_char": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "FindElementsAction": {
+      "description": "CSS selector lookup against the page.",
+      "properties": {
+        "attributes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "include_text": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_results": {
+          "default": 50,
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "selector": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "selector"
+      ],
+      "type": "object"
+    },
+    "FindTextAction": {
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "GetDropdownOptionsAction": {
+      "properties": {
+        "index": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "type": "object"
+    },
+    "InputTextAction": {
+      "properties": {
+        "clear": {
+          "default": true,
+          "type": "boolean"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "text"
+      ],
+      "type": "object"
+    },
+    "NavigateAction": {
+      "properties": {
+        "new_tab": {
+          "default": false,
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "NoParamsAction": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ReadFileAction": {
+      "properties": {
+        "file_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name"
+      ],
+      "type": "object"
+    },
+    "ReplaceFileAction": {
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "new_str": {
+          "type": "string"
+        },
+        "old_str": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name",
+        "new_str",
+        "old_str"
+      ],
+      "type": "object"
+    },
+    "SaveAsPdfAction": {
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "landscape": {
+          "default": false,
+          "type": "boolean"
+        },
+        "paper_format": {
+          "default": "Letter",
+          "type": "string"
+        },
+        "print_background": {
+          "default": true,
+          "type": "boolean"
+        },
+        "scale": {
+          "default": 1.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ScreenshotAction": {
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ScrollAction": {
+      "properties": {
+        "down": {
+          "default": true,
+          "type": "boolean"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pages": {
+          "default": 1.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SearchAction": {
+      "properties": {
+        "engine": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SearchEngine"
+            }
+          ],
+          "default": "duckduckgo"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "SearchEngine": {
+      "enum": [
+        "duckduckgo",
+        "google",
+        "bing"
+      ],
+      "type": "string"
+    },
+    "SearchPageAction": {
+      "description": "Text or regex search against page content.",
+      "properties": {
+        "case_sensitive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "context_chars": {
+          "default": 150,
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "css_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_results": {
+          "default": 25,
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "regex": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "SelectDropdownOptionAction": {
+      "properties": {
+        "index": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SendKeysAction": {
+      "properties": {
+        "keys": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "type": "object"
+    },
+    "SwitchTabAction": {
+      "properties": {
+        "tab_id": {
+          "maxLength": 4,
+          "minLength": 4,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "UploadFileAction": {
+      "properties": {
+        "index": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WaitAction": {
+      "properties": {
+        "seconds": {
+          "default": 3,
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WriteFileAction": {
+      "properties": {
+        "append": {
+          "default": false,
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "leading_newline": {
+          "default": false,
+          "type": "boolean"
+        },
+        "trailing_newline": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "content",
+        "file_name"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "action": {
+      "items": {
+        "$ref": "#/definitions/BrowserAction"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "current_plan_item": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "evaluation_previous_goal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "memory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "next_goal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_update": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "thinking": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "evaluation_previous_goal",
+    "memory",
+    "next_goal",
+    "action"
+  ],
+  "title": "AgentOutput",
+  "type": "object"
+}

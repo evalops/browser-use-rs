@@ -325,6 +325,27 @@ mod tests {
     }
 
     #[test]
+    fn browser_action_schema_matches_golden_fixture() {
+        let actual = serde_json::to_value(schema_for!(BrowserAction)).expect("serialize schema");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/browser_action_schema.json"),
+        );
+    }
+
+    #[test]
+    fn browser_state_summary_schema_matches_golden_fixture() {
+        let actual =
+            serde_json::to_value(schema_for!(BrowserStateSummary)).expect("serialize schema");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/browser_state_summary_schema.json"),
+        );
+    }
+
+    #[test]
     fn action_schema_exposes_browser_use_action_names() {
         let schema = serde_json::to_value(schema_for!(BrowserAction)).expect("serialize schema");
         let schema_text = serde_json::to_string(&schema).expect("schema text");
@@ -357,6 +378,49 @@ mod tests {
         ] {
             assert!(schema_text.contains(action), "schema missing {action}");
         }
+    }
+
+    #[tokio::test]
+    async fn agent_output_schema_matches_golden_fixture() {
+        let (llm, requests) = ScriptedChatModel::new(vec![json!({
+            "evaluation_previous_goal": "No previous goal",
+            "memory": "Need to finish",
+            "next_goal": "Finish",
+            "action": [
+                {
+                    "done": {
+                        "text": "Done",
+                        "success": true
+                    }
+                }
+            ]
+        })]);
+        let settings = AgentSettings::default();
+        let mut agent = Agent::with_settings(
+            "Finish",
+            settings,
+            llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+
+        let history = agent.run(1).await.expect("agent run");
+        assert!(history.is_done());
+
+        let requests = requests.lock().expect("requests lock");
+        let actual = requests[0]
+            .output_schema
+            .clone()
+            .expect("agent output schema");
+        assert_matches_fixture(actual, include_str!("../fixtures/agent_output_schema.json"));
+    }
+
+    fn assert_matches_fixture(actual: Value, expected_json: &str) {
+        let expected: Value = serde_json::from_str(expected_json).expect("golden fixture");
+
+        assert_eq!(actual, expected);
     }
 
     struct FixtureExecutor;

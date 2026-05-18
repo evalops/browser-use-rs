@@ -49,6 +49,13 @@ Upstream bumps must include:
   media controls.
 - `frame_shadow_state.json`: selector-map fixture for iframe target identity,
   merged child-frame bounds, and open-shadow-style indexed controls.
+- `browser_action_schema.json`: JSON Schema snapshot for the implemented
+  one-key browser action contract.
+- `browser_state_summary_schema.json`: JSON Schema snapshot for serialized
+  browser state returned to the agent loop.
+- `agent_output_schema.json`: JSON Schema snapshot captured from the default
+  agent model request, including required browser-use planning fields and
+  non-empty action guidance.
 - `simple_action_sequence.json`: typed browser action sequence fixture.
 - `simple_action_results.json`: expected action-result fixture for the action
   sequence harness.
