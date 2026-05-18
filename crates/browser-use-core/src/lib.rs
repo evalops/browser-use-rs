@@ -2414,6 +2414,436 @@ fn replace_file_action(
     )))
 }
 
+pub const DEFAULT_FILE_SYSTEM_PATH: &str = "browseruse_agent_data";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileSystemState {
+    pub files: BTreeMap<String, FileSystemStoredFile>,
+    pub base_dir: String,
+    pub extracted_content_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileSystemStoredFile {
+    #[serde(rename = "type")]
+    pub file_type: String,
+    pub data: FileSystemFileData,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileSystemFileData {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedFileSystem {
+    base_dir: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
+    files: BTreeMap<String, FileSystemStoredFile>,
+    extracted_content_count: usize,
+}
+
+impl ManagedFileSystem {
+    pub fn new(base_dir: impl Into<std::path::PathBuf>) -> Result<Self, BrowserError> {
+        let base_dir = base_dir.into();
+        std::fs::create_dir_all(&base_dir)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        let data_dir = base_dir.join(DEFAULT_FILE_SYSTEM_PATH);
+        if data_dir.exists() {
+            std::fs::remove_dir_all(&data_dir)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+
+        let mut file_system = Self {
+            base_dir,
+            data_dir,
+            files: BTreeMap::new(),
+            extracted_content_count: 0,
+        };
+        file_system.write_stored_file("todo.md", "")?;
+        Ok(file_system)
+    }
+
+    pub fn from_state(state: FileSystemState) -> Result<Self, BrowserError> {
+        let base_dir = std::path::PathBuf::from(&state.base_dir);
+        std::fs::create_dir_all(&base_dir)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        let data_dir = base_dir.join(DEFAULT_FILE_SYSTEM_PATH);
+        if data_dir.exists() {
+            std::fs::remove_dir_all(&data_dir)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+
+        let mut file_system = Self {
+            base_dir,
+            data_dir,
+            files: BTreeMap::new(),
+            extracted_content_count: state.extracted_content_count,
+        };
+        for (file_name, file) in state.files {
+            if validate_write_file_name(&file_name).is_some() {
+                continue;
+            }
+            file_system.sync_stored_file_to_disk(&file_name, &file.data.content)?;
+            file_system.files.insert(file_name, file);
+        }
+        Ok(file_system)
+    }
+
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
+    }
+
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    pub fn list_files(&self) -> Vec<String> {
+        self.files.keys().cloned().collect()
+    }
+
+    pub fn get_todo_contents(&self) -> String {
+        self.files
+            .get("todo.md")
+            .map(|file| file.data.content.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn get_state(&self) -> FileSystemState {
+        FileSystemState {
+            files: self.files.clone(),
+            base_dir: self.base_dir.display().to_string(),
+            extracted_content_count: self.extracted_content_count,
+        }
+    }
+
+    pub fn nuke(&mut self) -> Result<(), BrowserError> {
+        if self.data_dir.exists() {
+            std::fs::remove_dir_all(&self.data_dir)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
+        self.files.clear();
+        Ok(())
+    }
+
+    pub fn save_extracted_content(&mut self, content: &str) -> Result<String, BrowserError> {
+        let stem = format!("extracted_content_{}", self.extracted_content_count);
+        let file_name = format!("{stem}.md");
+        self.write_stored_file(&file_name, content)?;
+        self.extracted_content_count += 1;
+        Ok(file_name)
+    }
+
+    pub fn describe(&self) -> String {
+        const DISPLAY_CHARS: usize = 400;
+        let mut description = String::new();
+        for (file_name, file) in &self.files {
+            if file_name == "todo.md" {
+                continue;
+            }
+
+            let content = &file.data.content;
+            if content.is_empty() {
+                description.push_str(&format!("<file>\n{file_name} - [empty file]\n</file>\n"));
+                continue;
+            }
+
+            let lines = content.lines().collect::<Vec<_>>();
+            let line_count = lines.len();
+            let whole_file_description = format!(
+                "<file>\n{file_name} - {line_count} lines\n<content>\n{content}\n</content>\n</file>\n"
+            );
+            if content.chars().count() < DISPLAY_CHARS * 3 / 2 {
+                description.push_str(&whole_file_description);
+                continue;
+            }
+
+            let (start_preview, start_line_count) =
+                preview_lines(lines.iter().copied(), DISPLAY_CHARS / 2);
+            let (end_preview, end_line_count) =
+                preview_lines(lines.iter().rev().copied(), DISPLAY_CHARS / 2);
+            let middle_line_count = line_count.saturating_sub(start_line_count + end_line_count);
+            if middle_line_count == 0 {
+                description.push_str(&whole_file_description);
+                continue;
+            }
+
+            let end_preview = end_preview
+                .lines()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_owned();
+            description.push_str(&format!(
+                "<file>\n{file_name} - {line_count} lines\n<content>\n{}\n... {middle_line_count} more lines ...\n{end_preview}\n</content>\n</file>\n",
+                start_preview.trim()
+            ));
+        }
+        description.trim_end_matches('\n').to_owned()
+    }
+
+    pub fn display_file(&self, file_name: &str) -> Option<String> {
+        let resolved_file = resolve_file_action_path_at(
+            file_name,
+            supported_text_extensions(),
+            Some(&self.data_dir),
+        );
+        if validate_text_file_name(&resolved_file.display_name).is_some() {
+            return None;
+        }
+        self.files
+            .get(&resolved_file.display_name)
+            .map(|file| file.data.content.clone())
+    }
+
+    pub fn write_file(
+        &mut self,
+        params: &browser_use_tools::WriteFileAction,
+    ) -> Result<ActionResult, BrowserError> {
+        if std::path::Path::new(&params.file_name).is_absolute() {
+            return write_file_action(params);
+        }
+
+        let resolved_file = resolve_file_action_path_at(
+            &params.file_name,
+            supported_write_extensions(),
+            Some(&self.data_dir),
+        );
+        if let Some(result) = validate_write_file_name(&resolved_file.display_name) {
+            return Ok(result);
+        }
+        if params.append && !self.files.contains_key(&resolved_file.display_name) {
+            return Ok(ActionResult::error(format!(
+                "File '{}' not found.",
+                resolved_file.display_name
+            )));
+        }
+
+        let mut content = params.content.clone();
+        if params.trailing_newline {
+            content.push('\n');
+        }
+        if params.leading_newline {
+            content.insert(0, '\n');
+        }
+
+        let stored_content = if params.append {
+            let existing = self
+                .files
+                .get(&resolved_file.display_name)
+                .map(|file| file.data.content.as_str())
+                .unwrap_or_default();
+            merge_managed_append_content(&resolved_file.display_name, existing, &content)
+        } else if is_csv_file(&resolved_file.display_name) {
+            normalize_csv_content(&content)
+        } else {
+            content
+        };
+
+        self.write_stored_file(&resolved_file.display_name, &stored_content)?;
+        Ok(ActionResult::extracted(format!(
+            "{} file {}{}",
+            if params.append {
+                "Appended to"
+            } else {
+                "Wrote"
+            },
+            resolved_file.display_name,
+            resolved_file.correction_suffix()
+        )))
+    }
+
+    pub fn read_file(&self, file_name: &str) -> Result<ActionResult, BrowserError> {
+        if std::path::Path::new(file_name).is_absolute() {
+            return read_file_action(file_name);
+        }
+
+        let read_extensions = supported_read_extensions();
+        let resolved_file =
+            resolve_file_action_path_at(file_name, &read_extensions, Some(&self.data_dir));
+        if let Some(result) = validate_read_file_name(&resolved_file.display_name) {
+            return Ok(result);
+        }
+        let Some(file) = self.files.get(&resolved_file.display_name) else {
+            return Ok(ActionResult::error(format!(
+                "File '{}' not found.{}",
+                resolved_file.display_name,
+                if resolved_file.was_corrected {
+                    format!(
+                        " (Filename was auto-corrected from '{}')",
+                        resolved_file.original_name
+                    )
+                } else {
+                    String::new()
+                }
+            )));
+        };
+        let content = &file.data.content;
+        let memory = read_file_memory(content);
+        Ok(ActionResult {
+            extracted_content: Some(format!(
+                "{}Read from file {}.\n<content>\n{content}\n</content>",
+                resolved_file.correction_prefix(),
+                resolved_file.display_name
+            )),
+            error: None,
+            judgement: None,
+            long_term_memory: Some(memory),
+            include_extracted_content_only_once: true,
+            include_in_memory: true,
+            is_done: false,
+            success: None,
+            attachments: Vec::new(),
+            images: Vec::new(),
+            metadata: None,
+        })
+    }
+
+    pub fn replace_file(
+        &mut self,
+        file_name: &str,
+        old_str: &str,
+        new_str: &str,
+    ) -> Result<ActionResult, BrowserError> {
+        if std::path::Path::new(file_name).is_absolute() {
+            return replace_file_action(file_name, old_str, new_str);
+        }
+
+        let resolved_file = resolve_file_action_path_at(
+            file_name,
+            supported_text_extensions(),
+            Some(&self.data_dir),
+        );
+        if let Some(result) = validate_text_file_name(&resolved_file.display_name) {
+            return Ok(result);
+        }
+        if old_str.is_empty() {
+            return Ok(ActionResult::error(
+                "Cannot replace empty string. Please provide a non-empty string to replace.",
+            ));
+        }
+        let Some(existing) = self.files.get(&resolved_file.display_name) else {
+            return Ok(ActionResult::error(format!(
+                "File '{}' not found.",
+                resolved_file.display_name
+            )));
+        };
+        if !existing.data.content.contains(old_str) {
+            return Ok(ActionResult::error(format!(
+                "Could not find text to replace in {}",
+                resolved_file.display_name
+            )));
+        }
+        let updated = existing.data.content.replace(old_str, new_str);
+        self.write_stored_file(&resolved_file.display_name, &updated)?;
+        Ok(ActionResult::extracted(format!(
+            "Replaced text in file {}{}",
+            resolved_file.display_name,
+            resolved_file.correction_suffix()
+        )))
+    }
+
+    fn write_stored_file(&mut self, file_name: &str, content: &str) -> Result<(), BrowserError> {
+        self.sync_stored_file_to_disk(file_name, content)?;
+        self.files
+            .insert(file_name.to_owned(), stored_file_state(file_name, content)?);
+        Ok(())
+    }
+
+    fn sync_stored_file_to_disk(&self, file_name: &str, content: &str) -> Result<(), BrowserError> {
+        let path = self.data_dir.join(file_name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
+        write_supported_artifact(&path, file_name, content)
+    }
+}
+
+fn preview_lines<'a>(lines: impl Iterator<Item = &'a str>, max_chars: usize) -> (String, usize) {
+    let mut preview = String::new();
+    let mut line_count = 0;
+    let mut chars_count = 0;
+    for line in lines {
+        let next = line.chars().count() + 1;
+        if chars_count + next > max_chars {
+            break;
+        }
+        preview.push_str(line);
+        preview.push('\n');
+        chars_count += next;
+        line_count += 1;
+    }
+    (preview, line_count)
+}
+
+fn merge_managed_append_content(file_name: &str, existing: &str, new_content: &str) -> String {
+    if is_pdf_file(file_name) {
+        merge_pdf_append_content(existing, new_content)
+    } else if is_docx_file(file_name) {
+        merge_docx_append_content(existing, new_content)
+    } else if is_csv_file(file_name) {
+        merge_csv_append_content(existing, new_content)
+    } else {
+        let mut merged = existing.to_owned();
+        merged.push_str(new_content);
+        merged
+    }
+}
+
+fn stored_file_state(file_name: &str, content: &str) -> Result<FileSystemStoredFile, BrowserError> {
+    let Some((name, extension)) = file_name.rsplit_once('.') else {
+        return Err(BrowserError::ActionFailed(format!(
+            "Filename '{file_name}' has no extension"
+        )));
+    };
+    let file_type = file_type_for_extension(extension).ok_or_else(|| {
+        BrowserError::ActionFailed(format!("Unsupported managed file extension '.{extension}'"))
+    })?;
+    Ok(FileSystemStoredFile {
+        file_type: file_type.to_owned(),
+        data: FileSystemFileData {
+            name: name.to_owned(),
+            content: content.to_owned(),
+        },
+    })
+}
+
+fn file_type_for_extension(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "md" => Some("MarkdownFile"),
+        "txt" => Some("TxtFile"),
+        "json" => Some("JsonFile"),
+        "jsonl" => Some("JsonlFile"),
+        "csv" => Some("CsvFile"),
+        "pdf" => Some("PdfFile"),
+        "docx" => Some("DocxFile"),
+        "html" => Some("HtmlFile"),
+        "xml" => Some("XmlFile"),
+        _ => None,
+    }
+}
+
+fn write_supported_artifact(
+    path: &std::path::Path,
+    file_name: &str,
+    content: &str,
+) -> Result<(), BrowserError> {
+    if is_pdf_file(file_name) {
+        write_pdf_text(path, content).map_err(BrowserError::ActionFailed)
+    } else if is_docx_file(file_name) {
+        write_docx_text(path, content).map_err(BrowserError::ActionFailed)
+    } else {
+        std::fs::write(path, content).map_err(|error| BrowserError::ActionFailed(error.to_string()))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedFileActionPath {
     path: std::path::PathBuf,
@@ -2466,6 +2896,14 @@ fn resolve_file_action_path(
     file_name: &str,
     supported_extensions: &[&str],
 ) -> ResolvedFileActionPath {
+    resolve_file_action_path_at(file_name, supported_extensions, None)
+}
+
+fn resolve_file_action_path_at(
+    file_name: &str,
+    supported_extensions: &[&str],
+    relative_root: Option<&std::path::Path>,
+) -> ResolvedFileActionPath {
     let path = std::path::Path::new(file_name);
     if path.is_absolute() {
         return ResolvedFileActionPath {
@@ -2492,8 +2930,12 @@ fn resolve_file_action_path(
         }
     }
 
+    let path = relative_root
+        .map(|root| root.join(&display_name))
+        .unwrap_or_else(|| std::path::PathBuf::from(&display_name));
+
     ResolvedFileActionPath {
-        path: std::path::PathBuf::from(&display_name),
+        path,
         display_name,
         original_name: file_name.to_owned(),
         was_corrected,
@@ -5813,6 +6255,168 @@ mod tests {
             "Note: filename was auto-corrected from 'nested/test@file.md' to 'testfile.md'."
         ));
         assert!(read_content.contains("new text\nmore text"));
+    }
+
+    #[test]
+    fn managed_file_system_initializes_default_sandbox() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let data_dir = temp_dir.path().join(DEFAULT_FILE_SYSTEM_PATH);
+        std::fs::create_dir_all(&data_dir).expect("seed data dir");
+        std::fs::write(data_dir.join("stale.md"), "stale").expect("seed stale file");
+
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+
+        assert_eq!(file_system.base_dir(), temp_dir.path());
+        assert_eq!(file_system.data_dir(), data_dir.as_path());
+        assert_eq!(file_system.list_files(), vec!["todo.md"]);
+        assert_eq!(file_system.get_todo_contents(), "");
+        assert!(data_dir.join("todo.md").exists());
+        assert!(!data_dir.join("stale.md").exists());
+    }
+
+    #[test]
+    fn managed_file_system_round_trips_state_and_artifacts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let original = "nested/report@ data.CSV";
+        let resolved = "report-data.csv";
+
+        let write_result = file_system
+            .write_file(&WriteFileAction {
+                file_name: original.to_owned(),
+                content: "name,value\nalice,one".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("managed write");
+        assert_eq!(write_result.error, None);
+        assert_eq!(
+            write_result.extracted_content.as_deref(),
+            Some("Wrote file report-data.csv (auto-corrected from 'nested/report@ data.CSV')")
+        );
+
+        let append_result = file_system
+            .write_file(&WriteFileAction {
+                file_name: original.to_owned(),
+                content: "\nbob,two".to_owned(),
+                append: true,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("managed append");
+        assert_eq!(append_result.error, None);
+
+        let replace_result = file_system
+            .replace_file(original, "alice", "ada")
+            .expect("managed replace");
+        assert_eq!(replace_result.error, None);
+
+        let read_result = file_system.read_file(original).expect("managed read");
+        let read_content = read_result.extracted_content.as_deref().expect("read");
+        assert!(read_content.contains(
+            "Note: filename was auto-corrected from 'nested/report@ data.CSV' to 'report-data.csv'."
+        ));
+        assert!(read_content.contains("ada,one"));
+        assert!(read_content.contains("bob,two"));
+
+        let data_path = temp_dir
+            .path()
+            .join(DEFAULT_FILE_SYSTEM_PATH)
+            .join(resolved);
+        assert_eq!(
+            std::fs::read_to_string(&data_path).expect("managed csv"),
+            "name,value\nada,one\nbob,two"
+        );
+        assert_eq!(
+            file_system.display_file(original).as_deref(),
+            Some("name,value\nada,one\nbob,two")
+        );
+        let description = file_system.describe();
+        assert!(description.contains("<file>\nreport-data.csv - 3 lines"));
+        assert!(!description.contains("todo.md"));
+
+        let extracted_0 = file_system
+            .save_extracted_content("first extracted")
+            .expect("first extracted");
+        let extracted_1 = file_system
+            .save_extracted_content("second extracted")
+            .expect("second extracted");
+        assert_eq!(extracted_0, "extracted_content_0.md");
+        assert_eq!(extracted_1, "extracted_content_1.md");
+        assert_eq!(file_system.get_state().extracted_content_count, 2);
+
+        let state = file_system.get_state();
+        let mut restored = ManagedFileSystem::from_state(state).expect("restore file system");
+        assert_eq!(restored.get_state().extracted_content_count, 2);
+        assert_eq!(
+            restored
+                .display_file("report-data.csv")
+                .expect("restored report"),
+            "name,value\nada,one\nbob,two"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                temp_dir
+                    .path()
+                    .join(DEFAULT_FILE_SYSTEM_PATH)
+                    .join("extracted_content_1.md")
+            )
+            .expect("restored extracted content"),
+            "second extracted"
+        );
+        let extracted_2 = restored
+            .save_extracted_content("third extracted")
+            .expect("third extracted");
+        assert_eq!(extracted_2, "extracted_content_2.md");
+
+        restored.nuke().expect("nuke file system");
+        assert!(restored.list_files().is_empty());
+        assert!(!restored.data_dir().exists());
+    }
+
+    #[test]
+    fn managed_file_system_syncs_pdf_and_docx_artifacts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "report.pdf".to_owned(),
+                content: "# Report\nPDF body".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("pdf write");
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "brief.docx".to_owned(),
+                content: "DOCX body".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("docx write");
+
+        let pdf_path = file_system.data_dir().join("report.pdf");
+        let docx_path = file_system.data_dir().join("brief.docx");
+        assert!(
+            std::fs::read(&pdf_path)
+                .expect("pdf bytes")
+                .starts_with(b"%PDF-1.4")
+        );
+        assert!(zip::ZipArchive::new(std::fs::File::open(docx_path).expect("docx file")).is_ok());
+        assert_eq!(
+            file_system
+                .get_state()
+                .files
+                .get("report.pdf")
+                .expect("pdf state")
+                .data
+                .content,
+            "# Report\nPDF body"
+        );
     }
 
     #[tokio::test]

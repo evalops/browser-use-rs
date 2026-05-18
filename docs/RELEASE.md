@@ -65,6 +65,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   returns the saved file as an attachment.
 - `done.files_to_display` appends readable requested text files to the final
   result and returns their attachment paths.
+- Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
+  default `todo.md`, file listing/display, extract-content numbering,
+  serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
+  artifacts.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
@@ -139,9 +143,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
-- Rich filesystem state and sandboxing are still lighter than upstream's
-  `FileSystem` service, though CSV writes/appends now use upstream-style row
-  normalization, relative filename sanitization, page-aware PDF read envelopes,
-  and PDF/DOCX write/append artifacts with paginated PDF text layout are
-  supported, with matching unsupported binary extension guards.
+- Managed filesystem executor/prompt wiring is still lighter than upstream's
+  full `FileSystem` lifecycle, though the Rust core now has serializable
+  `FileSystem` state, a `browseruse_agent_data` sandbox, CSV normalization,
+  relative filename sanitization, page-aware PDF read envelopes, and PDF/DOCX
+  write/append artifact support with matching unsupported binary extension
+  guards.
 - Package publishing is limited to the GitHub release artifact.

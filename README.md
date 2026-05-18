@@ -64,6 +64,10 @@ includes:
   Chrome OOPIF iframe targets, back
   navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
   `done` with requested text-file display attachments.
+- Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
+  default `todo.md`, file listing/display, extract-content numbering,
+  serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
+  artifacts. Executor and prompt wiring for that state is tracked separately.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, upstream-style page-stat prompt

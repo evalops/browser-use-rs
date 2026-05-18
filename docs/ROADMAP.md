@@ -52,6 +52,10 @@ Implemented:
   DOCX text extraction and PNG/JPEG read payloads for one-shot image prompt
   parts, with upstream-aligned binary/image extension rejection. Append mode
   requires an existing file, matching upstream `FileSystem` semantics.
+- Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
+  default `todo.md`, file listing/display, extract-content numbering,
+  serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
+  artifacts.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -157,8 +161,8 @@ Implemented:
 
 Next:
 
-1. Expand filesystem parity beyond CSV normalization toward upstream
-   `FileSystem` state, sandbox directories, and richer artifact lifecycle.
+1. Wire managed `FileSystem` state into the executor and agent prompt/state
+   lifecycle, including relative action routing through the sandbox.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
 3. Expand agent planning depth and replay coverage for longer multi-step tasks.
