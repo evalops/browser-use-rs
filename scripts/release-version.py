@@ -40,18 +40,18 @@ FIX_SUBJECT_RE = re.compile(
     r"^(fix|repair|patch|keep|harden|guard|avoid|prevent|correct|restore|stabilize|tighten)\b",
     re.IGNORECASE,
 )
-RELEASE_COMMIT_RE = re.compile(r"^Cut browser-use-rs v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+RELEASE_VERSION_PATTERN = r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?"
+RELEASE_COMMIT_RE = re.compile(rf"^Cut browser-use-rs {RELEASE_VERSION_PATTERN}$")
+RELEASE_MAINTENANCE_COMMIT_RE = re.compile(
+    rf"^Refresh lockfile for {RELEASE_VERSION_PATTERN} release$"
+)
 RELEASE_WORTHY_EXACT_PATHS = {
     "Cargo.lock",
     "Cargo.toml",
     "LICENSE",
     "NOTICE",
-    "README.md",
     "rust-toolchain.toml",
     ".github/workflows/release.yml",
-    "docs/DAEMON_SUPERVISION.md",
-    "docs/INSTALL.md",
-    "docs/RELEASE.md",
     "packaging/homebrew/browser-use-rs.rb.template",
     "packaging/homebrew/publish-tap.sh",
     "scripts/release-version.py",
@@ -296,18 +296,25 @@ def commits_since(root: Path, base_ref: str | None) -> list[Commit]:
         if not entry.strip():
             continue
         sha, subject, body = (entry.lstrip("\n").split("\x1f", 2) + ["", ""])[:3]
-        if RELEASE_COMMIT_RE.match(subject.strip()):
+        if is_release_bookkeeping_subject(subject.strip()):
             continue
         commits.append(Commit(sha=sha, subject=subject.strip(), body=body.strip()))
     return commits
 
 
-def changed_files_since(root: Path, base_ref: str | None) -> tuple[str, ...]:
-    if base_ref:
-        raw = git(root, "diff", "--name-only", f"{base_ref}..HEAD")
-    else:
-        raw = git(root, "ls-files")
-    return tuple(sorted(file for file in raw.splitlines() if file.strip()))
+def is_release_bookkeeping_subject(subject: str) -> bool:
+    return bool(
+        RELEASE_COMMIT_RE.match(subject)
+        or RELEASE_MAINTENANCE_COMMIT_RE.match(subject)
+    )
+
+
+def changed_files_for_commits(root: Path, commits: list[Commit]) -> tuple[str, ...]:
+    changed_files = set[str]()
+    for commit in commits:
+        raw = git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", commit.sha)
+        changed_files.update(file for file in raw.splitlines() if file.strip())
+    return tuple(sorted(changed_files))
 
 
 def is_release_worthy_path(path: str) -> bool:
@@ -341,13 +348,13 @@ def classify_auto_release(commits: list[Commit], changed_files: tuple[str, ...])
         return "minor", f"feature commit with Rust crate changes: {feature_subjects[0]}"
     if code_files and not fix_only:
         return "minor", "Rust crate behavior changed"
-    return "patch", "release-worthy fix, packaging, or packaged documentation changed"
+    return "patch", "release-worthy fix, packaging, or release automation changed"
 
 
 def plan_auto_release(root: Path) -> ReleasePlan:
     base_ref = latest_stable_tag(root)
     commits = commits_since(root, base_ref)
-    changed_files = changed_files_since(root, base_ref)
+    changed_files = changed_files_for_commits(root, commits)
     worthy_files = release_worthy_files(changed_files)
 
     if not commits:
