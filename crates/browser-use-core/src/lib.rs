@@ -50,6 +50,10 @@ pub struct AgentSettings {
     pub planning_replan_on_stall: usize,
     #[serde(default = "default_planning_exploration_limit")]
     pub planning_exploration_limit: usize,
+    #[serde(default = "default_use_thinking")]
+    pub use_thinking: bool,
+    #[serde(default)]
+    pub flash_mode: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
 }
@@ -69,6 +73,8 @@ impl Default for AgentSettings {
             enable_planning: default_enable_planning(),
             planning_replan_on_stall: default_planning_replan_on_stall(),
             planning_exploration_limit: default_planning_exploration_limit(),
+            use_thinking: default_use_thinking(),
+            flash_mode: false,
             include_attributes: Vec::new(),
         }
     }
@@ -116,6 +122,10 @@ fn default_planning_replan_on_stall() -> usize {
 
 fn default_planning_exploration_limit() -> usize {
     5
+}
+
+fn default_use_thinking() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1892,7 +1902,7 @@ pub fn build_step_request(
                 content: user_content,
             },
         ],
-        output_schema: Some(schema_for_agent_output()),
+        output_schema: Some(schema_for_agent_output_with_settings(settings)),
     })
 }
 
@@ -1956,6 +1966,46 @@ fn schema_for_agent_output() -> Value {
     serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
 }
 
+fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
+    let mut schema = schema_for_agent_output();
+    let mut remove_fields = Vec::new();
+
+    if !settings.use_thinking || settings.flash_mode {
+        remove_fields.push("thinking");
+    }
+    if settings.flash_mode {
+        remove_fields.extend([
+            "current_state",
+            "evaluation_previous_goal",
+            "next_goal",
+            "current_plan_item",
+            "plan_update",
+        ]);
+    }
+
+    if !remove_fields.is_empty() {
+        prune_schema_properties(&mut schema, &remove_fields);
+    }
+
+    schema
+}
+
+fn prune_schema_properties(schema: &mut Value, remove_fields: &[&str]) {
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for field in remove_fields {
+            properties.remove(*field);
+        }
+    }
+
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.retain(|value| {
+            value
+                .as_str()
+                .is_none_or(|field| !remove_fields.contains(&field))
+        });
+    }
+}
+
 fn render_previous_results(history: &AgentHistory, max_history_items: Option<usize>) -> String {
     let max_history_items = max_history_items.unwrap_or(5);
     let recent_items: Vec<&AgentHistoryItem> = history
@@ -1988,7 +2038,7 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
 }
 
 fn render_planning_context(history: &AgentHistory, settings: &AgentSettings) -> Option<String> {
-    if !settings.enable_planning {
+    if !settings.enable_planning || settings.flash_mode {
         return None;
     }
 
@@ -2238,6 +2288,8 @@ mod tests {
         assert!(settings.enable_planning);
         assert_eq!(settings.planning_replan_on_stall, 3);
         assert_eq!(settings.planning_exploration_limit, 5);
+        assert!(settings.use_thinking);
+        assert!(!settings.flash_mode);
         assert!(settings.include_attributes.is_empty());
     }
 
@@ -2291,6 +2343,33 @@ mod tests {
         assert!(schema_text.contains("current_plan_item"));
         assert!(schema_text.contains("plan_update"));
         assert!(schema_text.contains("evaluation_previous_goal"));
+    }
+
+    #[test]
+    fn agent_output_schema_honors_thinking_and_flash_settings() {
+        let no_thinking = AgentSettings {
+            use_thinking: false,
+            ..AgentSettings::default()
+        };
+        let schema = schema_for_agent_output_with_settings(&no_thinking);
+        let properties = schema["properties"].as_object().expect("properties");
+        assert!(!properties.contains_key("thinking"));
+        assert!(properties.contains_key("current_plan_item"));
+
+        let flash = AgentSettings {
+            flash_mode: true,
+            ..AgentSettings::default()
+        };
+        let schema = schema_for_agent_output_with_settings(&flash);
+        let properties = schema["properties"].as_object().expect("properties");
+        assert!(!properties.contains_key("thinking"));
+        assert!(!properties.contains_key("current_state"));
+        assert!(!properties.contains_key("evaluation_previous_goal"));
+        assert!(!properties.contains_key("next_goal"));
+        assert!(!properties.contains_key("current_plan_item"));
+        assert!(!properties.contains_key("plan_update"));
+        assert!(properties.contains_key("memory"));
+        assert!(properties.contains_key("action"));
     }
 
     #[test]
@@ -4074,6 +4153,15 @@ mod tests {
         };
         let request = build_step_request("recover", &state, &history, &disabled_settings)
             .expect("step request");
+        let request_text = serde_json::to_string(&request.messages).expect("messages json");
+        assert!(!request_text.contains("Planning"));
+
+        let flash_settings = AgentSettings {
+            flash_mode: true,
+            ..AgentSettings::default()
+        };
+        let request =
+            build_step_request("recover", &state, &history, &flash_settings).expect("step request");
         let request_text = serde_json::to_string(&request.messages).expect("messages json");
         assert!(!request_text.contains("Planning"));
     }
