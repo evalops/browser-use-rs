@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#45 Replay AgentHistory against current browser state](https://github.com/evalops/browser-use-rs/issues/45)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -48,6 +49,7 @@ small pushed checkpoints as each surface becomes real.
 - [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
 - [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
 - [#44 Honor browser page-change guards during replay execution](https://github.com/evalops/browser-use-rs/issues/44)
+- [#45 Replay AgentHistory against current browser state](https://github.com/evalops/browser-use-rs/issues/45)
 
 ## Current Checkpoint
 
@@ -158,8 +160,9 @@ Implemented:
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,
   replay-plan execution through generic and browser-backed action executors
-  with per-action, error, and page-change diagnostics, duration helpers, and
-  screenshot/URL helpers.
+  with per-action, error, and page-change diagnostics, and current-state
+  `AgentHistoryReplayRun` orchestration that returns captured state, plan, and
+  execution diagnostics, plus duration and screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -229,7 +232,9 @@ Implemented:
   XPath, AX-name, and unique-attribute history replay foundations. Core replay
   helpers can remap saved history and execute the resulting action plan through
   generic or browser-backed action-executor boundaries while preserving
-  step/action diagnostics and the live executor's URL-change guard.
+  step/action diagnostics and the live executor's URL-change guard. Browser
+  executors can also capture the current DOM and return a replay run containing
+  the captured state, plan, and guarded execution result.
 
 Next:
 

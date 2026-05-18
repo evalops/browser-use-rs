@@ -123,7 +123,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   replay action rematching for historical indexed actions, rematched replay
   plan construction from saved `AgentHistory`, replay-plan execution through
   generic and browser-backed action executors with per-action, error, and
-  page-change diagnostics, and screenshot/URL accessors.
+  page-change diagnostics, current-state `AgentHistoryReplayRun` orchestration,
+  and screenshot/URL accessors.
   `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.
@@ -194,8 +195,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   actions and exposes current-page rematching plus action-level replay
   remapping diagnostics, replay-plan construction, generic replay-plan
   execution, and browser-backed replay-plan execution that honors the live
-  URL-change guard. DOM recapture and rematching between replayed actions remain
-  outside this release slice.
+  URL-change guard. Browser executors can capture the current DOM and return a
+  replay run with the captured state, plan, and guarded execution result. DOM
+  recapture and rematching between replayed actions remain outside this release
+  slice.
 - CLI sessions are local registry records. Session `status` reports registry
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does
