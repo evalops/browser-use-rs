@@ -7195,6 +7195,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_replay_execution_continues_when_guarded_url_is_stable() {
+        let mut state = blank_state();
+        state.url = "https://example.com/stable".to_owned();
+        let session = MockSession::with_states(vec![
+            state.clone(),
+            state.clone(),
+            state.clone(),
+            state.clone(),
+        ]);
+        let mut executor = BrowserActionExecutor::new(session);
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let input = BrowserAction::Input(InputTextAction {
+            index: 2,
+            text: "hello".to_owned(),
+            clear: true,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![
+                replay_plan_item(4, 0, click.clone(), click),
+                replay_plan_item(4, 1, input.clone(), input),
+            ],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert_eq!(execution.items.len(), 2);
+        assert_eq!(execution.stop, None);
+        assert_eq!(
+            executor.session().events(),
+            vec!["click:1", "input:2:hello:true"]
+        );
+        assert_eq!(
+            executor.session().state_screenshot_requests(),
+            vec![false, false, false, false]
+        );
+    }
+
+    #[tokio::test]
     async fn browser_replay_execution_reports_pre_state_failure_without_action() {
         let session = MockSession::with_state_error("state unavailable");
         let mut executor = BrowserActionExecutor::new(session);
@@ -7228,6 +7270,70 @@ mod tests {
                 .as_deref()
                 .is_some_and(|error| error.contains("state unavailable"))
         );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_execution_preserves_done_and_error_stops() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+        let done = BrowserAction::Done(DoneAction {
+            text: "finished".to_owned(),
+            success: true,
+            files_to_display: vec![],
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![replay_plan_item(7, 0, done.clone(), done.clone())],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert_eq!(execution.items.len(), 1);
+        assert_eq!(execution.items[0].executed_action, done);
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 7,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::Done,
+                diagnostic: None,
+            })
+        );
+        assert!(executor.session().state_screenshot_requests().is_empty());
+
+        let mut state = blank_state();
+        state.url = "https://example.com/stable".to_owned();
+        let session = MockSession::with_states(vec![state]);
+        *session.click_error.lock().expect("click error lock") = Some("boom".to_owned());
+        let mut executor = BrowserActionExecutor::new(session);
+        let click = BrowserAction::Click(ClickElementAction {
+            index: Some(1),
+            coordinate_x: None,
+            coordinate_y: None,
+        });
+        let plan = AgentHistoryReplayPlan {
+            actions: vec![replay_plan_item(8, 0, click.clone(), click)],
+        };
+
+        let execution = executor.execute_replay_plan(&plan).await;
+
+        assert_eq!(execution.items.len(), 1);
+        assert!(
+            execution.items[0]
+                .result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("boom"))
+        );
+        assert_eq!(
+            execution.stop,
+            Some(AgentHistoryReplayStop {
+                step_index: 8,
+                action_index: 0,
+                reason: AgentHistoryReplayStopReason::Error,
+                diagnostic: Some("action failed: boom".to_owned()),
+            })
+        );
+        assert_eq!(executor.session().state_screenshot_requests(), vec![false]);
     }
 
     #[tokio::test]
