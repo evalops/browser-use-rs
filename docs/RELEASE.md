@@ -110,9 +110,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   prompt nudges, upstream
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, upstream-style excluded-action schema controls and
-  pre-execution enforcement, thinking/flash output-schema controls,
-  upstream-style flattened required output fields, upstream-style prompt-history
-  inclusion and limits,
+  pre-execution enforcement, opt-in recent browser events, thinking/flash
+  output-schema controls, upstream-style flattened required output fields,
+  upstream-style prompt-history inclusion and limits,
   clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
   prompt sections, upstream-style available-file-path and sensitive-data

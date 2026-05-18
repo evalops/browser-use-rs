@@ -146,6 +146,8 @@ enum Command {
         max_history_items: Option<usize>,
         #[arg(long)]
         max_clickable_elements_length: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        include_recent_events: bool,
         #[arg(long = "include-attribute")]
         include_attributes: Vec<String>,
         #[arg(long = "available-file-path")]
@@ -433,6 +435,7 @@ async fn main() -> anyhow::Result<()> {
             planning_exploration_limit,
             max_history_items,
             max_clickable_elements_length,
+            include_recent_events,
             include_attributes,
             available_file_paths,
             excluded_actions,
@@ -474,6 +477,7 @@ async fn main() -> anyhow::Result<()> {
                 planning_exploration_limit,
                 max_history_items,
                 max_clickable_elements_length,
+                include_recent_events,
                 include_attributes,
                 available_file_paths,
                 excluded_actions,
@@ -537,6 +541,7 @@ struct CliAgentSettingsArgs {
     planning_exploration_limit: Option<usize>,
     max_history_items: Option<usize>,
     max_clickable_elements_length: Option<usize>,
+    include_recent_events: bool,
     include_attributes: Vec<String>,
     available_file_paths: Vec<String>,
     excluded_actions: Vec<String>,
@@ -592,6 +597,7 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     if let Some(value) = args.max_clickable_elements_length {
         settings.max_clickable_elements_length = value;
     }
+    settings.include_recent_events = args.include_recent_events;
     settings.include_attributes = args.include_attributes;
     settings.available_file_paths = args.available_file_paths;
     settings.excluded_actions = args.excluded_actions;
@@ -1970,6 +1976,7 @@ mod tests {
             "7",
             "--max-clickable-elements-length",
             "8000",
+            "--include-recent-events",
             "--include-attribute",
             "data-testid",
             "--include-attribute",
@@ -2019,6 +2026,7 @@ mod tests {
                 planning_exploration_limit,
                 max_history_items,
                 max_clickable_elements_length,
+                include_recent_events,
                 include_attributes,
                 available_file_paths,
                 excluded_actions,
@@ -2048,6 +2056,7 @@ mod tests {
                 assert_eq!(planning_exploration_limit, Some(6));
                 assert_eq!(max_history_items, Some(7));
                 assert_eq!(max_clickable_elements_length, Some(8000));
+                assert!(include_recent_events);
                 assert_eq!(include_attributes, ["data-testid", "aria-label"]);
                 assert_eq!(available_file_paths, ["/tmp/report.pdf", "/tmp/chart.png"]);
                 assert_eq!(excluded_actions, ["search", "scroll"]);
@@ -2288,6 +2297,7 @@ mod tests {
             planning_exploration_limit: Some(6),
             max_history_items: Some(7),
             max_clickable_elements_length: Some(8000),
+            include_recent_events: true,
             include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
             available_file_paths: vec!["/tmp/report.pdf".to_owned(), "/tmp/chart.png".to_owned()],
             excluded_actions: vec!["search".to_owned(), "scroll".to_owned()],
@@ -2326,6 +2336,7 @@ mod tests {
         assert_eq!(settings.planning_exploration_limit, 6);
         assert_eq!(settings.max_history_items, Some(7));
         assert_eq!(settings.max_clickable_elements_length, 8000);
+        assert!(settings.include_recent_events);
         assert_eq!(settings.include_attributes, ["data-testid", "aria-label"]);
         assert_eq!(
             settings.available_file_paths,

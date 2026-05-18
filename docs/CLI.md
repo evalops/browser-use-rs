@@ -31,6 +31,7 @@ browser-use-rs agent <url> <task> --provider openai-compatible \
   [--block-ip-addresses] \
   [--max-steps 10] [--no-vision] [--max-actions-per-step 5] \
   [--no-final-response-after-failure] [--flash-mode] \
+  [--include-recent-events] \
   [--include-attribute data-testid] [--available-file-path /tmp/report.pdf] \
   [--exclude-action search]
 browser-use-rs agent <url> <task> --provider anthropic \
@@ -131,9 +132,11 @@ tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
 `--loop-detection-window`, `--no-thinking`, `--flash-mode`,
 `--no-planning`, `--planning-replan-on-stall`,
 `--planning-exploration-limit`, `--max-history-items`,
-`--max-clickable-elements-length`, repeated `--include-attribute <name>` for
-prompt-visible DOM attributes, and repeated `--available-file-path <path>` for
-upstream-style file-path context in the agent prompt. Repeated
+`--max-clickable-elements-length`, `--include-recent-events` for opting recent
+browser event diagnostics into the agent prompt, repeated
+`--include-attribute <name>` for prompt-visible DOM attributes, and repeated
+`--available-file-path <path>` for upstream-style file-path context in the
+agent prompt. Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns
 one, while keeping `done` available for completion. Use repeated

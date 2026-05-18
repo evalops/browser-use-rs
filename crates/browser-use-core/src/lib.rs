@@ -51,6 +51,8 @@ pub struct AgentSettings {
     pub max_history_items: Option<usize>,
     #[serde(default = "default_max_clickable_elements_length")]
     pub max_clickable_elements_length: usize,
+    #[serde(default)]
+    pub include_recent_events: bool,
     #[serde(default = "default_enable_planning")]
     pub enable_planning: bool,
     #[serde(default = "default_planning_replan_on_stall")]
@@ -90,6 +92,7 @@ impl Default for AgentSettings {
             loop_detection_enabled: default_loop_detection_enabled(),
             max_history_items: None,
             max_clickable_elements_length: default_max_clickable_elements_length(),
+            include_recent_events: false,
             enable_planning: default_enable_planning(),
             planning_replan_on_stall: default_planning_replan_on_stall(),
             planning_exploration_limit: default_planning_exploration_limit(),
@@ -4584,6 +4587,9 @@ pub fn build_step_request_with_file_system(
 ) -> Result<ChatRequest, AgentRunError> {
     let mut state_for_text = state.clone();
     state_for_text.screenshot = None;
+    if !settings.include_recent_events {
+        state_for_text.recent_events = None;
+    }
     if !settings.include_attributes.is_empty() {
         state_for_text.dom_state.text = state
             .dom_state
@@ -5671,6 +5677,7 @@ mod tests {
         assert!(settings.loop_detection_enabled);
         assert_eq!(settings.max_history_items, None);
         assert_eq!(settings.max_clickable_elements_length, 40_000);
+        assert!(!settings.include_recent_events);
         assert!(settings.enable_planning);
         assert_eq!(settings.planning_replan_on_stall, 3);
         assert_eq!(settings.planning_exploration_limit, 5);
@@ -10835,6 +10842,43 @@ mod tests {
                 .contains("Page appears to show skeleton/placeholder content (still loading?)")
         );
         assert!(user_text.contains("25 total elements"));
+    }
+
+    #[test]
+    fn step_request_omits_recent_events_by_default() {
+        let mut state = blank_state();
+        state.recent_events = Some("Blocked popup https://tracker.example.test".to_owned());
+
+        let request = build_step_request(
+            "inspect page",
+            &state,
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+        )
+        .expect("step request");
+        let user_text = request_text(&request);
+
+        assert!(!user_text.contains("recent_events"));
+        assert!(!user_text.contains("tracker.example.test"));
+    }
+
+    #[test]
+    fn step_request_includes_recent_events_when_enabled() {
+        let mut state = blank_state();
+        state.recent_events = Some("Blocked popup https://tracker.example.test".to_owned());
+        let settings = AgentSettings {
+            include_recent_events: true,
+            ..AgentSettings::default()
+        };
+
+        let request =
+            build_step_request("inspect page", &state, &AgentHistory::default(), &settings)
+                .expect("step request");
+        let user_text = request_text(&request);
+
+        assert!(
+            user_text.contains(r#""recent_events": "Blocked popup https://tracker.example.test""#)
+        );
     }
 
     #[test]

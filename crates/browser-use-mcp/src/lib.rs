@@ -467,6 +467,7 @@ mod tests {
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("max_clickable_elements_length"));
+        assert!(schema_text.contains("include_recent_events"));
         assert!(schema_text.contains("available_file_paths"));
         assert!(schema_text.contains("initial_actions"));
         assert!(schema_text.contains("excluded_actions"));
@@ -496,12 +497,14 @@ mod tests {
             "url": "https://example.com",
             "task": "extract",
             "settings": {
-                "excluded_actions": ["search", "scroll"]
+                "excluded_actions": ["search", "scroll"],
+                "include_recent_events": true
             }
         }))
         .expect("agent input");
 
         assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
+        assert!(input.settings.include_recent_events);
     }
 
     #[test]
