@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #92 lands and CI is green.
+- [#93 Add upstream fallback LLM switching](https://github.com/evalops/browser-use-rs/issues/93)
 
 ## Completed Tracks
 
