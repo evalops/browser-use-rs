@@ -814,7 +814,7 @@ impl AgentTask {
     #[must_use]
     pub fn new(task: impl Into<String>) -> Self {
         Self {
-            id: Uuid::now_v7(),
+            id: new_agent_id(),
             task: task.into(),
             settings: AgentSettings::default(),
         }
@@ -4904,6 +4904,8 @@ pub enum AgentRunError {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCheckpoint {
+    #[serde(default = "new_agent_id")]
+    pub id: Uuid,
     pub task: String,
     pub settings: AgentSettings,
     pub history: AgentHistory,
@@ -4917,6 +4919,10 @@ pub struct AgentCheckpoint {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn new_agent_id() -> Uuid {
+    Uuid::now_v7()
 }
 
 pub type AgentCallbackFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -5015,7 +5021,7 @@ where
         executor.set_action_timeout_seconds(settings.action_timeout_seconds);
         executor.set_upload_file_availability(true, settings.available_file_paths.clone());
         Self {
-            id: Uuid::now_v7(),
+            id: new_agent_id(),
             task,
             settings,
             llm,
@@ -5046,7 +5052,7 @@ where
         executor
             .set_upload_file_availability(true, checkpoint.settings.available_file_paths.clone());
         Ok(Self {
-            id: Uuid::now_v7(),
+            id: checkpoint.id,
             task: checkpoint.task,
             settings: checkpoint.settings,
             llm,
@@ -5071,6 +5077,20 @@ where
 
     pub fn id(&self) -> Uuid {
         self.id
+    }
+
+    pub fn task_id(&self) -> Uuid {
+        self.id
+    }
+
+    #[must_use]
+    pub fn with_task_id(mut self, task_id: Uuid) -> Self {
+        self.set_task_id(task_id);
+        self
+    }
+
+    pub fn set_task_id(&mut self, task_id: Uuid) {
+        self.id = task_id;
     }
 
     pub fn with_page_extraction_llm(mut self, page_extraction_llm: M) -> Self {
@@ -5119,6 +5139,7 @@ where
 
     pub fn checkpoint(&self) -> AgentCheckpoint {
         AgentCheckpoint {
+            id: self.id,
             task: self.task.clone(),
             settings: self.settings.clone(),
             history: self.history.clone(),
@@ -14721,6 +14742,79 @@ mod tests {
                 .task
                 .contains("<follow_up_user_request> compare vendors </follow_up_user_request>")
         );
+    }
+
+    #[test]
+    fn agent_uses_supplied_task_id_and_keeps_it_for_follow_up_tasks() {
+        let task_id =
+            Uuid::parse_str("018f82d0-1234-7abc-9234-56789abcdef0").expect("valid task id");
+        let mut agent = Agent::new(
+            "continuous task",
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        )
+        .with_task_id(task_id);
+
+        assert_eq!(agent.id(), task_id);
+        assert_eq!(agent.task_id(), task_id);
+
+        agent.add_new_task("continue under the same identity");
+
+        assert_eq!(agent.id(), task_id);
+        assert_eq!(agent.task_id(), task_id);
+    }
+
+    #[test]
+    fn agent_checkpoint_preserves_task_id_on_restore() {
+        let task_id =
+            Uuid::parse_str("018f82d0-4321-7abc-9234-56789abcdef0").expect("valid task id");
+        let agent = Agent::new(
+            "checkpoint identity",
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        )
+        .with_task_id(task_id);
+
+        let checkpoint = agent.checkpoint();
+        assert_eq!(checkpoint.id, task_id);
+        let checkpoint_json =
+            serde_json::to_string_pretty(&checkpoint).expect("serialize checkpoint");
+        assert!(checkpoint_json.contains(&format!(r#""id": "{task_id}""#)));
+        let checkpoint: AgentCheckpoint =
+            serde_json::from_str(&checkpoint_json).expect("deserialize checkpoint");
+        let restored =
+            Agent::from_checkpoint(checkpoint, QueueModel::new(vec![]), MockSession::new())
+                .expect("restore checkpoint");
+
+        assert_eq!(restored.id(), task_id);
+        assert_eq!(restored.task_id(), task_id);
+    }
+
+    #[test]
+    fn agent_checkpoint_without_task_id_deserializes_with_generated_identity() {
+        let agent = Agent::new(
+            "legacy checkpoint",
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        );
+        let mut checkpoint_value =
+            serde_json::to_value(agent.checkpoint()).expect("serialize checkpoint value");
+        checkpoint_value
+            .as_object_mut()
+            .expect("checkpoint object")
+            .remove("id")
+            .expect("checkpoint id present");
+
+        let checkpoint: AgentCheckpoint =
+            serde_json::from_value(checkpoint_value).expect("legacy checkpoint");
+        assert_ne!(checkpoint.id, Uuid::nil());
+        let generated_id = checkpoint.id;
+        let restored =
+            Agent::from_checkpoint(checkpoint, QueueModel::new(vec![]), MockSession::new())
+                .expect("restore legacy checkpoint");
+
+        assert_eq!(restored.id(), generated_id);
+        assert_eq!(restored.task_id(), generated_id);
     }
 
     #[tokio::test]
