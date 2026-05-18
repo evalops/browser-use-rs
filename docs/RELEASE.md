@@ -152,11 +152,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   context,
   OpenAI-wire structured-output mode overrides, system-message control,
   `mcp-tools`, `mcp-stdio`, and local persistent `session` commands.
-- MCP stdio tools for state, actions, and agent runs, including typed
-  `AgentSettings`, OpenAI-wire structured-output mode overrides, in-process
-  session reuse by `session_id`, and reconnection to persistent CLI session
-  records, plus persistent record creation for new `session_id` calls when a
-  URL is supplied.
+- MCP stdio tools for state, actions, `AgentHistory` replay, and agent runs,
+  including typed `AgentSettings`, OpenAI-wire structured-output mode
+  overrides, in-process session reuse by `session_id`, and reconnection to
+  persistent CLI session records, plus persistent record creation for new
+  `session_id` calls when a URL is supplied.
 - MCP stdio persistent session lifecycle for start, stop, list, and cleanup,
   with liveness status and conservative stale-record cleanup on session
   records.
@@ -200,8 +200,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   replay run with the captured state, plan, and guarded execution result. DOM
   recapture and rematching between replayed actions remain outside this release
   slice; the public replay-run JSON shape is pinned by conformance fixture.
-  Replay is exposed through the one-shot CLI; persistent session, MCP, and
-  daemon replay surfaces are tracked as follow-up work.
+  Replay is exposed through the one-shot CLI and the MCP/daemon tool surface.
 - CLI sessions are local registry records. Session `status` reports registry
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does

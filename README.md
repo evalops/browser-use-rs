@@ -141,9 +141,9 @@ includes:
   and Ollama Chat providers, including provider-specific structured-output
   modes for DeepSeek forced tool calls and Cerebras prompt-only guidance.
 - CLI commands including one-shot history replay, stdio MCP server, local
-  TCP/HTTP JSON-RPC daemon with optional bearer/header auth, supervisor
-  pid/ready files, packaged systemd/launchd templates, persistent session
-  registry for explicit and implicit
+  TCP/HTTP JSON-RPC daemon, MCP/daemon history replay, optional bearer/header
+  auth, supervisor pid/ready files, packaged systemd/launchd templates,
+  persistent session registry for explicit and implicit
   `session_id` MCP calls with liveness status and stale-record cleanup, typed
   MCP/CLI agent settings including available-file-path and sensitive-data
   placeholder context plus system-message control, and conformance fixtures.

@@ -30,6 +30,9 @@ Current tool contracts:
   state.
 - `browser_use_actions`: launch a browser, execute a JSON array of
   `BrowserAction` values, and return action results plus final state.
+- `browser_use_replay`: replay saved `AgentHistory` JSON against current
+  browser state and return `AgentHistoryReplayRun` with captured state,
+  rematched plan, and guarded execution diagnostics.
 - `browser_use_agent`: launch a browser, run a bounded agent task, and return
   typed agent history.
 - `browser_use_session`: start, stop, and list persistent browser sessions.
@@ -74,11 +77,12 @@ ending in `bu_2fa_code` generate TOTP codes at execution time. Provider
 credentials remain environment-only and are intentionally absent from tool input
 schemas.
 
-Browser and agent tools support an optional `session_id` argument. When omitted,
-the tool call uses a fresh one-shot browser. When present, the stdio server
-reuses an in-process Chrome session for subsequent calls with the same
-`session_id`, reconnects to an existing persistent record after restarts, or
-creates a persistent record when the `session_id` is new and a URL is supplied.
+Browser, replay, and agent tools support an optional `session_id` argument.
+When omitted, the tool call uses a fresh one-shot browser. When present, the
+stdio server reuses an in-process Chrome session for subsequent calls with the
+same `session_id`, reconnects to an existing persistent record after restarts,
+or creates a persistent record when the `session_id` is new and a URL is
+supplied.
 Use `browser_use_session` with `operation` set to `list` to inspect records,
 `stop` to close and remove one, and `cleanup` to remove stale records. Cleanup
 skips running sessions and unknown-liveness records by default; set `force` only

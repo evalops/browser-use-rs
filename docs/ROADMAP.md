@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -51,6 +51,7 @@ small pushed checkpoints as each surface becomes real.
 - [#45 Replay AgentHistory against current browser state](https://github.com/evalops/browser-use-rs/issues/45)
 - [#46 Freeze AgentHistoryReplayRun conformance fixture](https://github.com/evalops/browser-use-rs/issues/46)
 - [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
+- [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
 
 ## Current Checkpoint
 
@@ -128,8 +129,8 @@ Implemented:
   fallback for cached iframe actions, plus page text and element lookup across
   Chrome OOPIF iframe targets.
 - One-shot CLI commands, including `AgentHistory` replay against current browser
-  state, and a stdio MCP server backed by the CDP session, including in-process
-  MCP session reuse by `session_id`.
+  state, and a stdio MCP server backed by the CDP session, including
+  `browser_use_replay` and in-process MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list/cleanup
   across CLI invocations.
 - MCP stdio reconnection to persistent CLI session records by `session_id`, and
@@ -177,7 +178,8 @@ Implemented:
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
-  actions, and provider-selectable agent runs with typed agent settings.
+  actions, `AgentHistory` replay, and provider-selectable agent runs with typed
+  agent settings.
 - CLI agent settings expose available-file-path and sensitive-data placeholder
   context plus system-message override/extension.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing

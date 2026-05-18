@@ -154,12 +154,14 @@ record whose liveness cannot be established.
 
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
-`browser_use_state`, `browser_use_actions`, `browser_use_agent`, and
-`browser_use_session`. MCP browser and agent tool inputs accept an optional
-`session_id`; calls with the same `session_id` reuse the same in-process Chrome
-session, reconnect to an existing persistent record after restarts, or create a
-persistent record when the `session_id` is new and a URL is supplied. The MCP
-`browser_use_agent` tool also accepts
+`browser_use_state`, `browser_use_actions`, `browser_use_replay`,
+`browser_use_agent`, and `browser_use_session`. MCP browser, replay, and agent
+tool inputs accept an optional `session_id`; calls with the same `session_id`
+reuse the same in-process Chrome session, reconnect to an existing persistent
+record after restarts, or create a persistent record when the `session_id` is
+new and a URL is supplied. `browser_use_replay` accepts serialized
+`AgentHistory` and returns `AgentHistoryReplayRun`. The MCP `browser_use_agent`
+tool also accepts
 `structured_output_mode` values `json-schema`, `json-object`, `prompt-only`,
 and `tool-call`, matching the CLI override for OpenAI-wire provider fallbacks.
 `browser_use_session` can start, stop, list, and clean up persistent session records. If
@@ -202,8 +204,9 @@ templates live under `packaging/`; see
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
-- History replay is currently exposed as a one-shot CLI command. Persistent
-  session replay and MCP/daemon replay tools are tracked as follow-up surfaces.
+- History replay is exposed through the one-shot CLI and the MCP/daemon tool
+  surface. DOM recapture and rematching between replayed actions remain tracked
+  separately.
 - Persistent session `status` is a registry liveness hint, not a supervisor;
   stale records can be removed with `session cleanup`, but stale browser
   processes are not automatically restarted.
