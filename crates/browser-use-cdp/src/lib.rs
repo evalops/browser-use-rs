@@ -392,15 +392,18 @@ fn element_action_js(index: u32, action: &str) -> String {
     element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
-fn element_action_function_js(action: &str) -> String {
+fn element_function_js(body: &str) -> String {
     format!(
         r#"function() {{
   const el = this;
   el.scrollIntoView({{ block: 'center', inline: 'center' }});
-  {action}
-  return true;
+  {body}
 }}"#
     )
+}
+
+fn element_action_function_js(action: &str) -> String {
+    element_function_js(&format!("{action}\n  return true;"))
 }
 
 const CLICK_ELEMENT_ACTION_JS: &str = r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -418,9 +421,10 @@ fn click_element_js(index: u32) -> String {
 }
 
 fn dropdown_options_js(index: u32) -> String {
-    element_eval_js(
-        index,
-        r#"
+    element_eval_js(index, DROPDOWN_OPTIONS_BODY_JS)
+}
+
+const DROPDOWN_OPTIONS_BODY_JS: &str = r#"
   const textOf = (node) => (node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('value') || '').trim();
   const isVisible = (node) => {
     const style = window.getComputedStyle(node);
@@ -453,17 +457,13 @@ fn dropdown_options_js(index: u32) -> String {
     throw new Error('Element is not a select, ARIA listbox, combobox, or menu with visible options');
   }
   return JSON.stringify(options);
-"#,
-    )
-}
+"#;
 
-fn select_dropdown_option_js(index: u32, text: &str) -> Result<String, BrowserError> {
+fn select_dropdown_option_body_js(text: &str) -> Result<String, BrowserError> {
     let text_json =
         serde_json::to_string(text).map_err(|error| BrowserError::Transport(error.to_string()))?;
-    Ok(element_eval_js(
-        index,
-        &format!(
-            r#"
+    Ok(format!(
+        r#"
   const requested = {text_json};
   const textOf = (node) => (node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('value') || '').trim();
   const isVisible = (node) => {{
@@ -507,7 +507,13 @@ fn select_dropdown_option_js(index: u32, text: &str) -> Result<String, BrowserEr
   el.dispatchEvent(new Event('change', {{ bubbles: true }}));
   return true;
 "#
-        ),
+    ))
+}
+
+fn select_dropdown_option_js(index: u32, text: &str) -> Result<String, BrowserError> {
+    Ok(element_eval_js(
+        index,
+        &select_dropdown_option_body_js(text)?,
     ))
 }
 
@@ -1148,6 +1154,17 @@ impl CdpBrowserSession {
         element: &DomElementRef,
         function_declaration: String,
     ) -> Result<(), BrowserError> {
+        let _ = self
+            .call_element_function_value(element, function_declaration)
+            .await?;
+        Ok(())
+    }
+
+    async fn call_element_function_value(
+        &self,
+        element: &DomElementRef,
+        function_declaration: String,
+    ) -> Result<Value, BrowserError> {
         let page = self.current_page().await;
         let object_id = self.resolve_element_object_id(&page, element).await?;
         let result = self
@@ -1163,8 +1180,7 @@ impl CdpBrowserSession {
                 Some(&page.session_id),
             )
             .await?;
-        let _ = runtime_evaluate_value(result)?;
-        Ok(())
+        runtime_evaluate_value(result)
     }
 
     async fn page_location(&self) -> Result<(String, String), BrowserError> {
@@ -1495,6 +1511,13 @@ fn should_fallback_to_index_traversal(error: &BrowserError) -> bool {
         }
         _ => false,
     }
+}
+
+fn parse_dropdown_options_value(value: Value) -> Result<Vec<String>, BrowserError> {
+    let encoded = value
+        .as_str()
+        .ok_or_else(|| BrowserError::MissingResponseData("dropdown options string".to_owned()))?;
+    serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
 }
 
 fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
@@ -2294,14 +2317,35 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
+        if let Some(element) = self.cached_element(index).await {
+            match self
+                .call_element_function_value(
+                    &element,
+                    element_function_js(DROPDOWN_OPTIONS_BODY_JS),
+                )
+                .await
+            {
+                Ok(value) => return parse_dropdown_options_value(value),
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let value = self.evaluate_json(&dropdown_options_js(index)).await?;
-        let encoded = value.as_str().ok_or_else(|| {
-            BrowserError::MissingResponseData("dropdown options string".to_owned())
-        })?;
-        serde_json::from_str(encoded).map_err(|error| BrowserError::Transport(error.to_string()))
+        parse_dropdown_options_value(value)
     }
 
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
+        let body = select_dropdown_option_body_js(text)?;
+        if let Some(element) = self.cached_element(index).await {
+            match self
+                .call_element_function(&element, element_function_js(&body))
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
         self.evaluate_effect(select_dropdown_option_js(index, text)?)
             .await
     }
@@ -3078,6 +3122,19 @@ mod tests {
     }
 
     #[test]
+    fn dropdown_scripts_can_run_as_cached_element_functions() {
+        let options_function = element_function_js(DROPDOWN_OPTIONS_BODY_JS);
+        let select_body =
+            select_dropdown_option_body_js("Enterprise").expect("select dropdown body");
+        let select_function = element_function_js(&select_body);
+
+        assert!(options_function.contains("const el = this;"));
+        assert!(options_function.contains("return JSON.stringify(options);"));
+        assert!(select_function.contains("const requested = \"Enterprise\";"));
+        assert!(select_function.contains("No dropdown option found"));
+    }
+
+    #[test]
     fn interactive_snapshot_uses_image_alt_text_sources() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("descendantAltText"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("'img[alt], svg[aria-label]'"));
@@ -3658,6 +3715,63 @@ mod tests {
             .expect("scroll values json");
         assert!(values["target"].as_f64().unwrap_or_default() > 0.0);
         assert_eq!(values["inserted"].as_f64(), Some(0.0));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_dropdown_uses_cached_observed_node_after_dom_reorder() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>stable dropdown smoke</title></head><body><select id='target'><option>Starter</option><option>Enterprise</option></select><script>function insertBeforeTarget(){const select=document.createElement('select');select.id='inserted';select.innerHTML='<option>Inserted A</option><option>Inserted B</option>';document.body.insertBefore(select, document.getElementById('target'));}</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let target_index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "target")
+            })
+            .expect("target select")
+            .index;
+
+        session
+            .evaluate_json("insertBeforeTarget(); true")
+            .await
+            .expect("insert select before observed target");
+        let options = session
+            .dropdown_options(target_index)
+            .await
+            .expect("cached target options");
+        assert_eq!(options, ["Starter", "Enterprise"]);
+
+        session
+            .select_dropdown_option(target_index, "Enterprise")
+            .await
+            .expect("select cached target option");
+        let values = session
+            .evaluate_json(
+                "JSON.stringify({ target: document.getElementById('target').value, inserted: document.getElementById('inserted').value })",
+            )
+            .await
+            .expect("select values");
+        let values: Value = serde_json::from_str(values.as_str().expect("encoded select values"))
+            .expect("select values json");
+        assert_eq!(values["target"].as_str(), Some("Enterprise"));
+        assert_eq!(values["inserted"].as_str(), Some("Inserted A"));
     }
 
     #[tokio::test]
