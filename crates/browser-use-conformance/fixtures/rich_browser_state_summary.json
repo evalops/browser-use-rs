@@ -1,0 +1,97 @@
+{
+  "dom_state": {
+    "text": "[1] <button> Run\n[2] <input> Name EvalOps",
+    "selector_map": {
+      "1": {
+        "index": 1,
+        "target_id": "fixture-target",
+        "backend_node_id": 0,
+        "tag_name": "button",
+        "name": "Run",
+        "text": "Run",
+        "attributes": {},
+        "is_visible": true,
+        "is_interactive": true
+      },
+      "2": {
+        "index": 2,
+        "target_id": "fixture-target",
+        "backend_node_id": 0,
+        "tag_name": "input",
+        "name": "Name",
+        "text": "EvalOps",
+        "attributes": {},
+        "is_visible": true,
+        "is_interactive": true
+      }
+    },
+    "page_stats": {
+      "links": 2,
+      "iframes": 1,
+      "shadow_open": 1,
+      "shadow_closed": 0,
+      "scroll_containers": 1,
+      "images": 3,
+      "interactive_elements": 2,
+      "total_elements": 42,
+      "text_chars": 512
+    }
+  },
+  "url": "https://example.test/dashboard?page=2",
+  "title": "Fixture Dashboard",
+  "tabs": [
+    {
+      "url": "https://example.test/dashboard?page=2",
+      "title": "Fixture Dashboard",
+      "tab_id": "abcd",
+      "target_id": "target-main-abcd"
+    },
+    {
+      "url": "https://child.example/frame",
+      "title": "Child Frame",
+      "tab_id": "efgh",
+      "target_id": "target-child-efgh",
+      "parent_target_id": "target-main-abcd"
+    }
+  ],
+  "screenshot": "fixture-base64-png",
+  "page_info": {
+    "viewport_width": 1280,
+    "viewport_height": 720,
+    "page_width": 1280,
+    "page_height": 1800,
+    "scroll_x": 0,
+    "scroll_y": 240,
+    "pixels_above": 240,
+    "pixels_below": 840,
+    "pixels_left": 0,
+    "pixels_right": 0
+  },
+  "pixels_above": 240,
+  "pixels_below": 840,
+  "browser_errors": [
+    "console error: fixture warning"
+  ],
+  "is_pdf_viewer": false,
+  "recent_events": "Clicked element 1",
+  "pending_network_requests": [
+    {
+      "url": "https://api.example.test/data",
+      "method": "POST",
+      "loading_duration_ms": 123.5,
+      "resource_type": "fetch"
+    }
+  ],
+  "pagination_buttons": [
+    {
+      "button_type": "next",
+      "backend_node_id": 9001,
+      "text": "Next",
+      "selector": "#next",
+      "is_disabled": false
+    }
+  ],
+  "closed_popup_messages": [
+    "Closed popup https://ads.example.test"
+  ]
+}

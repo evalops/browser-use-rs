@@ -59,6 +59,10 @@ Upstream bumps must include:
 - `agent_output_schema.json`: JSON Schema snapshot captured from the default
   agent model request, including required browser-use planning fields and
   non-empty action guidance.
+- `rich_browser_state_summary.json`: top-level browser-state JSON fixture for
+  DOM state, tabs, screenshot markers, page metrics, network activity,
+  pagination affordances, browser errors, recent events, and popup closure
+  messages.
 - `simple_action_sequence.json`: typed browser action sequence fixture.
 - `simple_action_results.json`: expected action-result fixture for the action
   sequence harness.

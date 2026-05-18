@@ -1,6 +1,9 @@
 //! Golden fixtures and parity utilities for browser-use-rs.
 
-use browser_use_dom::{DomElementRef, DomEvalNode, ElementBounds, SerializedDomState};
+use browser_use_dom::{
+    BrowserStateSummary, DomElementRef, DomEvalNode, DomPageStats, ElementBounds, NetworkRequest,
+    PageInfo, PaginationButton, PaginationButtonType, SerializedDomState, TabInfo,
+};
 use std::collections::BTreeMap;
 
 #[must_use]
@@ -318,6 +321,75 @@ pub fn eval_tree_state() -> SerializedDomState {
     SerializedDomState::default().with_eval_root(root)
 }
 
+#[must_use]
+pub fn rich_browser_state_summary() -> BrowserStateSummary {
+    let dom_state = simple_interactive_state().with_page_stats(DomPageStats {
+        links: 2,
+        iframes: 1,
+        shadow_open: 1,
+        shadow_closed: 0,
+        scroll_containers: 1,
+        images: 3,
+        interactive_elements: 2,
+        total_elements: 42,
+        text_chars: 512,
+    });
+
+    BrowserStateSummary {
+        dom_state,
+        url: "https://example.test/dashboard?page=2".to_owned(),
+        title: "Fixture Dashboard".to_owned(),
+        tabs: vec![
+            TabInfo {
+                url: "https://example.test/dashboard?page=2".to_owned(),
+                title: "Fixture Dashboard".to_owned(),
+                tab_id: TabInfo::tab_id_for_target("target-main-abcd"),
+                target_id: "target-main-abcd".to_owned(),
+                parent_target_id: None,
+            },
+            TabInfo {
+                url: "https://child.example/frame".to_owned(),
+                title: "Child Frame".to_owned(),
+                tab_id: TabInfo::tab_id_for_target("target-child-efgh"),
+                target_id: "target-child-efgh".to_owned(),
+                parent_target_id: Some("target-main-abcd".to_owned()),
+            },
+        ],
+        screenshot: Some("fixture-base64-png".to_owned()),
+        page_info: Some(PageInfo {
+            viewport_width: 1280,
+            viewport_height: 720,
+            page_width: 1280,
+            page_height: 1800,
+            scroll_x: 0,
+            scroll_y: 240,
+            pixels_above: 240,
+            pixels_below: 840,
+            pixels_left: 0,
+            pixels_right: 0,
+        }),
+        pixels_above: 240,
+        pixels_below: 840,
+        browser_errors: vec!["console error: fixture warning".to_owned()],
+        is_pdf_viewer: false,
+        recent_events: Some("Clicked element 1".to_owned()),
+        pending_network_requests: vec![NetworkRequest {
+            url: "https://api.example.test/data".to_owned(),
+            method: "POST".to_owned(),
+            loading_duration_ms: 123.5,
+            resource_type: Some("fetch".to_owned()),
+        }],
+        pagination_buttons: vec![PaginationButton {
+            button_type: PaginationButtonType::Next,
+            backend_node_id: 9001,
+            text: "Next".to_owned(),
+            selector: "#next".to_owned(),
+            is_disabled: false,
+        }],
+        closed_popup_messages: vec!["Closed popup https://ads.example.test".to_owned()],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,7 +399,6 @@ mod tests {
         ActionExecutor, ActionResult, Agent, AgentSettings, ChatCompletion, ChatModel, ChatRequest,
         LlmError, execute_action_sequence,
     };
-    use browser_use_dom::BrowserStateSummary;
     use browser_use_tools::BrowserAction;
     use schemars::schema_for;
     use serde_json::{Value, json};
@@ -393,6 +464,17 @@ mod tests {
         assert_eq!(
             eval_tree_state().eval_representation(),
             include_str!("../fixtures/eval_tree_state.txt").trim_end_matches('\n')
+        );
+    }
+
+    #[test]
+    fn rich_browser_state_summary_matches_golden_fixture() {
+        let actual =
+            serde_json::to_value(rich_browser_state_summary()).expect("serialize browser state");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/rich_browser_state_summary.json"),
         );
     }
 
