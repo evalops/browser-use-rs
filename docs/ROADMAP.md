@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#82 Add upstream-style per-action timeout guard](https://github.com/evalops/browser-use-rs/issues/82)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #82 lands and CI is green.
 
 ## Completed Tracks
 
+- [#82 Add upstream-style per-action timeout guard](https://github.com/evalops/browser-use-rs/issues/82)
 - [#81 Add Browser Use Cloud error context parity](https://github.com/evalops/browser-use-rs/issues/81)
 - [#80 Add Browser Use Cloud extra headers and timeout parity](https://github.com/evalops/browser-use-rs/issues/80)
 - [#79 Add Browser Use Cloud auth config fallback](https://github.com/evalops/browser-use-rs/issues/79)
