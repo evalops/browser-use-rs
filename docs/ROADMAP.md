@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -45,6 +46,7 @@ small pushed checkpoints as each surface becomes real.
 - [#39 Add daemon-owned session supervision and stale cleanup](https://github.com/evalops/browser-use-rs/issues/39)
 - [#40 Implement interacted-element rematching for history replay](https://github.com/evalops/browser-use-rs/issues/40)
 - [#41 Apply interacted-element rematches to historical action replay](https://github.com/evalops/browser-use-rs/issues/41)
+- [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
 
 ## Current Checkpoint
 
@@ -153,7 +155,8 @@ Implemented:
   results, per-step error slots, model-output/action/thought accessors,
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
-  actions, duration helpers, and screenshot/URL helpers.
+  actions, rematched replay-plan construction from saved `AgentHistory`,
+  duration helpers, and screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -224,6 +227,4 @@ Implemented:
 
 Next:
 
-1. Continue [#42](https://github.com/evalops/browser-use-rs/issues/42) by
-   building rematched action plans from saved `AgentHistory` values without
-   executing the plan against a browser session yet.
+1. Open the next narrowly scoped parity issue before starting implementation.
