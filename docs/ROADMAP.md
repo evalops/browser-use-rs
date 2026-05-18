@@ -5,13 +5,13 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)
 - [#3 Implement DOM and accessibility serializer parity](https://github.com/evalops/browser-use-rs/issues/3)
 - [#4 Implement agent loop and LLM provider contracts](https://github.com/evalops/browser-use-rs/issues/4)
 
 ## Completed Tracks
 
 - [#1 Implement CDP-backed local Chrome sessions](https://github.com/evalops/browser-use-rs/issues/1)
+- [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)
 
 ## Current Checkpoint
 
