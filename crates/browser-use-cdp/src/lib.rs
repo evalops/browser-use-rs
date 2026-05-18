@@ -2298,15 +2298,11 @@ impl CdpBrowserSession {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
-        let page = Arc::new(Mutex::new(page));
-        let last_dom_state = Arc::new(Mutex::new(None));
-        let pending_url_policy_error = Arc::new(Mutex::new(None));
-        let security_events = Arc::new(Mutex::new(VecDeque::new()));
-        let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let storage_state_loaded_event = if let Some(storage_state_path) =
             &profile.storage_state_path
         {
             let storage_state = load_browser_storage_state(&connection, storage_state_path).await?;
+            apply_origin_storage_state(&connection, &page, &storage_state).await?;
             let (cookies_count, origins_count) = storage_state_counts(&storage_state);
             Some(BrowserLifecycleEvent::storage_state_loaded(
                 storage_state_path.display().to_string(),
@@ -2316,6 +2312,11 @@ impl CdpBrowserSession {
         } else {
             None
         };
+        let page = Arc::new(Mutex::new(page));
+        let last_dom_state = Arc::new(Mutex::new(None));
+        let pending_url_policy_error = Arc::new(Mutex::new(None));
+        let security_events = Arc::new(Mutex::new(VecDeque::new()));
+        let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         {
             let mut events = lifecycle_events.lock().await;
             push_lifecycle_event(
@@ -2369,7 +2370,8 @@ impl CdpBrowserSession {
     }
 
     pub async fn save_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
-        let storage_state = browser_storage_state(&self.connection).await?;
+        let page = self.current_page().await;
+        let storage_state = browser_storage_state(&self.connection, Some(&page)).await?;
         let (cookies_count, origins_count) = storage_state_counts(&storage_state);
         write_storage_state(path, &storage_state).await?;
         self.record_lifecycle_event(BrowserLifecycleEvent::storage_state_saved(
@@ -2383,6 +2385,8 @@ impl CdpBrowserSession {
 
     pub async fn load_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
         let storage_state = load_browser_storage_state(&self.connection, path).await?;
+        let page = self.current_page().await;
+        apply_origin_storage_state(&self.connection, &page, &storage_state).await?;
         let (cookies_count, origins_count) = storage_state_counts(&storage_state);
         self.record_lifecycle_event(BrowserLifecycleEvent::storage_state_loaded(
             path.display().to_string(),
@@ -4714,17 +4718,76 @@ async fn enable_browser_download_events(
         .map(|_| ())
 }
 
-async fn browser_storage_state(connection: &CdpConnection) -> Result<Value, BrowserError> {
+const ORIGIN_STORAGE_STATE_JS: &str = r#"
+(() => {
+  const origin = window.location && window.location.origin;
+  if (!origin || origin === 'null') return null;
+  const entries = (storage) => {
+    const out = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const name = storage.key(index);
+      if (name === null) continue;
+      out.push({ name, value: storage.getItem(name) || '' });
+    }
+    return out;
+  };
+  return {
+    origin,
+    localStorage: entries(window.localStorage),
+    sessionStorage: entries(window.sessionStorage),
+  };
+})()
+"#;
+
+async fn browser_storage_state(
+    connection: &CdpConnection,
+    page: Option<&AttachedPage>,
+) -> Result<Value, BrowserError> {
     let cookies = connection
         .command("Network.getAllCookies", json!({}), None)
         .await?
         .get("cookies")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    Ok(json!({
+    let mut state = json!({
         "cookies": cookies,
         "origins": [],
-    }))
+    });
+    if let Some(page) = page {
+        if let Some(origin_state) = current_origin_storage_state(connection, page).await? {
+            state["origins"] = Value::Array(vec![origin_state]);
+        }
+    }
+    Ok(state)
+}
+
+async fn current_origin_storage_state(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+) -> Result<Option<Value>, BrowserError> {
+    let result = connection
+        .command(
+            "Runtime.evaluate",
+            runtime_evaluate_params(ORIGIN_STORAGE_STATE_JS, false),
+            Some(&page.session_id),
+        )
+        .await?;
+    let value = runtime_evaluate_value(result)?;
+    if value.is_null() || !origin_storage_has_items(&value) {
+        return Ok(None);
+    }
+    Ok(Some(value))
+}
+
+fn origin_storage_has_items(origin_state: &Value) -> bool {
+    origin_state
+        .get("localStorage")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+        || origin_state
+            .get("sessionStorage")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
 }
 
 async fn load_browser_storage_state(
@@ -4750,6 +4813,82 @@ async fn load_browser_storage_state(
         }
     }
     Ok(storage_state)
+}
+
+async fn apply_origin_storage_state(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+    storage_state: &Value,
+) -> Result<(), BrowserError> {
+    let origins = storage_state
+        .get("origins")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for origin_state in origins {
+        let Some(source) = origin_storage_apply_script(&origin_state) else {
+            continue;
+        };
+        connection
+            .command(
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({ "source": source }),
+                Some(&page.session_id),
+            )
+            .await?;
+        connection
+            .command(
+                "Runtime.evaluate",
+                runtime_evaluate_params(&source, false),
+                Some(&page.session_id),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+fn origin_storage_apply_script(origin_state: &Value) -> Option<String> {
+    let origin = origin_state.get("origin")?.as_str()?;
+    let local_storage = storage_items_object(origin_state.get("localStorage"));
+    let session_storage = storage_items_object(origin_state.get("sessionStorage"));
+    if storage_items_are_empty(&local_storage) && storage_items_are_empty(&session_storage) {
+        return None;
+    }
+    Some(format!(
+        r#"(() => {{
+  const expectedOrigin = {origin_json};
+  if (!window.location || window.location.origin !== expectedOrigin) return;
+  const localItems = {local_json};
+  for (const [name, value] of Object.entries(localItems)) window.localStorage.setItem(name, value);
+  const sessionItems = {session_json};
+  for (const [name, value] of Object.entries(sessionItems)) window.sessionStorage.setItem(name, value);
+}})()"#,
+        origin_json = serde_json::to_string(origin).ok()?,
+        local_json = local_storage,
+        session_json = session_storage,
+    ))
+}
+
+fn storage_items_are_empty(value: &Value) -> bool {
+    value
+        .as_object()
+        .map(serde_json::Map::is_empty)
+        .unwrap_or(true)
+}
+
+fn storage_items_object(items: Option<&Value>) -> Value {
+    let mut object = serde_json::Map::new();
+    for item in items.and_then(Value::as_array).into_iter().flatten() {
+        let Some(name) = item.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let value = item
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        object.insert(name.to_owned(), Value::String(value.to_owned()));
+    }
+    Value::Object(object)
 }
 
 async fn write_storage_state(path: &Path, storage_state: &Value) -> Result<(), BrowserError> {
@@ -6372,19 +6511,35 @@ mod tests {
 
     #[test]
     fn storage_state_counts_browser_use_shape() {
-        assert_eq!(
-            storage_state_counts(&json!({
+        let storage_state = json!({
                 "cookies": [
                     { "name": "sid", "value": "1", "domain": ".example.test", "path": "/" },
                     { "name": "pref", "value": "dark", "domain": ".example.test", "path": "/" }
                 ],
                 "origins": [
-                    { "origin": "https://example.test", "localStorage": [] }
+                    {
+                        "origin": "https://example.test",
+                        "localStorage": [{ "name": "theme", "value": "dark" }],
+                        "sessionStorage": [{ "name": "tab", "value": "reports" }]
+                    }
                 ]
-            })),
-            (2, 1)
-        );
+        });
+        assert_eq!(storage_state_counts(&storage_state), (2, 1));
         assert_eq!(storage_state_counts(&json!({})), (0, 0));
+
+        let script = origin_storage_apply_script(&storage_state["origins"][0])
+            .expect("origin storage apply script");
+        assert!(script.contains(r#"const expectedOrigin = "https://example.test";"#));
+        assert!(script.contains(r#""theme":"dark""#));
+        assert!(script.contains(r#""tab":"reports""#));
+        assert!(
+            origin_storage_apply_script(&json!({
+                "origin": "https://empty.test",
+                "localStorage": [],
+                "sessionStorage": []
+            }))
+            .is_none()
+        );
     }
 
     #[test]
