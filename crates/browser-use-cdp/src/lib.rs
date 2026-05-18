@@ -1620,6 +1620,8 @@ pub struct BrowserProfile {
     pub storage_state_path: Option<PathBuf>,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
@@ -1657,6 +1659,7 @@ impl Default for BrowserProfile {
             downloads_path: None,
             storage_state_path: None,
             args: Vec::new(),
+            user_agent: None,
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
             block_ip_addresses: false,
@@ -1818,6 +1821,10 @@ impl BrowserProfile {
                     }
                 }
             }
+        }
+
+        if let Some(user_agent) = self.user_agent.as_deref().filter(|value| !value.is_empty()) {
+            args.push(format!("--user-agent={user_agent}"));
         }
 
         args.extend(self.args.iter().cloned());
@@ -7815,6 +7822,8 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert_eq!(profile.user_agent, None);
+        assert!(!plan.args.iter().any(|arg| arg.starts_with("--user-agent=")));
         assert!(!profile.disable_security);
         assert!(!profile.deterministic_rendering);
         assert!(
@@ -7842,6 +7851,15 @@ mod tests {
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert_eq!(encoded["disable_security"], json!(false));
         assert_eq!(encoded["deterministic_rendering"], json!(false));
+    }
+
+    #[test]
+    fn browser_profile_user_agent_defaults_to_none_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.user_agent, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("user_agent").is_none());
     }
 
     #[test]
@@ -8332,6 +8350,47 @@ mod tests {
                 < arg_index(&plan.args, "--deterministic-mode")
         );
         assert!(arg_index(&plan.args, "--proxy-bypass-list=localhost") < first_custom_arg_index);
+    }
+
+    #[test]
+    fn launch_plan_omits_empty_user_agent() {
+        let profile = BrowserProfile {
+            user_agent: Some(String::new()),
+            args: vec!["--custom-last".to_owned()],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert!(!plan.args.iter().any(|arg| arg.starts_with("--user-agent=")));
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_user_agent_before_custom_args() {
+        let profile = BrowserProfile {
+            user_agent: Some("BrowserUseRust/0.4".to_owned()),
+            args: vec![
+                "--user-agent=OverrideAgent/1.0".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            proxy: Some(ProxySettings {
+                server: "http://127.0.0.1:8080".to_owned(),
+                bypass: None,
+                username: None,
+                password: None,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let proxy_index = arg_index(&plan.args, "--proxy-server=http://127.0.0.1:8080");
+        let generated_user_agent_index = arg_index(&plan.args, "--user-agent=BrowserUseRust/0.4");
+        let custom_user_agent_index = arg_index(&plan.args, "--user-agent=OverrideAgent/1.0");
+
+        assert!(proxy_index < generated_user_agent_index);
+        assert!(generated_user_agent_index < custom_user_agent_index);
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
     #[test]
