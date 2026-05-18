@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
-use browser_use_core::{AgentSettings, BrowserActionExecutor, SensitiveDataValue};
+use browser_use_core::{AgentHistory, AgentSettings, BrowserActionExecutor, SensitiveDataValue};
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
     OpenAiStructuredOutputMode,
@@ -92,6 +92,8 @@ enum Command {
         #[arg(long, default_value_t = true)]
         screenshot: bool,
     },
+    /// Launch Chrome, replay saved AgentHistory against current state, and print the replay run.
+    Replay { url: String, history: PathBuf },
     /// Run a bounded browser agent task through a schema-guided chat model.
     Agent {
         url: String,
@@ -390,6 +392,14 @@ async fn main() -> anyhow::Result<()> {
                     "state": state,
                 }))?
             );
+        }
+        Some(Command::Replay { url, history }) => {
+            let session = launch_and_navigate(&url).await?;
+            let history = std::fs::read_to_string(&history)?;
+            let history: AgentHistory = serde_json::from_str(&history)?;
+            let mut executor = BrowserActionExecutor::new(session);
+            let replay = executor.replay_history(&history).await?;
+            println!("{}", serde_json::to_string_pretty(&replay)?);
         }
         Some(Command::Agent {
             url,
@@ -1982,6 +1992,25 @@ mod tests {
                 assert!(block_ip_addresses);
             }
             _ => panic!("expected agent command"),
+        }
+    }
+
+    #[test]
+    fn parses_replay_command() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "replay",
+            "https://example.com",
+            "history.json",
+        ])
+        .expect("replay command should parse");
+
+        match cli.command.expect("replay command") {
+            Command::Replay { url, history } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(history, PathBuf::from("history.json"));
+            }
+            _ => panic!("expected replay command"),
         }
     }
 
