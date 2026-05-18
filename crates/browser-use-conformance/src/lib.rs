@@ -1930,13 +1930,13 @@ mod tests {
             &self,
             request: ChatRequest,
         ) -> Result<ChatCompletion<Value>, LlmError> {
-            self.requests.lock().expect("requests lock").push(request);
             let content = self
                 .outputs
                 .lock()
                 .expect("outputs lock")
                 .pop_front()
                 .ok_or_else(|| LlmError::Provider("script exhausted".to_owned()))?;
+            self.requests.lock().expect("requests lock").push(request);
             Ok(ChatCompletion {
                 model: self.model().to_owned(),
                 content,
