@@ -992,6 +992,7 @@ where
                 extract_images,
                 links.as_deref(),
                 images.as_deref(),
+                Some(file_system),
             ))
         }
         BrowserAction::SearchPage(params) => {
@@ -1207,6 +1208,7 @@ fn extract_action_result(
     extract_images: bool,
     links: Option<&[FoundElement]>,
     images: Option<&[FoundElement]>,
+    file_system: Option<&mut ManagedFileSystem>,
 ) -> ActionResult {
     let total_chars = page_text.chars().count();
     if params.start_from_char > total_chars {
@@ -1237,6 +1239,13 @@ fn extract_action_result(
         render_extract_envelope(params, source_url, &content, &content_stats, links, images);
     let memory = if rendered.chars().count() < 10_000 {
         rendered.clone()
+    } else if let Some(file_name) =
+        file_system.and_then(|file_system| file_system.save_extracted_content(&rendered).ok())
+    {
+        format!(
+            "Query: {}\nContent in {file_name} and once in <read_state>.",
+            params.query
+        )
     } else {
         format!(
             "Query: {}\nContent prepared for extraction, length: {} characters.",
@@ -3494,11 +3503,28 @@ where
         llm: M,
         session: S,
     ) -> Self {
+        Self::with_settings_and_file_system(
+            task,
+            settings,
+            llm,
+            session,
+            ManagedFileSystem::new_in_temp().expect("create managed file system"),
+        )
+    }
+
+    #[must_use]
+    pub fn with_settings_and_file_system(
+        task: impl Into<String>,
+        settings: AgentSettings,
+        llm: M,
+        session: S,
+        file_system: ManagedFileSystem,
+    ) -> Self {
         Self {
             task: task.into(),
             settings,
             llm,
-            executor: BrowserActionExecutor::new(session),
+            executor: BrowserActionExecutor::with_file_system(session, file_system),
             history: AgentHistory::default(),
             initial_actions_executed: false,
         }
@@ -3506,6 +3532,14 @@ where
 
     pub fn history(&self) -> &AgentHistory {
         &self.history
+    }
+
+    pub fn file_system(&self) -> &ManagedFileSystem {
+        self.executor.file_system()
+    }
+
+    pub fn file_system_state(&self) -> FileSystemState {
+        self.executor.file_system().get_state()
     }
 
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
@@ -3582,7 +3616,13 @@ where
         let step_start_time = now_seconds();
         let include_screenshot = self.should_include_screenshot();
         let state = self.executor.session().state(include_screenshot).await?;
-        let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
+        let request = build_step_request_with_file_system(
+            &self.task,
+            &state,
+            &self.history,
+            &self.settings,
+            Some(self.executor.file_system()),
+        )?;
         let completion = timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -3601,7 +3641,13 @@ where
         let step_start_time = now_seconds();
         let include_screenshot = self.should_include_screenshot();
         let state = self.executor.session().state(include_screenshot).await?;
-        let request = build_step_request(&self.task, &state, &self.history, &self.settings)?;
+        let request = build_step_request_with_file_system(
+            &self.task,
+            &state,
+            &self.history,
+            &self.settings,
+            Some(self.executor.file_system()),
+        )?;
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -3714,6 +3760,7 @@ where
             &state,
             &self.history,
             &self.settings,
+            Some(self.executor.file_system()),
             failures,
         )?;
         let completion = match timeout(
@@ -4010,6 +4057,16 @@ pub fn build_step_request(
     history: &AgentHistory,
     settings: &AgentSettings,
 ) -> Result<ChatRequest, AgentRunError> {
+    build_step_request_with_file_system(task, state, history, settings, None)
+}
+
+pub fn build_step_request_with_file_system(
+    task: &str,
+    state: &BrowserStateSummary,
+    history: &AgentHistory,
+    settings: &AgentSettings,
+    file_system: Option<&ManagedFileSystem>,
+) -> Result<ChatRequest, AgentRunError> {
     let mut state_for_text = state.clone();
     state_for_text.screenshot = None;
     if !settings.include_attributes.is_empty() {
@@ -4025,7 +4082,8 @@ pub fn build_step_request(
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
     let agent_history = render_previous_results(history, settings.max_history_items);
     let page_stats = render_page_stats(state);
-    let agent_state = render_agent_state_description(task, &page_stats, history, state, settings);
+    let agent_state =
+        render_agent_state_description(task, &page_stats, history, state, settings, file_system);
     let read_state = render_read_state_description(history)
         .map(|description| format!("\n<read_state>\n{description}\n</read_state>\n"))
         .unwrap_or_default();
@@ -4084,9 +4142,11 @@ fn build_final_response_after_failure_request(
     state: &BrowserStateSummary,
     history: &AgentHistory,
     settings: &AgentSettings,
+    file_system: Option<&ManagedFileSystem>,
     failures: u32,
 ) -> Result<ChatRequest, AgentRunError> {
-    let mut request = build_step_request(task, state, history, settings)?;
+    let mut request =
+        build_step_request_with_file_system(task, state, history, settings, file_system)?;
     request.output_schema = Some(schema_for_final_response_after_failure(settings));
     let instruction = format!(
         "You failed {failures} times. We are terminating the agent. Your only available action is done. Return exactly one done action. \
@@ -4237,8 +4297,21 @@ fn render_agent_state_description(
     history: &AgentHistory,
     state: &BrowserStateSummary,
     settings: &AgentSettings,
+    file_system: Option<&ManagedFileSystem>,
 ) -> String {
     let mut description = format!("Task:\n{task}\n\nPage stats:\n{page_stats}");
+    if let Some(file_system) = file_system {
+        let todo_contents = file_system.get_todo_contents();
+        let todo_contents = if todo_contents.is_empty() {
+            "[empty todo.md, fill it when applicable]".to_owned()
+        } else {
+            todo_contents
+        };
+        description.push_str(&format!(
+            "\n\n<file_system>\n{}\n</file_system>\n<todo_contents>\n{todo_contents}\n</todo_contents>",
+            file_system.describe()
+        ));
+    }
     if let Some(message) = render_planning_context(history, settings) {
         description.push_str(&format!("\n\nPlanning:\n{message}"));
     }
@@ -7650,6 +7723,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_file_system_state_survives_steps_and_prompts() {
+        let write_output = serde_json::json!({
+            "current_state": {
+                "thinking": "write report"
+            },
+            "action": [
+                {
+                    "write_file": {
+                        "file_name": "report.md",
+                        "content": "alpha",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                }
+            ]
+        });
+        let read_output = serde_json::json!({
+            "current_state": {
+                "thinking": "read report"
+            },
+            "action": [
+                {
+                    "read_file": {
+                        "file_name": "report.md"
+                    }
+                }
+            ]
+        });
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut agent = Agent::with_settings_and_file_system(
+            "write then read a report",
+            AgentSettings::default(),
+            QueueModel::new(vec![write_output, read_output]),
+            MockSession::new(),
+            file_system,
+        );
+
+        agent.step().await.expect("write step");
+        assert_eq!(
+            agent.file_system().display_file("report.md").as_deref(),
+            Some("alpha")
+        );
+
+        let item = agent.step().await.expect("read step");
+        assert!(
+            item.result
+                .first()
+                .and_then(|result| result.extracted_content.as_deref())
+                .expect("read result")
+                .contains("alpha")
+        );
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        let second_prompt = request_text(&requests[1]);
+        assert!(second_prompt.contains("<file_system>\n<file>\nreport.md - 1 lines"));
+        assert!(second_prompt.contains("<content>\nalpha\n</content>"));
+
+        let state = agent.file_system_state();
+        assert!(state.files.contains_key("report.md"));
+        let restored = ManagedFileSystem::from_state(state).expect("restore file system");
+        assert_eq!(restored.display_file("report.md").as_deref(), Some("alpha"));
+    }
+
+    #[tokio::test]
     async fn agent_replaces_sensitive_input_tags_for_execution_without_history_leak() {
         let output = serde_json::json!({
             "current_state": {},
@@ -8675,6 +8814,98 @@ mod tests {
         ));
         assert!(user_text.contains("<agent_state>"));
         assert!(user_text.contains("</agent_state>"));
+    }
+
+    #[test]
+    fn step_request_includes_managed_file_system_context() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let empty_request = build_step_request_with_file_system(
+            "use the files",
+            &blank_state(),
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+            Some(&file_system),
+        )
+        .expect("empty file system request");
+        let empty_text = request_text(&empty_request);
+
+        assert!(empty_text.contains("<file_system>\n\n</file_system>"));
+        assert!(empty_text.contains(
+            "<todo_contents>\n[empty todo.md, fill it when applicable]\n</todo_contents>"
+        ));
+
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "todo.md".to_owned(),
+                content: "- inspect report".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("write todo");
+        file_system
+            .write_file(&WriteFileAction {
+                file_name: "report.md".to_owned(),
+                content: "alpha\nbeta".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("write report");
+
+        let request = build_step_request_with_file_system(
+            "use the files",
+            &blank_state(),
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+            Some(&file_system),
+        )
+        .expect("file system request");
+        let text = request_text(&request);
+
+        assert!(text.contains("<file_system>\n<file>\nreport.md - 2 lines"));
+        assert!(text.contains("<content>\nalpha\nbeta\n</content>"));
+        assert!(text.contains("<todo_contents>\n- inspect report\n</todo_contents>"));
+        assert!(!text.contains("todo.md -"));
+    }
+
+    #[test]
+    fn large_extract_results_save_to_managed_file_system() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let page_text = "EvalOps extracted content. ".repeat(700);
+
+        let result = extract_action_result(
+            &ExtractAction {
+                query: "summarize".to_owned(),
+                extract_links: false,
+                extract_images: false,
+                start_from_char: 0,
+                output_schema: None,
+                already_collected: Vec::new(),
+            },
+            &page_text,
+            Some("https://example.test/report"),
+            false,
+            None,
+            None,
+            Some(&mut file_system),
+        );
+
+        assert!(
+            result
+                .long_term_memory
+                .as_deref()
+                .expect("memory")
+                .contains("Content in extracted_content_0.md and once in <read_state>.")
+        );
+        let saved = file_system
+            .display_file("extracted_content_0.md")
+            .expect("saved extracted content");
+        assert!(saved.contains("<query>\nsummarize\n</query>"));
+        assert!(saved.contains("EvalOps extracted content."));
+        assert_eq!(file_system.get_state().extracted_content_count, 1);
     }
 
     #[test]

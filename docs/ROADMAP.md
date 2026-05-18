@@ -58,7 +58,10 @@ Implemented:
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
   artifacts. Executor-owned relative file actions and `done.files_to_display`
-  route through that sandbox while absolute external paths bypass it.
+  route through that sandbox while absolute external paths bypass it. Agent
+  prompts include upstream-style `<file_system>` and `<todo_contents>` context,
+  and large extract results can spill into managed `extracted_content_N.md`
+  files.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -164,8 +167,8 @@ Implemented:
 
 Next:
 
-1. Expose managed `FileSystem` state in the agent prompt/state lifecycle,
-   including `<file_system>` and `<todo_contents>` context.
+1. Tighten managed `FileSystem` lifecycle/replay parity beyond prompt context,
+   including restored agent state and longer cross-step conformance fixtures.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
 3. Expand agent planning depth and replay coverage for longer multi-step tasks.

@@ -69,7 +69,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
   artifacts. Executor-owned relative file actions and `done.files_to_display`
-  route through that sandbox while absolute external paths bypass it.
+  route through that sandbox while absolute external paths bypass it. Agent
+  prompts include upstream-style `<file_system>` and `<todo_contents>` context,
+  and large extract results can spill into managed `extracted_content_N.md`
+  files.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
@@ -144,11 +147,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
-- Managed filesystem prompt/state lifecycle wiring is still lighter than
+- Deeper managed filesystem lifecycle/replay parity is still lighter than
   upstream's full `FileSystem` lifecycle, though the Rust core now has
   serializable `FileSystem` state, executor-owned relative action routing
-  through a `browseruse_agent_data` sandbox, CSV normalization, relative
-  filename sanitization, page-aware PDF read envelopes, and PDF/DOCX
-  write/append artifact support with matching unsupported binary extension
-  guards.
+  through a `browseruse_agent_data` sandbox, prompt-visible file/todo context,
+  CSV normalization, relative filename sanitization, page-aware PDF read
+  envelopes, and PDF/DOCX write/append artifact support with matching
+  unsupported binary extension guards.
 - Package publishing is limited to the GitHub release artifact.

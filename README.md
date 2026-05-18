@@ -69,7 +69,9 @@ includes:
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
   artifacts. Executor-owned relative `write_file`/append/`read_file`/
   `replace_file` and `done.files_to_display` flows route through the sandbox
-  while absolute external paths continue to bypass it.
+  while absolute external paths continue to bypass it. Agent prompts include
+  upstream-style `<file_system>` and `<todo_contents>` context, and large
+  extract results can spill into managed `extracted_content_N.md` files.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, upstream-style page-stat prompt
