@@ -250,7 +250,8 @@ Implemented:
   executors can also capture the current DOM, recapture state between replay
   actions, rematch later indexed actions against the latest DOM, and return a
   replay run containing the captured state, plan, and guarded execution result,
-  with the public JSON shape pinned by `agent_history_replay_run.json`.
+  with the public JSON shape pinned by `agent_history_replay_run.json` and
+  `agent_history_replay_recapture_run.json`.
 
 Next:
 

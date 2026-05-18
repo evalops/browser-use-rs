@@ -174,6 +174,10 @@ Upstream bumps must include:
 - `agent_history_replay_run.json`: serialized `AgentHistoryReplayRun` fixture
   covering current-state capture, remapped replay plan items, interacted-element
   match diagnostics, guarded execution results, and replay stop reasons.
+- `agent_history_replay_recapture_run.json`: serialized
+  `AgentHistoryReplayRun` fixture covering browser-backed replay state
+  recapture between actions and later indexed-action rematching against the
+  latest DOM.
 - `simple_action_sequence.json`: typed browser action sequence fixture.
 - `simple_action_results.json`: expected action-result fixture for the action
   sequence harness.

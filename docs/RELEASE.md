@@ -205,7 +205,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   state between non-terminating replay actions, rematch later indexed actions
   against the latest DOM, and return a replay run with the captured state, plan,
   and guarded execution result. The public replay-run JSON shape is pinned by
-  conformance fixture.
+  replay-run and replay-recapture conformance fixtures.
   Replay is exposed through the one-shot CLI, persistent CLI sessions, and the
   MCP/daemon tool surface.
 - CLI sessions are local registry records. Session `status` reports registry
