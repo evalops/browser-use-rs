@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active tracked parity issue is open. The next slice should be filed before
-implementation starts so public progress stays auditable.
+- [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
 
 ## Completed Tracks
 
@@ -225,4 +224,6 @@ Implemented:
 
 Next:
 
-1. Open the next narrowly scoped parity issue before starting implementation.
+1. Continue [#42](https://github.com/evalops/browser-use-rs/issues/42) by
+   building rematched action plans from saved `AgentHistory` values without
+   executing the plan against a browser session yet.
