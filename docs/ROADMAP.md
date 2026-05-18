@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #93 lands and CI is green.
+- [#94 Add upstream page_extraction_llm routing](https://github.com/evalops/browser-use-rs/issues/94)
 
 ## Completed Tracks
 
