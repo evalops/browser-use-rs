@@ -96,6 +96,7 @@ pub enum OpenAiStructuredOutputMode {
     JsonSchema,
     JsonObject,
     PromptOnly,
+    ToolCall,
 }
 
 #[derive(Clone)]
@@ -527,6 +528,25 @@ fn openai_chat_payload(
             OpenAiStructuredOutputMode::JsonObject => {
                 payload["response_format"] = json!({ "type": "json_object" });
             }
+            OpenAiStructuredOutputMode::ToolCall => {
+                payload["tools"] = json!([
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": schema_name,
+                            "description": "Return the structured browser-use agent output.",
+                            "parameters": schema,
+                            "strict": true,
+                        }
+                    }
+                ]);
+                payload["tool_choice"] = json!({
+                    "type": "function",
+                    "function": {
+                        "name": schema_name,
+                    }
+                });
+            }
             OpenAiStructuredOutputMode::PromptOnly => {}
         }
     }
@@ -744,6 +764,17 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
         )));
     }
 
+    if let Some(arguments) = openai_tool_call_arguments(message) {
+        return match arguments {
+            Value::String(text) => serde_json::from_str(text)
+                .map_err(|error| LlmError::InvalidStructuredOutput(error.to_string())),
+            Value::Object(_) => Ok(arguments.clone()),
+            _ => Err(LlmError::InvalidStructuredOutput(
+                "chat completion tool call arguments were not a JSON object".to_owned(),
+            )),
+        };
+    }
+
     let content = message
         .get("content")
         .ok_or_else(|| LlmError::Provider("missing chat completion content".to_owned()))?;
@@ -756,6 +787,15 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
             "chat completion content was not JSON-compatible".to_owned(),
         )),
     }
+}
+
+fn openai_tool_call_arguments(message: &Value) -> Option<&Value> {
+    message
+        .get("tool_calls")?
+        .as_array()?
+        .first()?
+        .get("function")?
+        .get("arguments")
 }
 
 fn parse_ollama_chat_response(raw_response: &Value) -> Result<Value, LlmError> {
@@ -1005,6 +1045,35 @@ mod tests {
     }
 
     #[test]
+    fn openai_tool_call_mode_uses_strict_function_schema() {
+        let payload = openai_chat_payload(
+            "tool-call-test",
+            "agent_output",
+            OpenAiStructuredOutputMode::ToolCall,
+            ChatRequest {
+                messages: vec![ChatMessage::text(MessageRole::User, "Return a tool call")],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"]
+                })),
+            },
+        );
+
+        assert!(payload.get("response_format").is_none());
+        assert_eq!(payload["tools"][0]["type"], "function");
+        assert_eq!(payload["tools"][0]["function"]["name"], "agent_output");
+        assert_eq!(payload["tools"][0]["function"]["strict"], true);
+        assert_eq!(
+            payload["tools"][0]["function"]["parameters"]["properties"]["ok"]["type"],
+            "boolean"
+        );
+        assert_eq!(payload["tool_choice"]["function"]["name"], "agent_output");
+    }
+
+    #[test]
     fn openai_payload_preserves_multimodal_content_parts() {
         let payload = openai_chat_payload(
             "gpt-test",
@@ -1221,6 +1290,34 @@ mod tests {
         });
 
         let parsed = parse_openai_chat_completion(&raw).expect("parse completion");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_tool_call_json_chat_completion() {
+        let raw = json!({
+            "model": "tool-call-test",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "agent_output",
+                                    "arguments": "{\"ok\":true}"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let parsed = parse_openai_chat_completion(&raw).expect("parse tool call");
 
         assert_eq!(parsed, json!({ "ok": true }));
     }

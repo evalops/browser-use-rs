@@ -90,10 +90,12 @@ accepts `VERCEL_OIDC_TOKEN` and `VERCEL_MODEL`. Each alias has an optional
 matching `*_BASE_URL` override. DeepSeek, Cerebras, and Mistral use their
 upstream default model names when `--model` is omitted. CLI `--api-key`,
 `--model`, and `--base-url` override the provider-specific environment values
-where they apply. Structured-output requests use JSON Schema for OpenAI,
-Groq, Mistral, OpenRouter, and Vercel AI Gateway, JSON-object mode with an
-embedded schema instruction for DeepSeek, and prompt-only schema guidance for
-Cerebras.
+where they apply. Structured-output requests use JSON Schema for OpenAI, Groq,
+Mistral, OpenRouter, and Vercel AI Gateway, JSON-object mode with an embedded
+schema instruction for DeepSeek, and prompt-only schema guidance for Cerebras.
+The OpenAI-compatible adapter also supports a strict tool-call schema mode for
+provider-specific fallbacks that need function-call arguments instead of message
+content.
 
 Agent runs accept repeated `--allowed-domain <pattern>` and
 `--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce
@@ -173,7 +175,8 @@ templates live under `packaging/`; see
 - Agent runs currently support OpenAI-compatible Chat Completions plus
   DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
   Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output
-  adapters, with provider-specific output modes for DeepSeek and Cerebras.
+  adapters, with provider-specific output modes for DeepSeek and Cerebras plus
+  OpenAI-wire tool-call schema payload and parser support for fallback paths.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.
