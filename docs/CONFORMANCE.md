@@ -64,7 +64,7 @@ commands fail locally with a clear reattach error, and the current target is
 reattached automatically on the next session access when Chrome still exposes
 it.
 
-Remaining lifecycle gaps are tracked in #30: profile-wide storage discovery
+Remaining lifecycle gaps are tracked in #31: profile-wide storage discovery
 outside the attached frame tree and a full general-purpose event bus are still
 lighter than upstream.
 

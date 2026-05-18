@@ -44,7 +44,7 @@ includes:
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
   the attached frame tree is tracked in
-  [#30](https://github.com/evalops/browser-use-rs/issues/30).
+  [#31](https://github.com/evalops/browser-use-rs/issues/31).
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and

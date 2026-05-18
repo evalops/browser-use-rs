@@ -165,7 +165,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   save/load events, explicit CDP websocket closure diagnostics, bounded
   actor-level reconnect attempts, deliberate stale-session invalidation and
   current-target reattach after reconnect, direct navigation timeouts, and
-  watchdog-style stuck HTTP(S) request timeouts. #30 tracks the remaining
+  watchdog-style stuck HTTP(S) request timeouts. #31 tracks the remaining
   profile-wide storage discovery outside the attached frame tree and full
   general-purpose event-bus parity.
 - Accessibility-tree parity is partial; the DOM serializer now carries common

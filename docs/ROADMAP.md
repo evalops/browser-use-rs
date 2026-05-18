@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
+- [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
 
 ## Completed Tracks
 
@@ -33,6 +33,7 @@ small pushed checkpoints as each surface becomes real.
 - [#27 Expand browser profile lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/27)
 - [#28 Expose remaining browser lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/28)
 - [#29 Add reconnect recovery and deeper lifecycle watchdog automation](https://github.com/evalops/browser-use-rs/issues/29)
+- [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
 
 ## Current Checkpoint
 
@@ -196,7 +197,7 @@ Implemented:
 
 Next:
 
-1. Continue [#30](https://github.com/evalops/browser-use-rs/issues/30) by
+1. Continue [#31](https://github.com/evalops/browser-use-rs/issues/31) by
    wiring profile-wide storage discovery outside the attached frame tree into
    live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.
