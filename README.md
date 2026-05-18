@@ -19,7 +19,7 @@ includes:
   LLM requests, and agent history.
 - CDP-backed Chrome/Chromium launch/connect, tabs, navigation, screenshots,
   PDF capture, uploads, indexed actions, and page state with browser-use-style
-  short tab ids, including cached observed-node click/input/scroll/dropdown
+  short tab ids, including cached observed-node click/input/scroll/dropdown/upload
   resolution when available.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe

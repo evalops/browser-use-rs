@@ -2524,19 +2524,31 @@ JSON.stringify((() => {{
         );
         let token_json = serde_json::to_string(&token)
             .map_err(|error| BrowserError::Transport(error.to_string()))?;
-        self.evaluate_effect(element_eval_js(
-            index,
-            &format!(
-                r#"
+        let mark_upload_body = format!(
+            r#"
   if (el.tagName.toLowerCase() !== 'input' || el.type !== 'file') {{
     throw new Error('Element is not a file input');
   }}
   el.setAttribute('data-browser-use-rs-upload-token', {token_json});
   return true;
 "#
-            ),
-        ))
-        .await?;
+        );
+        let cached_element = self.cached_element(index).await;
+        let mut used_cached_element = false;
+        if let Some(element) = cached_element.as_ref() {
+            match self
+                .call_element_function(element, element_function_js(&mark_upload_body))
+                .await
+            {
+                Ok(()) => used_cached_element = true,
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if !used_cached_element {
+            self.evaluate_effect(element_eval_js(index, &mark_upload_body))
+                .await?;
+        }
 
         let page = self.current_page().await;
         let document = self
@@ -2582,16 +2594,26 @@ JSON.stringify((() => {{
             )
             .await?;
 
-        self.evaluate_effect(element_eval_js(
-            index,
-            r#"
+        let finish_upload_body = r#"
   el.removeAttribute('data-browser-use-rs-upload-token');
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return true;
-"#,
-        ))
-        .await
+"#;
+        if used_cached_element {
+            if let Some(element) = cached_element.as_ref() {
+                match self
+                    .call_element_function(element, element_function_js(finish_upload_body))
+                    .await
+                {
+                    Ok(()) => return Ok(()),
+                    Err(error) if should_fallback_to_index_traversal(&error) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        self.evaluate_effect(element_eval_js(index, finish_upload_body))
+            .await
     }
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
@@ -3772,6 +3794,61 @@ mod tests {
             .expect("select values json");
         assert_eq!(values["target"].as_str(), Some("Enterprise"));
         assert_eq!(values["inserted"].as_str(), Some("Inserted A"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_upload_uses_cached_observed_node_after_dom_reorder() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+        let upload_dir = tempfile::tempdir().expect("upload temp dir");
+        let upload_path = upload_dir.path().join("cached-upload.txt");
+        std::fs::write(&upload_path, "EvalOps cached upload").expect("write upload file");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>stable upload smoke</title></head><body><input id='target' type='file'><script>function insertBeforeTarget(){const input=document.createElement('input');input.id='inserted';input.type='file';document.body.insertBefore(input, document.getElementById('target'));}</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let target_index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "target")
+            })
+            .expect("target file input")
+            .index;
+
+        session
+            .evaluate_json("insertBeforeTarget(); true")
+            .await
+            .expect("insert file input before observed target");
+        session
+            .upload_file(target_index, &upload_path)
+            .await
+            .expect("upload cached target");
+
+        let values = session
+            .evaluate_json(
+                "JSON.stringify({ target: document.getElementById('target').files[0]?.name || '', inserted: document.getElementById('inserted').files[0]?.name || '' })",
+            )
+            .await
+            .expect("upload values");
+        let values: Value = serde_json::from_str(values.as_str().expect("encoded upload values"))
+            .expect("upload values json");
+        assert_eq!(values["target"].as_str(), Some("cached-upload.txt"));
+        assert_eq!(values["inserted"].as_str(), Some(""));
     }
 
     #[tokio::test]
