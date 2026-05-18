@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#27 Expand browser profile lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/27)
+- [#28 Expose remaining browser lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/28)
 
 ## Completed Tracks
 
@@ -30,6 +30,7 @@ small pushed checkpoints as each surface becomes real.
 - [#23 Expose managed FileSystem in agent prompt and state lifecycle](https://github.com/evalops/browser-use-rs/issues/23)
 - [#24 Add managed FileSystem replay and restored-agent conformance](https://github.com/evalops/browser-use-rs/issues/24)
 - [#25 Expose serializable Agent checkpoint and resume API](https://github.com/evalops/browser-use-rs/issues/25)
+- [#27 Expand browser profile lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/27)
 
 ## Current Checkpoint
 
@@ -182,7 +183,7 @@ Implemented:
 
 Next:
 
-1. Continue the active browser-profile lifecycle track with the remaining
+1. Continue the active remaining browser-lifecycle event hook track with
    upstream gaps: reconnection, target-crash/network-timeout, dialog, download,
    and storage-state event hooks.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.
