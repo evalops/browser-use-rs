@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#44 Honor browser page-change guards during replay execution](https://github.com/evalops/browser-use-rs/issues/44)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -47,6 +48,7 @@ small pushed checkpoints as each surface becomes real.
 - [#41 Apply interacted-element rematches to historical action replay](https://github.com/evalops/browser-use-rs/issues/41)
 - [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
 - [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
+- [#44 Honor browser page-change guards during replay execution](https://github.com/evalops/browser-use-rs/issues/44)
 
 ## Current Checkpoint
 
@@ -156,8 +158,9 @@ Implemented:
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,
-  replay-plan execution through the action executor with per-action
-  diagnostics, duration helpers, and screenshot/URL helpers.
+  replay-plan execution through generic and browser-backed action executors
+  with per-action, error, and page-change diagnostics, duration helpers, and
+  screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -226,8 +229,8 @@ Implemented:
   merging, and interacted-element rematching diagnostics for exact, stable,
   XPath, AX-name, and unique-attribute history replay foundations. Core replay
   helpers can remap saved history and execute the resulting action plan through
-  the existing action-executor boundary while preserving step/action
-  diagnostics.
+  generic or browser-backed action-executor boundaries while preserving
+  step/action diagnostics and the live executor's URL-change guard.
 
 Next:
 

@@ -132,8 +132,9 @@ includes:
   filesystem state. Conformance fixtures include a longer multi-step replay for
   planning nudges, recovery after a failed browser action, prompt-history
   limits, stagnant-page loop-awareness, interacted-element rematching,
-  action-level replay remapping diagnostics, rematched replay-plan construction
-  and execution diagnostics, file artifacts, and final `done`.
+  action-level replay remapping diagnostics, rematched replay-plan construction,
+  generic and browser-guarded replay execution diagnostics, file artifacts, and
+  final `done`.
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output
