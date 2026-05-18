@@ -27,10 +27,13 @@ Implemented:
   and bounded delay behavior, browser-history back navigation, and text-target
   scrolling, plus browser JavaScript evaluation.
 - Screenshot action behavior for next-observation screenshot requests and
-  optional local `.png` file writes.
+  optional local `.png` file writes with attachment paths.
 - PDF save action behavior for local files, including default page-title names,
-  `.pdf` extension normalization, and duplicate filename avoidance.
+  `.pdf` extension normalization, duplicate filename avoidance, and attachment
+  paths.
 - Built-in text-file read/write/replace action parity for local agent artifacts.
+- `done.files_to_display` parity for appending readable text files to the final
+  result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF

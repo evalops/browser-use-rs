@@ -27,9 +27,13 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   page search, element lookup, cached observed-node
   click/input/scroll/dropdown/upload resolution, and done.
 - `screenshot` requests screenshot inclusion in the next observation by default
-  and writes a local `.png` file when `file_name` is supplied.
+  and writes a local `.png` file with an attachment path when `file_name` is
+  supplied.
 - `save_as_pdf` writes a local PDF file, appends `.pdf` when missing, derives a
-  safe page-title filename when omitted, and avoids overwriting existing files.
+  safe page-title filename when omitted, avoids overwriting existing files, and
+  returns the saved file as an attachment.
+- `done.files_to_display` appends readable requested text files to the final
+  result and returns their attachment paths.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, max actions per step, max

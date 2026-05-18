@@ -228,6 +228,8 @@ pub struct ActionResult {
     pub is_done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub success: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
 }
@@ -244,6 +246,7 @@ impl ActionResult {
             include_in_memory: false,
             is_done: false,
             success: None,
+            attachments: Vec::new(),
             metadata: None,
         }
     }
@@ -258,6 +261,7 @@ impl ActionResult {
             include_in_memory: true,
             is_done: false,
             success: None,
+            attachments: Vec::new(),
             metadata: None,
         }
     }
@@ -272,7 +276,20 @@ impl ActionResult {
             include_in_memory: true,
             is_done: true,
             success: Some(success),
+            attachments: Vec::new(),
             metadata: None,
+        }
+    }
+
+    #[must_use]
+    pub fn done_with_attachments(
+        text: impl Into<String>,
+        success: bool,
+        attachments: Vec<String>,
+    ) -> Self {
+        Self {
+            attachments,
+            ..Self::done(text, success)
         }
     }
 }
@@ -589,6 +606,7 @@ where
                     include_in_memory: false,
                     is_done: false,
                     success: None,
+                    attachments: Vec::new(),
                     metadata: None,
                 })
             }
@@ -612,6 +630,7 @@ where
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    attachments: Vec::new(),
                     metadata: None,
                 })
             }
@@ -651,6 +670,7 @@ where
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    attachments: vec![file_name],
                     metadata: None,
                 })
             } else {
@@ -662,11 +682,12 @@ where
                     include_in_memory: false,
                     is_done: false,
                     success: None,
+                    attachments: Vec::new(),
                     metadata: None,
                 })
             }
         }
-        BrowserAction::Done(params) => Ok(ActionResult::done(params.text.clone(), params.success)),
+        BrowserAction::Done(params) => Ok(done_action_result(params)),
         BrowserAction::Extract(params) => {
             let text = session.page_text().await?;
             let source_url = session.state(false).await.ok().map(|state| state.url);
@@ -813,6 +834,7 @@ where
                 include_in_memory: true,
                 is_done: false,
                 success: None,
+                attachments: vec![file_name],
                 metadata: None,
             })
         }
@@ -843,6 +865,42 @@ fn is_file_input_click_validation_error(error: &BrowserError) -> bool {
     error
         .to_string()
         .contains("Cannot click on file input elements.")
+}
+
+fn done_action_result(params: &browser_use_tools::DoneAction) -> ActionResult {
+    let mut user_message = params.text.clone();
+    let mut file_sections = Vec::new();
+    let mut attachments = Vec::new();
+
+    for file_name in &params.files_to_display {
+        if let Some((section, attachment)) = display_done_file(file_name) {
+            file_sections.push(section);
+            attachments.push(attachment);
+        }
+    }
+
+    if !file_sections.is_empty() {
+        user_message.push_str("\n\nAttachments:");
+        for section in file_sections {
+            user_message.push_str("\n\n");
+            user_message.push_str(&section);
+        }
+    }
+
+    ActionResult::done_with_attachments(user_message, params.success, attachments)
+}
+
+fn display_done_file(file_name: &str) -> Option<(String, String)> {
+    if validate_text_file_name(file_name).is_some() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(file_name).ok()?;
+    let attachment = std::fs::canonicalize(file_name)
+        .unwrap_or_else(|_| std::path::PathBuf::from(file_name))
+        .display()
+        .to_string();
+    Some((format!("{file_name}:\n{content}"), attachment))
 }
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
@@ -919,6 +977,7 @@ fn extract_action_result(
         include_in_memory: true,
         is_done: false,
         success: None,
+        attachments: Vec::new(),
         metadata: extract_metadata(
             params,
             source_url,
@@ -1228,7 +1287,7 @@ fn ensure_png_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
 fn write_file_action(
     params: &browser_use_tools::WriteFileAction,
 ) -> Result<ActionResult, BrowserError> {
-    if let Err(result) = validate_text_file_name(&params.file_name) {
+    if let Some(result) = validate_text_file_name(&params.file_name) {
         return Ok(result);
     }
     let path = std::path::Path::new(&params.file_name);
@@ -1270,7 +1329,7 @@ fn write_file_action(
 }
 
 fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
-    if let Err(result) = validate_text_file_name(file_name) {
+    if let Some(result) = validate_text_file_name(file_name) {
         return Ok(result);
     }
     let content = std::fs::read_to_string(file_name)
@@ -1284,6 +1343,7 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
         include_in_memory: true,
         is_done: false,
         success: None,
+        attachments: Vec::new(),
         metadata: None,
     })
 }
@@ -1293,7 +1353,7 @@ fn replace_file_action(
     old_str: &str,
     new_str: &str,
 ) -> Result<ActionResult, BrowserError> {
-    if let Err(result) = validate_text_file_name(file_name) {
+    if let Some(result) = validate_text_file_name(file_name) {
         return Ok(result);
     }
     if old_str.is_empty() {
@@ -1316,14 +1376,14 @@ fn replace_file_action(
     )))
 }
 
-fn validate_text_file_name(file_name: &str) -> Result<(), ActionResult> {
+fn validate_text_file_name(file_name: &str) -> Option<ActionResult> {
     let path = std::path::Path::new(file_name);
     let base_name = path
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or(file_name);
     let Some(extension) = path.extension().and_then(std::ffi::OsStr::to_str) else {
-        return Err(ActionResult::error(format!(
+        return Some(ActionResult::error(format!(
             "Filename '{base_name}' has no extension. Supported extensions: {}.",
             supported_text_extensions_message()
         )));
@@ -1331,20 +1391,20 @@ fn validate_text_file_name(file_name: &str) -> Result<(), ActionResult> {
     let extension = extension.to_ascii_lowercase();
 
     if unsupported_binary_extensions().contains(&extension.as_str()) {
-        return Err(ActionResult::error(format!(
+        return Some(ActionResult::error(format!(
             "Cannot write binary/image file '{base_name}'. The file actions only support text-based files. Supported extensions: {}.",
             supported_text_extensions_message()
         )));
     }
 
     if !supported_text_extensions().contains(&extension.as_str()) {
-        return Err(ActionResult::error(format!(
+        return Some(ActionResult::error(format!(
             "Unsupported file extension '.{extension}' in '{base_name}'. Supported extensions: {}.",
             supported_text_extensions_message()
         )));
     }
 
-    Ok(())
+    None
 }
 
 fn supported_text_extensions() -> &'static [&'static str] {
@@ -2559,6 +2619,7 @@ mod tests {
                 include_in_memory: false,
                 is_done: matches!(action, BrowserAction::Done(_)),
                 success: None,
+                attachments: Vec::new(),
                 metadata: None,
             }
         }
@@ -3184,6 +3245,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_executor_done_displays_requested_text_files() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.md");
+        std::fs::write(&path, "alpha\nbeta").expect("seed report");
+        let file_name = path.display().to_string();
+        let missing_file = temp_dir.path().join("missing.md").display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::Done(DoneAction {
+                text: "Complete".to_owned(),
+                success: true,
+                files_to_display: vec![file_name.clone(), missing_file],
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert!(result.is_done);
+        assert_eq!(result.success, Some(true));
+        let content = result.extracted_content.as_deref().expect("done content");
+        assert!(content.starts_with("Complete\n\nAttachments:"));
+        assert!(content.contains(&format!("{file_name}:\nalpha\nbeta")));
+        assert_eq!(
+            result.attachments,
+            vec![
+                std::fs::canonicalize(&path)
+                    .expect("canonical report path")
+                    .display()
+                    .to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn browser_executor_rejects_unsupported_text_file_actions() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let session = MockSession::new();
@@ -3345,6 +3441,7 @@ mod tests {
                 .expect("screenshot content")
                 .contains(&output_path.display().to_string())
         );
+        assert_eq!(result.attachments, vec![output_path.display().to_string()]);
         assert_eq!(
             std::fs::read(&output_path).expect("screenshot file"),
             b"PNGDATA"
@@ -3417,6 +3514,7 @@ mod tests {
                 .expect("pdf content")
                 .contains(&output_path.display().to_string())
         );
+        assert_eq!(result.attachments, vec![output_path.display().to_string()]);
         assert!(
             std::fs::read(&output_path)
                 .expect("pdf file")
@@ -4301,6 +4399,7 @@ mod tests {
                         include_in_memory: true,
                         is_done: false,
                         success: None,
+                        attachments: Vec::new(),
                         metadata: None,
                     }],
                     state: blank_state(),
@@ -4335,6 +4434,7 @@ mod tests {
                     include_in_memory: true,
                     is_done: false,
                     success: None,
+                    attachments: Vec::new(),
                     metadata: None,
                 }],
                 state: blank_state(),

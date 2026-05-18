@@ -36,7 +36,7 @@ includes:
   read/write/replace, `screenshot` with optional PNG file save, `save_as_pdf`
   with filename normalization, `extract`, `search_page`, `find_elements`, back
   navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
-  `done`.
+  `done` with requested text-file display attachments.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture and screenshot image prompts, compact
   page-stat prompt context, one-time extraction replay handling, step/LLM
