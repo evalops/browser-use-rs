@@ -103,8 +103,8 @@ Implemented:
   state/value properties, and backend/frontend node ids, carries image alt text
   into image-only control names, renders selected dropdown values, compound
   control metadata, and compact select option summaries, preserves
-  automation-friendly data/ARIA/value attributes, read-only state, validation
-  patterns, `data-state`,
+  automation-friendly data/ARIA/value attributes, native boolean/read-only
+  state, validation patterns, `data-state`,
   input mask/autocomplete/date-format hints, and static
   history-matching attributes, renders native and text datepicker input format
   hints, indexes ARIA required/autocomplete/keyshortcut interactivity signals,

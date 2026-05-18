@@ -449,9 +449,11 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const axRef = `browser-use-rs-${index + 1}`;
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
+    const booleanAttributeNames = new Set(['checked', 'disabled', 'multiple', 'readonly', 'required', 'selected']);
     for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
-      if (value) attrs[name] = value;
+      if (value !== null && value !== '') attrs[name] = value;
+      else if (value === '' && booleanAttributeNames.has(name)) attrs[name] = 'true';
     }
     const altText = descendantAltText(el);
     const controlText = controlValueText(el);
@@ -4166,6 +4168,9 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.value = controlText"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.checked = String(el.checked)"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs.selected = String(el.selected)"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("booleanAttributeNames"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("booleanAttributeNames.has(name)"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("attrs[name] = 'true'"));
     }
 
     #[test]
@@ -4300,6 +4305,37 @@ mod tests {
         assert_eq!(
             element.attributes.get("expanded").map(String::as_str),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn dom_state_parser_renders_native_boolean_attributes() {
+        let state = dom_state_from_interactive_value(
+            "target-1",
+            &json!({
+                "elements": [{
+                    "index": 1,
+                    "tag_name": "input",
+                    "name": "Invoice id",
+                    "text": "INV-123",
+                    "attributes": {
+                        "id": "invoice",
+                        "readonly": "true",
+                        "required": "true",
+                        "multiple": "true"
+                    },
+                    "is_visible": true,
+                    "is_interactive": true
+                }]
+            }),
+            &BTreeMap::new(),
+        )
+        .expect("dom state");
+
+        let llm = state.llm_representation();
+        assert!(
+            llm.contains("[1] <input id=invoice multiple=true readonly=true required=true> Invoice id INV-123"),
+            "DOM state did not render native boolean attributes: {llm}"
         );
     }
 
