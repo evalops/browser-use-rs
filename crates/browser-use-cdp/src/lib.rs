@@ -1614,6 +1614,8 @@ pub struct BrowserProfile {
     pub headless: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_data_dir: Option<PathBuf>,
+    #[serde(default = "default_profile_directory")]
+    pub profile_directory: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub downloads_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1656,6 +1658,7 @@ impl Default for BrowserProfile {
             remote_debugging_port: None,
             headless: default_headless(),
             user_data_dir: None,
+            profile_directory: default_profile_directory(),
             downloads_path: None,
             storage_state_path: None,
             args: Vec::new(),
@@ -1680,6 +1683,10 @@ fn is_false(value: &bool) -> bool {
 
 fn default_headless() -> bool {
     true
+}
+
+fn default_profile_directory() -> String {
+    "Default".to_owned()
 }
 
 fn default_browser_start_timeout_ms() -> u64 {
@@ -1793,6 +1800,9 @@ impl BrowserProfile {
 
         if let Some(user_data_dir) = &self.user_data_dir {
             args.push(format!("--user-data-dir={}", user_data_dir.display()));
+            if !self.profile_directory.is_empty() {
+                args.push(format!("--profile-directory={}", self.profile_directory));
+            }
         }
 
         if self.disable_security {
@@ -7822,6 +7832,13 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert_eq!(profile.profile_directory, "Default");
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--profile-directory="))
+        );
         assert_eq!(profile.user_agent, None);
         assert!(!plan.args.iter().any(|arg| arg.starts_with("--user-agent=")));
         assert!(!profile.disable_security);
@@ -7860,6 +7877,15 @@ mod tests {
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert!(encoded.get("user_agent").is_none());
+    }
+
+    #[test]
+    fn browser_profile_profile_directory_defaults_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.profile_directory, "Default");
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["profile_directory"], json!("Default"));
     }
 
     #[test]
@@ -8275,9 +8301,80 @@ mod tests {
         );
         assert!(
             plan.args
+                .contains(&"--profile-directory=Default".to_owned())
+        );
+        assert!(
+            plan.args
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_default_profile_directory_with_user_data_dir() {
+        let profile = BrowserProfile {
+            user_data_dir: Some(PathBuf::from("/tmp/browser-use-rs-profile")),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let user_data_index = arg_index(&plan.args, "--user-data-dir=/tmp/browser-use-rs-profile");
+        let profile_directory_index = arg_index(&plan.args, "--profile-directory=Default");
+
+        assert_eq!(profile_directory_index, user_data_index + 1);
+    }
+
+    #[test]
+    fn launch_plan_omits_empty_or_orphan_profile_directory() {
+        let no_user_data_dir = BrowserProfile {
+            profile_directory: "Profile 2".to_owned(),
+            ..BrowserProfile::default()
+        }
+        .launch_plan();
+        assert!(
+            !no_user_data_dir
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--profile-directory="))
+        );
+
+        let empty_profile_directory = BrowserProfile {
+            user_data_dir: Some(PathBuf::from("/tmp/browser-use-rs-profile")),
+            profile_directory: String::new(),
+            ..BrowserProfile::default()
+        }
+        .launch_plan();
+        assert!(
+            !empty_profile_directory
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--profile-directory="))
+        );
+    }
+
+    #[test]
+    fn launch_plan_places_custom_profile_directory_before_generated_and_custom_args() {
+        let profile = BrowserProfile {
+            user_data_dir: Some(PathBuf::from("/tmp/browser-use-rs-profile")),
+            profile_directory: "Profile 2".to_owned(),
+            disable_security: true,
+            args: vec![
+                "--profile-directory=Override".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let user_data_index = arg_index(&plan.args, "--user-data-dir=/tmp/browser-use-rs-profile");
+        let profile_directory_index = arg_index(&plan.args, "--profile-directory=Profile 2");
+        let security_index = arg_index(&plan.args, "--disable-site-isolation-trials");
+        let custom_profile_directory_index = arg_index(&plan.args, "--profile-directory=Override");
+
+        assert_eq!(profile_directory_index, user_data_index + 1);
+        assert!(profile_directory_index < security_index);
+        assert!(profile_directory_index < custom_profile_directory_index);
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
     #[test]
