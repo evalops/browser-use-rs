@@ -98,7 +98,8 @@ Implemented:
   outputs, previous-result context, browser action execution, `done`, and
   serialized history, plus semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
-  tags and contents, indexes common ARIA widget roles and disclosure elements,
+  tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
+  cached-node actions, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names,
   state/value properties, and backend/frontend node ids, carries image alt text
   into image-only control names, renders selected dropdown values, compound

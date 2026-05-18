@@ -25,7 +25,8 @@ includes:
   when available.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
-  tags and contents, accessibility-tree role/name/state/value enrichment,
+  tags and contents, Chrome OOPIF cross-origin iframe target contents and
+  cached-node actions, accessibility-tree role/name/state/value enrichment,
   backend and frontend node ids, accessible labels, image-alt control names,
   selected dropdown values, compound control metadata, compact select option
   summaries, bounds, automation-friendly data/ARIA/value attributes,

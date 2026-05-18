@@ -512,6 +512,17 @@ const CLEANUP_AX_REFS_JS: &str = r#"
 })()
 "#;
 
+const FRAME_ELEMENTS_JS: &str = r#"
+JSON.stringify(Array.from(document.querySelectorAll('iframe,frame')).map((el) => {
+  const rect = el.getBoundingClientRect();
+  return {
+    url: el.src || el.getAttribute('src') || '',
+    x: Math.round(rect.x),
+    y: Math.round(rect.y)
+  };
+}))
+"#;
+
 const PAGE_INFO_JS: &str = r#"
 JSON.stringify((() => {
   const documentElement = document.documentElement;
@@ -1447,6 +1458,30 @@ pub struct AttachedPage {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FrameOffset {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FrameElementInfo {
+    url: String,
+    offset: FrameOffset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IframeTargetInfo {
+    target_id: String,
+    offset: FrameOffset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AttachedFramePage {
+    page: AttachedPage,
+    offset: FrameOffset,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct UrlAccessPolicy {
     allowed_domains: Vec<String>,
@@ -1702,19 +1737,22 @@ impl CdpBrowserSession {
         self.evaluate_json_with_options(expression, false).await
     }
 
-    async fn evaluate_json_with_command_line_api(
-        &self,
-        expression: &str,
-    ) -> Result<Value, BrowserError> {
-        self.evaluate_json_with_options(expression, true).await
-    }
-
     async fn evaluate_json_with_options(
         &self,
         expression: &str,
         include_command_line_api: bool,
     ) -> Result<Value, BrowserError> {
         let page = self.current_page().await;
+        self.evaluate_json_for_page(&page, expression, include_command_line_api)
+            .await
+    }
+
+    async fn evaluate_json_for_page(
+        &self,
+        page: &AttachedPage,
+        expression: &str,
+        include_command_line_api: bool,
+    ) -> Result<Value, BrowserError> {
         let result = self
             .connection
             .command(
@@ -1729,6 +1767,14 @@ impl CdpBrowserSession {
 
     async fn evaluate_effect(&self, expression: String) -> Result<(), BrowserError> {
         let page = self.current_page().await;
+        self.evaluate_effect_for_page(&page, expression).await
+    }
+
+    async fn evaluate_effect_for_page(
+        &self,
+        page: &AttachedPage,
+        expression: String,
+    ) -> Result<(), BrowserError> {
         let result = self
             .connection
             .command(
@@ -1745,15 +1791,27 @@ impl CdpBrowserSession {
         Ok(())
     }
 
+    async fn page_for_element(
+        &self,
+        element: &DomElementRef,
+    ) -> Result<AttachedPage, BrowserError> {
+        let page = self.current_page().await;
+        if element.target_id == page.target_id {
+            return Ok(page);
+        }
+
+        attach_to_target(&self.connection, element.target_id.clone()).await
+    }
+
     async fn resolve_element_object_id(
         &self,
         page: &AttachedPage,
         element: &DomElementRef,
     ) -> Result<String, BrowserError> {
-        let params = if let Some(node_id) = element.node_id {
-            json!({ "nodeId": node_id })
-        } else if element.backend_node_id != 0 {
+        let params = if element.backend_node_id != 0 {
             json!({ "backendNodeId": element.backend_node_id })
+        } else if let Some(node_id) = element.node_id {
+            json!({ "nodeId": node_id })
         } else {
             return Err(BrowserError::MissingResponseData(
                 "cached element node id".to_owned(),
@@ -1786,7 +1844,7 @@ impl CdpBrowserSession {
         element: &DomElementRef,
         function_declaration: String,
     ) -> Result<Value, BrowserError> {
-        let page = self.current_page().await;
+        let page = self.page_for_element(element).await?;
         let object_id = self.resolve_element_object_id(&page, element).await?;
         let result = self
             .connection
@@ -1841,14 +1899,49 @@ impl CdpBrowserSession {
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let page = self.current_page().await;
         let value = self
-            .evaluate_json_with_command_line_api(INTERACTIVE_ELEMENTS_JS)
+            .evaluate_json_for_page(&page, INTERACTIVE_ELEMENTS_JS, true)
             .await?;
         let accessibility = self
             .accessibility_enrichment(&page)
             .await
             .unwrap_or_default();
-        let _ = self.evaluate_effect(CLEANUP_AX_REFS_JS.to_owned()).await;
-        dom_state_from_interactive_value(&page.target_id, &value, &accessibility)
+        let _ = self
+            .evaluate_effect_for_page(&page, CLEANUP_AX_REFS_JS.to_owned())
+            .await;
+        let root_state = dom_state_from_interactive_value(&page.target_id, &value, &accessibility)?;
+        let frame_infos = self.frame_element_infos(&page).await.unwrap_or_default();
+        let child_pages = self
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .unwrap_or_default();
+        let mut child_states = Vec::new();
+
+        for child_page in child_pages {
+            let Ok(value) = self
+                .evaluate_json_for_page(&child_page.page, INTERACTIVE_ELEMENTS_JS, true)
+                .await
+            else {
+                continue;
+            };
+            let accessibility = self
+                .accessibility_enrichment(&child_page.page)
+                .await
+                .unwrap_or_default();
+            let _ = self
+                .evaluate_effect_for_page(&child_page.page, CLEANUP_AX_REFS_JS.to_owned())
+                .await;
+            let Ok(mut child_state) = dom_state_from_interactive_value(
+                &child_page.page.target_id,
+                &value,
+                &accessibility,
+            ) else {
+                continue;
+            };
+            offset_dom_state_bounds(&mut child_state, child_page.offset);
+            child_states.push(child_state);
+        }
+
+        Ok(merge_dom_states(root_state, child_states))
     }
 
     async fn accessibility_enrichment(
@@ -1896,6 +1989,42 @@ impl CdpBrowserSession {
                 (ax_ref, info)
             })
             .collect())
+    }
+
+    async fn frame_element_infos(
+        &self,
+        page: &AttachedPage,
+    ) -> Result<Vec<FrameElementInfo>, BrowserError> {
+        let value = self
+            .evaluate_json_for_page(page, FRAME_ELEMENTS_JS, false)
+            .await?;
+        frame_element_infos_from_value(&value)
+    }
+
+    async fn iframe_target_pages(
+        &self,
+        page: &AttachedPage,
+        frame_infos: &[FrameElementInfo],
+    ) -> Result<Vec<AttachedFramePage>, BrowserError> {
+        let targets = self
+            .connection
+            .command("Target.getTargets", json!({}), None)
+            .await?;
+        let target_infos = iframe_target_infos_from_targets(&targets, &page.target_id, frame_infos);
+        let mut pages = Vec::new();
+
+        for target_info in target_infos {
+            match attach_to_target(&self.connection, target_info.target_id).await {
+                Ok(page) => pages.push(AttachedFramePage {
+                    page,
+                    offset: target_info.offset,
+                }),
+                Err(error) if is_missing_target_error(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(pages)
     }
 
     async fn node_ids_by_backend_ids(
@@ -2040,6 +2169,147 @@ fn dom_page_stats_from_value(value: &Value) -> Option<DomPageStats> {
         total_elements: u32_field(value, "total_elements").unwrap_or_default(),
         text_chars: u32_field(value, "text_chars").unwrap_or_default(),
     })
+}
+
+fn frame_element_infos_from_value(value: &Value) -> Result<Vec<FrameElementInfo>, BrowserError> {
+    let encoded = value.as_str().ok_or_else(|| {
+        BrowserError::MissingResponseData("iframe element info string".to_owned())
+    })?;
+    let frames: Value = serde_json::from_str(encoded)
+        .map_err(|error| BrowserError::Transport(error.to_string()))?;
+    let frames = frames
+        .as_array()
+        .ok_or_else(|| BrowserError::MissingResponseData("iframe element info array".to_owned()))?;
+
+    Ok(frames
+        .iter()
+        .filter_map(|frame| {
+            let url = frame.get("url")?.as_str()?.to_owned();
+            let offset = FrameOffset {
+                x: i32_field(frame, "x").unwrap_or_default(),
+                y: i32_field(frame, "y").unwrap_or_default(),
+            };
+            Some(FrameElementInfo { url, offset })
+        })
+        .collect())
+}
+
+fn iframe_target_infos_from_targets(
+    targets: &Value,
+    parent_target_id: &str,
+    frame_infos: &[FrameElementInfo],
+) -> Vec<IframeTargetInfo> {
+    let mut used_frames = Vec::new();
+    targets
+        .get("targetInfos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|target| target.get("type").and_then(Value::as_str) == Some("iframe"))
+        .filter(|target| {
+            target
+                .get("parentId")
+                .and_then(Value::as_str)
+                .is_none_or(|parent_id| parent_id == parent_target_id)
+        })
+        .filter_map(|target| {
+            let target_id = target.get("targetId")?.as_str()?.to_owned();
+            let target_url = target.get("url").and_then(Value::as_str).unwrap_or("");
+            let offset = frame_offset_for_target_url(target_url, frame_infos, &mut used_frames)?;
+            Some(IframeTargetInfo { target_id, offset })
+        })
+        .collect()
+}
+
+fn frame_offset_for_target_url(
+    target_url: &str,
+    frame_infos: &[FrameElementInfo],
+    used_frames: &mut Vec<usize>,
+) -> Option<FrameOffset> {
+    if frame_infos.is_empty() {
+        return Some(FrameOffset::default());
+    }
+
+    let index = frame_infos
+        .iter()
+        .enumerate()
+        .find(|(index, frame)| {
+            !used_frames.contains(index) && frame_url_matches(&frame.url, target_url)
+        })
+        .map(|(index, _)| index)?;
+    used_frames.push(index);
+    Some(frame_infos[index].offset)
+}
+
+fn frame_url_matches(frame_url: &str, target_url: &str) -> bool {
+    if frame_url == target_url {
+        return true;
+    }
+
+    let Some(frame_url) = comparable_url(frame_url) else {
+        return false;
+    };
+    let Some(target_url) = comparable_url(target_url) else {
+        return false;
+    };
+    frame_url == target_url
+}
+
+fn comparable_url(value: &str) -> Option<String> {
+    let mut url = url::Url::parse(value).ok()?;
+    url.set_fragment(None);
+    Some(url.to_string())
+}
+
+fn offset_dom_state_bounds(state: &mut SerializedDomState, offset: FrameOffset) {
+    for element in state.selector_map.values_mut() {
+        if let Some(bounds) = &mut element.bounds {
+            bounds.x += offset.x;
+            bounds.y += offset.y;
+        }
+    }
+}
+
+fn merge_dom_states(
+    root_state: SerializedDomState,
+    child_states: Vec<SerializedDomState>,
+) -> SerializedDomState {
+    if child_states.is_empty() {
+        return root_state;
+    }
+
+    let mut page_stats = root_state.page_stats;
+    let mut elements = dom_state_elements(root_state);
+    for child_state in child_states {
+        add_dom_page_stats(&mut page_stats, child_state.page_stats);
+        elements.extend(dom_state_elements(child_state));
+    }
+
+    for (index, element) in elements.iter_mut().enumerate() {
+        element.index = u32::try_from(index + 1).unwrap_or(u32::MAX);
+    }
+
+    SerializedDomState::from_elements(elements).with_page_stats(page_stats)
+}
+
+fn dom_state_elements(state: SerializedDomState) -> Vec<DomElementRef> {
+    state.selector_map.into_values().collect()
+}
+
+fn add_dom_page_stats(total: &mut DomPageStats, next: DomPageStats) {
+    total.links = total.links.saturating_add(next.links);
+    total.iframes = total.iframes.saturating_add(next.iframes);
+    total.shadow_open = total.shadow_open.saturating_add(next.shadow_open);
+    total.shadow_closed = total.shadow_closed.saturating_add(next.shadow_closed);
+    total.scroll_containers = total
+        .scroll_containers
+        .saturating_add(next.scroll_containers);
+    total.images = total.images.saturating_add(next.images);
+    total.interactive_elements = total
+        .interactive_elements
+        .saturating_add(next.interactive_elements);
+    total.total_elements = total.total_elements.saturating_add(next.total_elements);
+    total.text_chars = total.text_chars.saturating_add(next.text_chars);
 }
 
 fn dom_element_from_value(
@@ -2246,6 +2516,14 @@ fn should_fallback_to_index_traversal(error: &BrowserError) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_missing_target_error(error: &BrowserError) -> bool {
+    matches!(
+        error,
+        BrowserError::CommandFailed { method, message }
+            if method == "Target.attachToTarget" && message.contains("No target with given id found")
+    )
 }
 
 fn parse_dropdown_options_value(value: Value) -> Result<Vec<String>, BrowserError> {
@@ -3291,23 +3569,27 @@ JSON.stringify((() => {{
 "#
         );
         let cached_element = self.cached_element(index).await;
-        let mut used_cached_element = false;
+        let mut marked_cached_element = None;
         if let Some(element) = cached_element.as_ref() {
             match self
                 .call_element_function(element, element_function_js(&mark_upload_body))
                 .await
             {
-                Ok(()) => used_cached_element = true,
+                Ok(()) => marked_cached_element = Some(element.clone()),
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
         }
-        if !used_cached_element {
+        if marked_cached_element.is_none() {
             self.evaluate_effect(element_eval_js(index, &mark_upload_body))
                 .await?;
         }
 
-        let page = self.current_page().await;
+        let page = if let Some(element) = marked_cached_element.as_ref() {
+            self.page_for_element(element).await?
+        } else {
+            self.current_page().await
+        };
         let document = self
             .connection
             .command(
@@ -3357,16 +3639,14 @@ JSON.stringify((() => {{
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return true;
 "#;
-        if used_cached_element {
-            if let Some(element) = cached_element.as_ref() {
-                match self
-                    .call_element_function(element, element_function_js(finish_upload_body))
-                    .await
-                {
-                    Ok(()) => return self.enforce_url_policy_after_settle().await,
-                    Err(error) if should_fallback_to_index_traversal(&error) => {}
-                    Err(error) => return Err(error),
-                }
+        if let Some(element) = marked_cached_element.as_ref() {
+            match self
+                .call_element_function(element, element_function_js(finish_upload_body))
+                .await
+            {
+                Ok(()) => return self.enforce_url_policy_after_settle().await,
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
             }
         }
         self.evaluate_effect(element_eval_js(index, finish_upload_body))
@@ -3671,6 +3951,165 @@ mod tests {
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn iframe_targets_match_parent_and_frame_urls() {
+        let targets = json!({
+            "targetInfos": [
+                {
+                    "type": "iframe",
+                    "targetId": "child",
+                    "parentId": "root",
+                    "url": "http://127.0.0.1:8081/child#section"
+                },
+                {
+                    "type": "iframe",
+                    "targetId": "unrelated",
+                    "parentId": "other-page",
+                    "url": "http://127.0.0.1:8081/child"
+                },
+                {
+                    "type": "iframe",
+                    "targetId": "fallback",
+                    "url": "https://example.test/frame"
+                },
+                {
+                    "type": "page",
+                    "targetId": "page",
+                    "url": "https://example.test/frame"
+                }
+            ]
+        });
+        let frame_infos = vec![
+            FrameElementInfo {
+                url: "http://127.0.0.1:8081/child".to_owned(),
+                offset: FrameOffset { x: 12, y: 34 },
+            },
+            FrameElementInfo {
+                url: "https://example.test/frame".to_owned(),
+                offset: FrameOffset { x: 56, y: 78 },
+            },
+        ];
+
+        let infos = iframe_target_infos_from_targets(&targets, "root", &frame_infos);
+
+        assert_eq!(
+            infos,
+            vec![
+                IframeTargetInfo {
+                    target_id: "child".to_owned(),
+                    offset: FrameOffset { x: 12, y: 34 },
+                },
+                IframeTargetInfo {
+                    target_id: "fallback".to_owned(),
+                    offset: FrameOffset { x: 56, y: 78 },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn merged_dom_states_renumber_elements_and_preserve_targets() {
+        let root = SerializedDomState::from_elements(vec![test_dom_bound_element(
+            8,
+            "root-target",
+            "Root button",
+            None,
+        )])
+        .with_page_stats(DomPageStats {
+            interactive_elements: 1,
+            total_elements: 3,
+            ..DomPageStats::default()
+        });
+        let mut child = SerializedDomState::from_elements(vec![test_dom_bound_element(
+            1,
+            "child-target",
+            "Child input",
+            Some(ElementBounds {
+                x: 5,
+                y: 7,
+                width: 90,
+                height: 20,
+            }),
+        )])
+        .with_page_stats(DomPageStats {
+            interactive_elements: 1,
+            total_elements: 2,
+            ..DomPageStats::default()
+        });
+        offset_dom_state_bounds(&mut child, FrameOffset { x: 100, y: 40 });
+
+        let merged = merge_dom_states(root, vec![child]);
+
+        assert_eq!(merged.element_count(), 2);
+        assert_eq!(merged.selector_map[&1].target_id, "root-target");
+        assert_eq!(merged.selector_map[&2].target_id, "child-target");
+        assert_eq!(merged.selector_map[&2].name.as_deref(), Some("Child input"));
+        assert_eq!(
+            merged.selector_map[&2].bounds,
+            Some(ElementBounds {
+                x: 105,
+                y: 47,
+                width: 90,
+                height: 20,
+            })
+        );
+        assert_eq!(merged.page_stats.interactive_elements, 2);
+        assert_eq!(merged.page_stats.total_elements, 5);
+    }
+
+    fn test_dom_bound_element(
+        index: u32,
+        target_id: &str,
+        name: &str,
+        bounds: Option<ElementBounds>,
+    ) -> DomElementRef {
+        DomElementRef {
+            index,
+            target_id: target_id.to_owned(),
+            backend_node_id: index.into(),
+            node_id: Some(index.into()),
+            tag_name: "button".to_owned(),
+            role: Some("button".to_owned()),
+            name: Some(name.to_owned()),
+            text: Some(name.to_owned()),
+            attributes: BTreeMap::new(),
+            bounds,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        }
+    }
+
+    async fn spawn_static_html_server(
+        body: String,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind static html server");
+        let addr = listener.local_addr().expect("static html server address");
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 1024];
+                    let _ = stream.read(&mut buffer).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (addr, server)
     }
 
     #[test]
@@ -4783,6 +5222,101 @@ mod tests {
             .await
             .expect("iframe input value");
         assert_eq!(iframe_input_value.as_str(), Some("EvalOps"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_can_index_and_act_in_cross_origin_iframe_targets() {
+        let child_html = "<html><body><button id='child-button' onclick=\"document.body.dataset.clicked='yes'\">Cross child</button><input id='child-input' placeholder='Cross input'></body></html>";
+        let (child_addr, child_server) = spawn_static_html_server(child_html.to_owned()).await;
+        let child_url = format!("http://127.0.0.1:{}/child", child_addr.port());
+        let parent_html = format!(
+            "<html><head><title>cross iframe smoke</title></head><body><iframe src='{child_url}' style='width:420px;height:180px;border:0'></iframe></body></html>"
+        );
+        let (parent_addr, parent_server) = spawn_static_html_server(parent_html).await;
+        let parent_url = format!("http://localhost:{}/parent", parent_addr.port());
+        let profile = BrowserProfile {
+            args: vec!["--site-per-process".to_owned()],
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(&parent_url, false)
+            .await
+            .expect("navigate cross-origin parent");
+        let mut initial_state = None;
+        for _ in 0..20 {
+            let state = session.state(false).await.expect("cross-origin state");
+            if state.dom_state.llm_representation().contains("Cross child") {
+                initial_state = Some(state);
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        let initial_state = initial_state.expect("cross-origin iframe element state");
+        let iframe = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.tag_name == "iframe")
+            .expect("iframe element");
+        let child_button = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.name.as_deref() == Some("Cross child"))
+            .expect("child button");
+        let child_input = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.name.as_deref() == Some("Cross input"))
+            .expect("child input");
+        assert_ne!(child_button.target_id, iframe.target_id);
+        assert_ne!(child_input.target_id, iframe.target_id);
+
+        session
+            .click(child_button.index)
+            .await
+            .expect("cross-origin child click");
+        session
+            .input_text(child_input.index, "EvalOps", true)
+            .await
+            .expect("cross-origin child input");
+
+        let page = session.current_page().await;
+        let frame_infos = session
+            .frame_element_infos(&page)
+            .await
+            .expect("frame element infos");
+        let child_page = session
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .expect("iframe target pages")
+            .into_iter()
+            .find(|frame| frame.page.target_id == child_button.target_id)
+            .expect("child target page");
+        let clicked = session
+            .evaluate_json_for_page(&child_page.page, "document.body.dataset.clicked", false)
+            .await
+            .expect("child clicked flag");
+        let input_value = session
+            .evaluate_json_for_page(
+                &child_page.page,
+                "document.getElementById('child-input').value",
+                false,
+            )
+            .await
+            .expect("child input value");
+
+        assert_eq!(clicked.as_str(), Some("yes"));
+        assert_eq!(input_value.as_str(), Some("EvalOps"));
+        child_server.abort();
+        parent_server.abort();
     }
 
     #[tokio::test]

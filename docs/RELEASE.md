@@ -18,8 +18,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
-  element metadata, automation-friendly data/ARIA/value attributes, native
-  boolean/read-only state, validation patterns, `data-state`, static
+  element metadata, Chrome OOPIF cross-origin iframe target content indexing
+  and cached-node actions, automation-friendly data/ARIA/value attributes,
+  native boolean/read-only state, validation patterns, `data-state`, static
   history-matching attributes,
   accessibility-tree role/name/state/value enrichment with backend/frontend node
   ids, hidden-element and `data-browser-use-exclude` subtree filtering, and
@@ -106,7 +107,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 
 ## Known Gaps
 
-- Cross-origin iframe interaction is not implemented.
+- Cross-origin iframe fallback traversal is limited to Chrome OOPIF target
+  sessions; stale-node fallback still searches the current main-frame DOM.
 - Browser profile URL access policies use CDP observation rather than
   upstream's event-bus watchdog, so very short-lived disallowed targets may only
   be caught at the next navigation, action, or state boundary.
