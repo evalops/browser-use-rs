@@ -40,7 +40,8 @@ includes:
   plus href-less anchor tags, common ARIA widget roles, search affordance
   signals, ARIA required/autocomplete/keyshortcut interactivity signals with
   prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
-  human-readable value text, small icon controls, cursor-pointer controls,
+  human-readable value text, contenteditable editor variants, small icon
+  controls, cursor-pointer controls,
   decorative SVG child pruning, contained duplicate descendant pruning for
   action containers, static mouse/keyboard handler attributes, pagination
   affordances, duplicate long-attribute pruning, and configurable

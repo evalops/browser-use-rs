@@ -65,8 +65,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     '[onkeydown]',
     '[onkeyup]',
     '[tabindex]:not([tabindex="-1"])',
-    '[contenteditable="true"]',
-    '[contenteditable=""]',
+    '[contenteditable]:not([contenteditable="false"])',
     '[aria-checked]',
     '[aria-expanded]',
     '[aria-pressed]',
@@ -597,8 +596,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     '[onkeydown]',
     '[onkeyup]',
     '[tabindex]:not([tabindex="-1"])',
-    '[contenteditable="true"]',
-    '[contenteditable=""]',
+    '[contenteditable]:not([contenteditable="false"])',
     '[aria-checked]',
     '[aria-expanded]',
     '[aria-pressed]',
@@ -4961,6 +4959,15 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_detects_contenteditable_variants() {
+        let contenteditable_selector = r#"[contenteditable]:not([contenteditable="false"])"#;
+        assert!(INTERACTIVE_ELEMENTS_JS.contains(contenteditable_selector));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains(contenteditable_selector));
+    }
+
+    #[test]
     fn interactive_snapshot_indexes_anchor_tags_without_href() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("'a',"));
         assert!(!INTERACTIVE_ELEMENTS_JS.contains("'a[href]'"));
@@ -6309,6 +6316,60 @@ mod tests {
             .click(shortcut.index)
             .await
             .expect("click shortcut proxy by index");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_contenteditable_variants() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>contenteditable smoke</title></head><body><div id='plain-editor' contenteditable='plaintext-only' aria-label='Plain editor'>Draft</div><div id='true-editor' contenteditable='true' aria-label='True editor'>Rich</div><div id='false-editor' contenteditable='false' aria-label='False editor'>Ignored</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing contenteditable element with id {id}"))
+        };
+
+        let plain = element_by_id("plain-editor");
+        assert_eq!(plain.name.as_deref(), Some("Plain editor"));
+        assert_eq!(
+            plain.attributes.get("contenteditable").map(String::as_str),
+            Some("plaintext-only")
+        );
+
+        let rich = element_by_id("true-editor");
+        assert_eq!(rich.name.as_deref(), Some("True editor"));
+        assert_eq!(
+            rich.attributes.get("contenteditable").map(String::as_str),
+            Some("true")
+        );
+
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "false-editor")
+        }));
     }
 
     #[tokio::test]
