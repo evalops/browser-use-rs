@@ -162,6 +162,7 @@ dependencies = [
  "async-trait",
  "browser-use-dom",
  "futures-util",
+ "reqwest",
  "schemars",
  "serde",
  "serde_json",
