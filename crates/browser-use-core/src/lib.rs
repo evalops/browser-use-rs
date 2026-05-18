@@ -39,12 +39,62 @@ pub const INITIAL_UPSTREAM_COMMIT: &str = "f09a86671591312bbc272403a7409d56f4cec
 const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
 const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct LlmScreenshotSize {
+    width: u32,
+    height: u32,
+}
+
+impl LlmScreenshotSize {
+    pub const MIN_DIMENSION: u32 = 100;
+
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        if width < Self::MIN_DIMENSION || height < Self::MIN_DIMENSION {
+            return Err("llm_screenshot_size dimensions must be at least 100 pixels".to_owned());
+        }
+        Ok(Self { width, height })
+    }
+
+    #[must_use]
+    pub fn width(self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub fn height(self) -> u32 {
+        self.height
+    }
+}
+
+impl<'de> Deserialize<'de> for LlmScreenshotSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Tuple(u32, u32),
+            Array([u32; 2]),
+            Object { width: u32, height: u32 },
+        }
+
+        let (width, height) = match Wire::deserialize(deserializer)? {
+            Wire::Tuple(width, height) | Wire::Object { width, height } => (width, height),
+            Wire::Array([width, height]) => (width, height),
+        };
+        Self::new(width, height).map_err(de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSettings {
     #[serde(default = "default_use_vision")]
     pub use_vision: VisionMode,
     #[serde(default = "default_vision_detail_level")]
     pub vision_detail_level: ImageDetailLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_screenshot_size: Option<LlmScreenshotSize>,
     #[serde(default = "default_max_failures")]
     pub max_failures: u32,
     #[serde(default)]
@@ -243,6 +293,7 @@ impl Default for AgentSettings {
         Self {
             use_vision: default_use_vision(),
             vision_detail_level: default_vision_detail_level(),
+            llm_screenshot_size: None,
             max_failures: default_max_failures(),
             generate_gif: GenerateGif::default(),
             max_actions_per_step: default_max_actions_per_step(),
@@ -4916,6 +4967,7 @@ where
     ) -> Self {
         let task = task.into();
         let settings = settings_with_direct_start_url(&task, settings);
+        let settings = settings_with_llm_screenshot_default(settings, llm.model());
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
         executor.set_action_timeout_seconds(settings.action_timeout_seconds);
@@ -5350,6 +5402,7 @@ where
             return self.record_model_error(state, error, step_start_time);
         }
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
+        let actions = scale_coordinate_click_actions_for_prompt(&actions, &self.settings, &state);
         let result = self.execute_agent_sequence(&actions).await?;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
@@ -5993,6 +6046,17 @@ fn settings_with_direct_start_url(task: &str, mut settings: AgentSettings) -> Ag
     settings
 }
 
+fn settings_with_llm_screenshot_default(
+    mut settings: AgentSettings,
+    model_name: &str,
+) -> AgentSettings {
+    if settings.llm_screenshot_size.is_none() && model_name.starts_with("claude-sonnet") {
+        settings.llm_screenshot_size =
+            Some(LlmScreenshotSize::new(1400, 850).expect("valid Claude Sonnet screenshot size"));
+    }
+    settings
+}
+
 fn extract_start_url_from_task(task: &str) -> Option<String> {
     static EMAIL_RE: OnceLock<Regex> = OnceLock::new();
     static FULL_URL_RE: OnceLock<Regex> = OnceLock::new();
@@ -6145,6 +6209,51 @@ fn actions_for_execution(
         .collect()
 }
 
+fn scale_coordinate_click_actions_for_prompt(
+    actions: &[BrowserAction],
+    settings: &AgentSettings,
+    state: &BrowserStateSummary,
+) -> Vec<BrowserAction> {
+    let Some(size) = settings.llm_screenshot_size else {
+        return actions.to_vec();
+    };
+    let Some(page_info) = state.page_info else {
+        return actions.to_vec();
+    };
+    if page_info.viewport_width == 0 || page_info.viewport_height == 0 {
+        return actions.to_vec();
+    }
+
+    actions
+        .iter()
+        .map(|action| match action {
+            BrowserAction::Click(params)
+                if params.index.is_none()
+                    && params.coordinate_x.is_some()
+                    && params.coordinate_y.is_some() =>
+            {
+                let mut scaled = params.clone();
+                scaled.coordinate_x = scaled
+                    .coordinate_x
+                    .map(|x| scale_llm_coordinate(x, size.width(), page_info.viewport_width));
+                scaled.coordinate_y = scaled
+                    .coordinate_y
+                    .map(|y| scale_llm_coordinate(y, size.height(), page_info.viewport_height));
+                BrowserAction::Click(scaled)
+            }
+            _ => action.clone(),
+        })
+        .collect()
+}
+
+fn scale_llm_coordinate(coordinate: i32, llm_dimension: u32, viewport_dimension: u32) -> i32 {
+    if llm_dimension == 0 {
+        return coordinate;
+    }
+    ((f64::from(coordinate) / f64::from(llm_dimension)) * f64::from(viewport_dimension)).trunc()
+        as i32
+}
+
 fn replace_sensitive_placeholders_in_value(
     value: &mut Value,
     sensitive_data: &BTreeMap<String, String>,
@@ -6287,7 +6396,7 @@ pub fn build_step_request_with_file_system(
         && let Some(screenshot) = state.screenshot.as_deref()
     {
         user_content.push(ContentPart::ImageUrl {
-            image_url: screenshot_data_url(screenshot),
+            image_url: prompt_screenshot_data_url(screenshot, settings.llm_screenshot_size),
             detail: Some(settings.vision_detail_level),
         });
     }
@@ -6449,7 +6558,7 @@ fn build_judge_request(
     if settings.use_vision.accepts_prompt_image() {
         for screenshot in history.screenshots(Some(10), false).into_iter().flatten() {
             user_content.push(ContentPart::ImageUrl {
-                image_url: screenshot_data_url(screenshot),
+                image_url: prompt_screenshot_data_url(screenshot, settings.llm_screenshot_size),
                 detail: Some(settings.vision_detail_level),
             });
         }
@@ -6594,6 +6703,46 @@ fn screenshot_data_url(screenshot: &str) -> String {
         screenshot.to_owned()
     } else {
         format!("data:image/png;base64,{screenshot}")
+    }
+}
+
+fn prompt_screenshot_data_url(screenshot: &str, size: Option<LlmScreenshotSize>) -> String {
+    size.and_then(|size| resize_screenshot_for_prompt(screenshot, size))
+        .unwrap_or_else(|| screenshot_data_url(screenshot))
+}
+
+fn resize_screenshot_for_prompt(screenshot: &str, size: LlmScreenshotSize) -> Option<String> {
+    let base64_png = screenshot_base64_payload(screenshot);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_png)
+        .ok()?;
+    let image = image::load_from_memory(&bytes).ok()?;
+    if image.width() == size.width() && image.height() == size.height() {
+        return Some(screenshot_data_url(screenshot));
+    }
+
+    let resized = image.resize_exact(
+        size.width(),
+        size.height(),
+        image::imageops::FilterType::Lanczos3,
+    );
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    resized
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(buffer.into_inner())
+    ))
+}
+
+fn screenshot_base64_payload(screenshot: &str) -> &str {
+    if let Some((prefix, payload)) = screenshot.split_once(',')
+        && prefix.starts_with("data:image/")
+    {
+        payload
+    } else {
+        screenshot
     }
 }
 
@@ -7631,6 +7780,7 @@ mod tests {
 
         assert_eq!(settings.use_vision, VisionMode::Always);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::Auto);
+        assert_eq!(settings.llm_screenshot_size, None);
         assert_eq!(settings.max_failures, 5);
         assert_eq!(settings.generate_gif, GenerateGif::Disabled);
         assert_eq!(settings.max_actions_per_step, 5);
@@ -7671,6 +7821,42 @@ mod tests {
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
+    }
+
+    #[test]
+    fn llm_screenshot_size_validates_and_deserializes_wire_shapes() {
+        assert_eq!(
+            LlmScreenshotSize::new(1400, 850).expect("valid size"),
+            LlmScreenshotSize {
+                width: 1400,
+                height: 850
+            }
+        );
+        assert!(LlmScreenshotSize::new(99, 850).is_err());
+        assert!(LlmScreenshotSize::new(1400, 99).is_err());
+
+        let tuple_settings: AgentSettings =
+            serde_json::from_value(serde_json::json!({"llm_screenshot_size": [1400, 850]}))
+                .expect("tuple screenshot size");
+        assert_eq!(
+            tuple_settings.llm_screenshot_size,
+            Some(LlmScreenshotSize::new(1400, 850).expect("valid tuple size"))
+        );
+
+        let object_settings: AgentSettings = serde_json::from_value(serde_json::json!({
+            "llm_screenshot_size": {"width": 1200, "height": 900}
+        }))
+        .expect("object screenshot size");
+        assert_eq!(
+            object_settings.llm_screenshot_size,
+            Some(LlmScreenshotSize::new(1200, 900).expect("valid object size"))
+        );
+
+        let error = serde_json::from_value::<AgentSettings>(
+            serde_json::json!({"llm_screenshot_size": [80, 850]}),
+        )
+        .expect_err("invalid screenshot size");
+        assert!(error.to_string().contains("at least 100"));
     }
 
     #[test]
@@ -8973,6 +9159,17 @@ mod tests {
             .write_to(&mut cursor, image::ImageFormat::Png)
             .expect("encode png");
         base64::engine::general_purpose::STANDARD.encode(cursor.into_inner())
+    }
+
+    fn png_dimensions_from_data_url(data_url: &str) -> (u32, u32) {
+        let payload = data_url
+            .strip_prefix("data:image/png;base64,")
+            .expect("png data url");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("decode png");
+        let image = image::load_from_memory(&bytes).expect("load png");
+        (image.width(), image.height())
     }
 
     fn replay_dom_element(
@@ -11803,6 +12000,7 @@ mod tests {
     }
 
     struct QueueModel {
+        model_name: String,
         outputs: Mutex<VecDeque<Result<Value, LlmError>>>,
         requests: Mutex<Vec<ChatRequest>>,
     }
@@ -11813,7 +12011,16 @@ mod tests {
         }
 
         fn with_results(outputs: Vec<Result<Value, LlmError>>) -> Self {
+            Self::with_model_and_results("static", outputs)
+        }
+
+        fn with_model(model_name: &str, outputs: Vec<Value>) -> Self {
+            Self::with_model_and_results(model_name, outputs.into_iter().map(Ok).collect())
+        }
+
+        fn with_model_and_results(model_name: &str, outputs: Vec<Result<Value, LlmError>>) -> Self {
             Self {
+                model_name: model_name.to_owned(),
                 outputs: Mutex::new(outputs.into()),
                 requests: Mutex::new(Vec::new()),
             }
@@ -11840,7 +12047,7 @@ mod tests {
         }
 
         fn model(&self) -> &str {
-            "static"
+            &self.model_name
         }
 
         async fn invoke_json(
@@ -12980,6 +13187,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_step_scales_llm_screenshot_coordinates_to_viewport() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "coordinate_x": 700,
+                        "coordinate_y": 425
+                    }
+                }
+            ]
+        });
+        let mut state = blank_state();
+        state.page_info = Some(browser_use_dom::PageInfo {
+            viewport_width: 2800,
+            viewport_height: 1700,
+            page_width: 2800,
+            page_height: 1700,
+            scroll_x: 0,
+            scroll_y: 0,
+            pixels_above: 0,
+            pixels_below: 0,
+            pixels_left: 0,
+            pixels_right: 0,
+        });
+        let settings = AgentSettings {
+            llm_screenshot_size: Some(LlmScreenshotSize::new(1400, 850).expect("valid size")),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "click coordinate from resized screenshot",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::with_states(vec![state]),
+        );
+
+        let (coordinate_x, coordinate_y) = {
+            let item = agent.step().await.expect("agent step");
+            assert_eq!(item.result[0].error, None);
+            let BrowserAction::Click(params) =
+                &item.model_output.as_ref().expect("model output").action[0]
+            else {
+                panic!("expected click action");
+            };
+            (params.coordinate_x, params.coordinate_y)
+        };
+
+        assert_eq!(
+            agent.executor.session().events(),
+            vec!["click_coordinates:1400:850"]
+        );
+        assert_eq!(coordinate_x, Some(700));
+        assert_eq!(coordinate_y, Some(425));
+    }
+
+    #[tokio::test]
     async fn agent_step_rejects_excluded_actions_before_side_effects() {
         let output = serde_json::json!({
             "current_state": {},
@@ -13276,6 +13539,20 @@ mod tests {
         assert_eq!(
             explicit_agent.executor.session().events(),
             vec!["navigate:https://explicit.example/start:false"]
+        );
+    }
+
+    #[test]
+    fn agent_auto_configures_claude_sonnet_llm_screenshot_size() {
+        let agent = Agent::new(
+            "use Claude screenshot defaults",
+            QueueModel::with_model("claude-sonnet-4-20250514", vec![]),
+            MockSession::new(),
+        );
+
+        assert_eq!(
+            agent.settings.llm_screenshot_size,
+            Some(LlmScreenshotSize::new(1400, 850).expect("valid Claude default"))
         );
     }
 
@@ -15064,6 +15341,40 @@ mod tests {
         };
         assert!(text.contains("<browser_state>"));
         assert!(!text.contains("abc123"));
+    }
+
+    #[test]
+    fn step_request_resizes_screenshot_for_llm_prompt_only() {
+        let original_screenshot = test_png_base64(240, 160);
+        let mut state = blank_state();
+        state.screenshot = Some(original_screenshot.clone());
+        let settings = AgentSettings {
+            llm_screenshot_size: Some(LlmScreenshotSize::new(120, 100).expect("valid size")),
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request(
+            "inspect resized screenshot",
+            &state,
+            &AgentHistory::default(),
+            &settings,
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let ContentPart::ImageUrl { image_url, detail } = &user_message.content[1] else {
+            panic!("expected prompt screenshot image");
+        };
+
+        assert_eq!(*detail, Some(ImageDetailLevel::Auto));
+        assert_eq!(png_dimensions_from_data_url(image_url), (120, 100));
+        assert_eq!(
+            state.screenshot.as_deref(),
+            Some(original_screenshot.as_str())
+        );
     }
 
     #[test]

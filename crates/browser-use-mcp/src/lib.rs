@@ -482,6 +482,7 @@ mod tests {
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("include_recent_events"));
         assert!(schema_text.contains("sample_images"));
+        assert!(schema_text.contains("llm_screenshot_size"));
         assert!(schema_text.contains("display_files_in_done_text"));
         assert!(schema_text.contains("available_file_paths"));
         assert!(schema_text.contains("initial_actions"));
