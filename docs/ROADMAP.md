@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is currently in flight.
+- [#69 Add upstream-style conversation transcript saving](https://github.com/evalops/browser-use-rs/issues/69)
 
 ## Completed Tracks
 
