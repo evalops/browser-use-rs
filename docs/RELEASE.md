@@ -125,7 +125,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   placeholder context with `bu_2fa_code` TOTP generation, system-message
   override/extension controls, upstream-style prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results, and step-error,
+  action-result success validation, judgement results,
+  contract-preserved `generate_gif`, `calculate_cost`, and
+  `include_tool_call_examples` settings, and step-error,
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit
   replay action rematching for historical indexed actions, rematched replay
