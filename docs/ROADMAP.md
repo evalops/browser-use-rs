@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#61 Harden release browser smoke against Chrome startup flakes](https://github.com/evalops/browser-use-rs/issues/61)
+- None.
 
 ## Completed Tracks
 
+- [#61 Harden release browser smoke against Chrome startup flakes](https://github.com/evalops/browser-use-rs/issues/61)
 - [#60 Publish generated formula to EvalOps Homebrew tap](https://github.com/evalops/browser-use-rs/issues/60)
 - [#59 Add OpenRouter app attribution headers](https://github.com/evalops/browser-use-rs/issues/59)
 - [#1 Implement CDP-backed local Chrome sessions](https://github.com/evalops/browser-use-rs/issues/1)
