@@ -70,6 +70,10 @@ pub struct AgentSettings {
     pub use_thinking: bool,
     #[serde(default)]
     pub flash_mode: bool,
+    #[serde(default = "default_use_judge")]
+    pub use_judge: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_truth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_conversation_path: Option<String>,
     #[serde(
@@ -234,6 +238,8 @@ impl Default for AgentSettings {
             planning_exploration_limit: default_planning_exploration_limit(),
             use_thinking: default_use_thinking(),
             flash_mode: false,
+            use_judge: default_use_judge(),
+            ground_truth: None,
             save_conversation_path: None,
             save_conversation_path_encoding: default_save_conversation_path_encoding(),
             include_attributes: Vec::new(),
@@ -304,6 +310,10 @@ fn default_planning_exploration_limit() -> usize {
 }
 
 fn default_use_thinking() -> bool {
+    true
+}
+
+fn default_use_judge() -> bool {
     true
 }
 
@@ -4344,6 +4354,7 @@ where
             .last()
             .is_some_and(|item| item.result.iter().any(|result| result.is_done))
         {
+            self.maybe_judge_done_result().await;
             return Ok(&self.history);
         }
 
@@ -4363,6 +4374,7 @@ where
             };
 
             if is_done {
+                self.maybe_judge_done_result().await;
                 return Ok(&self.history);
             }
 
@@ -4381,7 +4393,9 @@ where
                         let final_item = self
                             .record_final_response_after_failure(consecutive_failures)
                             .await?;
-                        if final_item.result.iter().any(|result| result.is_done) {
+                        let final_is_done = final_item.result.iter().any(|result| result.is_done);
+                        if final_is_done {
+                            self.maybe_judge_done_result().await;
                             return Ok(&self.history);
                         }
                     }
@@ -4660,6 +4674,38 @@ where
             path: target.display().to_string(),
             source,
         })
+    }
+
+    async fn maybe_judge_done_result(&mut self) {
+        if !self.settings.use_judge || !self.history.is_done() {
+            return;
+        }
+
+        let request = build_judge_request(&self.task, &self.history, &self.settings);
+        let Ok(completion) = timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        else {
+            return;
+        };
+        let Ok(completion) = completion else {
+            return;
+        };
+        let Ok(judgement) = serde_json::from_value::<JudgementResult>(completion.content) else {
+            return;
+        };
+
+        if let Some(result) = self
+            .history
+            .items
+            .last_mut()
+            .and_then(|item| item.result.last_mut())
+            .filter(|result| result.is_done)
+        {
+            result.judgement = Some(judgement);
+        }
     }
 
     fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
@@ -5069,6 +5115,99 @@ fn build_final_response_after_failure_request(
     Ok(request)
 }
 
+fn build_judge_request(
+    task: &str,
+    history: &AgentHistory,
+    settings: &AgentSettings,
+) -> ChatRequest {
+    let final_result = history.final_result().unwrap_or_default();
+    let trajectory = render_judge_trajectory(history);
+    let ground_truth = settings
+        .ground_truth
+        .as_deref()
+        .map(|ground_truth| {
+            format!(
+                "\n<ground_truth>\n{}\n</ground_truth>\n",
+                truncate_judge_text(ground_truth)
+            )
+        })
+        .unwrap_or_default();
+    let user_prompt = format!(
+        "<task>\n{}\n</task>\n{ground_truth}<agent_trajectory>\n{}\n</agent_trajectory>\n\n<final_result>\n{}\n</final_result>\n\nEvaluate this agent execution and respond with the exact JSON object requested.",
+        truncate_judge_text(task),
+        truncate_judge_text(&trajectory),
+        truncate_judge_text(final_result)
+    );
+    let mut user_content = vec![ContentPart::Text { text: user_prompt }];
+    if settings.use_vision.accepts_prompt_image() {
+        for screenshot in history.screenshots(Some(10), false).into_iter().flatten() {
+            user_content.push(ContentPart::ImageUrl {
+                image_url: screenshot_data_url(screenshot),
+                detail: Some(settings.vision_detail_level),
+            });
+        }
+    }
+
+    ChatRequest {
+        messages: vec![
+            ChatMessage::text(MessageRole::System, render_judge_system_message()),
+            ChatMessage {
+                role: MessageRole::User,
+                content: user_content,
+            },
+        ],
+        output_schema: Some(schema_for_judgement_result()),
+    }
+}
+
+fn render_judge_system_message() -> String {
+    "You are an expert judge evaluating browser automation agent performance.\n\
+     Decide whether the agent satisfied the user task, whether the final output is complete, \
+     whether browser/tool actions appear effective, and whether any captcha or impossible-task \
+     condition blocked success. Ground truth, when provided, has highest priority.\n\
+     Respond with exactly a JSON object matching JudgementResult: reasoning, verdict, \
+     failure_reason, impossible_task, reached_captcha. Do not add prose outside JSON."
+        .to_owned()
+}
+
+fn render_judge_trajectory(history: &AgentHistory) -> String {
+    history
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let model_output = item
+                .model_output
+                .as_ref()
+                .and_then(|output| serde_json::to_string_pretty(output).ok())
+                .unwrap_or_else(|| "null".to_owned());
+            let result =
+                serde_json::to_string_pretty(&item.result).unwrap_or_else(|_| "[]".to_owned());
+            format!(
+                "Step {}\nURL: {}\nTitle: {}\nModel output:\n{}\nAction result:\n{}",
+                index + 1,
+                item.state.url,
+                item.state.title,
+                model_output,
+                result
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn truncate_judge_text(text: &str) -> String {
+    const MAX_CHARS: usize = 40_000;
+    if text.chars().count() <= MAX_CHARS {
+        return text.to_owned();
+    }
+    let truncated = text
+        .chars()
+        .take(MAX_CHARS.saturating_sub(23))
+        .collect::<String>();
+    format!("{truncated}...[text truncated]...")
+}
+
 fn screenshot_data_url(screenshot: &str) -> String {
     if screenshot.starts_with("data:image/") {
         screenshot.to_owned()
@@ -5420,6 +5559,10 @@ fn glob_match(value: &str, pattern: &str) -> bool {
 
 fn schema_for_agent_output() -> Value {
     serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
+}
+
+fn schema_for_judgement_result() -> Value {
+    serde_json::to_value(schemars::schema_for!(JudgementResult)).unwrap_or(Value::Null)
 }
 
 fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
@@ -6094,6 +6237,8 @@ mod tests {
         assert_eq!(settings.planning_exploration_limit, 5);
         assert!(settings.use_thinking);
         assert!(!settings.flash_mode);
+        assert!(settings.use_judge);
+        assert_eq!(settings.ground_truth, None);
         assert_eq!(settings.save_conversation_path, None);
         assert_eq!(
             settings.save_conversation_path_encoding.as_deref(),
@@ -10291,7 +10436,10 @@ mod tests {
         });
         let mut agent = Agent::with_settings_and_file_system(
             "continue after restore",
-            AgentSettings::default(),
+            AgentSettings {
+                use_judge: false,
+                ..AgentSettings::default()
+            },
             QueueModel::new(vec![read_output, done_output]),
             MockSession::new(),
             restored,
@@ -10366,6 +10514,7 @@ mod tests {
         });
         let settings = AgentSettings {
             initial_actions: vec![BrowserAction::Wait(WaitAction { seconds: 0 })],
+            use_judge: false,
             ..AgentSettings::default()
         };
         let temp_dir = tempfile::tempdir().expect("temp dir");
@@ -11152,6 +11301,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_run_attaches_judge_result_to_done() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let judge_output = serde_json::json!({
+            "reasoning": "The task asked for stricter evidence.",
+            "verdict": false,
+            "failure_reason": "Missing required citation.",
+            "impossible_task": false,
+            "reached_captcha": false
+        });
+        let mut state = blank_state();
+        state.screenshot = Some("judge-shot".to_owned());
+        let settings = AgentSettings {
+            ground_truth: Some("Must include a source citation.".to_owned()),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "complete with proof",
+            settings,
+            QueueModel::new(vec![done_output, judge_output]),
+            MockSession::with_states(vec![state]),
+        );
+
+        let history = agent.run(1).await.expect("agent run").clone();
+
+        assert_eq!(history.final_result(), Some("complete"));
+        assert_eq!(history.is_successful(), Some(true));
+        assert_eq!(history.is_validated(), Some(false));
+        let judgement = history.judgement().expect("judgement");
+        assert_eq!(
+            judgement.failure_reason.as_deref(),
+            Some("Missing required citation.")
+        );
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 2);
+        let judge_text = request_text(&requests[1]);
+        assert!(judge_text.contains("<ground_truth>"));
+        assert!(judge_text.contains("Must include a source citation."));
+        assert!(judge_text.contains("<final_result>\ncomplete\n</final_result>"));
+        assert!(judge_text.contains("complete with proof"));
+        assert!(
+            requests[1].messages.iter().any(|message| {
+                message.content.iter().any(|part| {
+                    matches!(
+                        part,
+                        ContentPart::ImageUrl { image_url, .. }
+                            if image_url == "data:image/png;base64,judge-shot"
+                    )
+                })
+            }),
+            "judge request should include recent screenshots"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_skips_judge_when_disabled() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "skip judge",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("agent run").clone();
+
+        assert_eq!(history.final_result(), Some("complete"));
+        assert_eq!(history.judgement(), None);
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
     async fn agent_setting_can_attach_done_files_without_displaying_text() {
         let output = serde_json::json!({
             "current_state": {},
@@ -11369,6 +11617,7 @@ mod tests {
         });
         let settings = AgentSettings {
             max_failures: 2,
+            use_judge: false,
             ..AgentSettings::default()
         };
         let mut agent = Agent::with_settings(
