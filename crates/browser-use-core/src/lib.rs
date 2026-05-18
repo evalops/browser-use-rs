@@ -15,7 +15,7 @@ use base64::Engine;
 use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
 use url::form_urlencoded;
 
-pub use browser_use_dom::BrowserStateSummary;
+pub use browser_use_dom::{BrowserStateSummary, DomInteractedElement};
 pub use browser_use_llm::{
     AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ContentPart,
     GeminiChatModel, LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
@@ -601,7 +601,13 @@ impl AgentHistory {
                     .filter_map(|(action, result)| {
                         let mut action_output = serde_json::to_value(action).ok()?;
                         if let Value::Object(attributes) = &mut action_output {
-                            attributes.insert("interacted_element".to_owned(), Value::Null);
+                            let interacted_element = action
+                                .interacted_element_index()
+                                .and_then(|index| item.state.dom_state.selector_map.get(&index))
+                                .map(DomInteractedElement::from_element)
+                                .and_then(|element| serde_json::to_value(element).ok())
+                                .unwrap_or(Value::Null);
+                            attributes.insert("interacted_element".to_owned(), interacted_element);
                             attributes.insert(
                                 "result".to_owned(),
                                 result
@@ -5587,6 +5593,73 @@ mod tests {
             })
         );
         assert!((history.total_duration_seconds() - 3.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn action_history_includes_interacted_element_for_indexed_actions() {
+        let element = browser_use_dom::DomElementRef {
+            index: 1,
+            target_id: "target-123".to_owned(),
+            backend_node_id: 44,
+            node_id: Some(9),
+            tag_name: "input".to_owned(),
+            role: Some("textbox".to_owned()),
+            name: Some("Email".to_owned()),
+            text: Some("ada@example.test".to_owned()),
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "email".to_owned()),
+                ("type".to_owned(), "email".to_owned()),
+                ("ax_name".to_owned(), "Email".to_owned()),
+            ]),
+            bounds: Some(browser_use_dom::ElementBounds {
+                x: 5,
+                y: 10,
+                width: 200,
+                height: 30,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let mut state = blank_state();
+        state.dom_state = browser_use_dom::SerializedDomState::from_elements(vec![element.clone()]);
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: Some(AgentOutput {
+                    current_state: AgentCurrentState::default(),
+                    thinking: None,
+                    evaluation_previous_goal: None,
+                    memory: None,
+                    next_goal: None,
+                    current_plan_item: None,
+                    plan_update: None,
+                    action: vec![
+                        BrowserAction::Input(InputTextAction {
+                            index: 1,
+                            text: "ada@example.test".to_owned(),
+                            clear: true,
+                        }),
+                        BrowserAction::Wait(WaitAction { seconds: 0 }),
+                    ],
+                }),
+                result: vec![
+                    ActionResult::extracted("Typed into element 1"),
+                    ActionResult::extracted("Paused"),
+                ],
+                state,
+                metadata: None,
+            }],
+        };
+
+        let history = history.action_history();
+        assert_eq!(
+            history[0][0]["interacted_element"],
+            serde_json::to_value(DomInteractedElement::from_element(&element))
+                .expect("interacted element")
+        );
+        assert_eq!(history[0][0]["result"], "Typed into element 1");
+        assert_eq!(history[0][1]["interacted_element"], Value::Null);
+        assert_eq!(history[0][1]["result"], "Paused");
     }
 
     #[test]
