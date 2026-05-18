@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #89 lands and CI is green.
+- [#90 Add upstream long-URL shortening and output restoration](https://github.com/evalops/browser-use-rs/issues/90)
 
 ## Completed Tracks
 
