@@ -869,7 +869,7 @@ mod tests {
             },
         );
 
-        let history = agent.run(1).await.expect("agent run");
+        let history = agent.run(2).await.expect("agent run");
         assert!(history.is_done());
 
         let requests = requests.lock().expect("requests lock");
@@ -1439,9 +1439,10 @@ mod tests {
         );
 
         assert!(matches!(
-            writer.run(1).await,
-            Err(AgentRunError::StepLimitReached { max_steps: 1 })
+            writer.run(0).await,
+            Err(AgentRunError::StepLimitReached { max_steps: 0 })
         ));
+        writer.step().await.expect("write checkpoint files");
         writer
             .file_system_mut()
             .save_extracted_content("checkpoint conformance extract")
