@@ -13,7 +13,7 @@ use browser_use_llm::{
 use clap::Parser;
 use schemars::schema_for;
 use serde_json::Value;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::sleep;
 
@@ -38,10 +38,14 @@ enum Command {
     McpTools,
     /// Run a stdio MCP server exposing browser-use tools.
     McpStdio,
-    /// Run a TCP JSON-RPC daemon exposing the same tools as mcp-stdio.
+    /// Run a TCP or HTTP JSON-RPC daemon exposing the same tools as mcp-stdio.
     Daemon {
         #[arg(long, default_value = "127.0.0.1:8765")]
         addr: String,
+        #[arg(long, value_enum, default_value = "tcp")]
+        transport: DaemonTransport,
+        #[arg(long, env = "BROWSER_USE_RS_DAEMON_TOKEN")]
+        auth_token: Option<String>,
     },
     /// Create, reuse, and stop local Chrome sessions across CLI invocations.
     Session {
@@ -141,6 +145,12 @@ enum LlmProvider {
     Ollama,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum DaemonTransport {
+    Tcp,
+    Http,
+}
+
 impl LlmProvider {
     fn from_mcp(provider: Option<browser_use_mcp::AgentProvider>) -> Self {
         match provider.unwrap_or(browser_use_mcp::AgentProvider::OpenAiCompatible) {
@@ -214,8 +224,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::McpStdio) => {
             run_mcp_stdio().await?;
         }
-        Some(Command::Daemon { addr }) => {
-            run_daemon(&addr).await?;
+        Some(Command::Daemon {
+            addr,
+            transport,
+            auth_token,
+        }) => {
+            run_daemon(&addr, transport, auth_token).await?;
         }
         Some(Command::Session { command }) => {
             run_session_command(command).await?;
@@ -644,7 +658,18 @@ async fn run_mcp_stdio() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_daemon(addr: &str) -> anyhow::Result<()> {
+async fn run_daemon(
+    addr: &str,
+    transport: DaemonTransport,
+    auth_token: Option<String>,
+) -> anyhow::Result<()> {
+    match transport {
+        DaemonTransport::Tcp => run_tcp_daemon(addr).await,
+        DaemonTransport::Http => run_http_daemon(addr, auth_token).await,
+    }
+}
+
+async fn run_tcp_daemon(addr: &str) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     println!("{}", listener.local_addr()?);
     let runtime = Arc::new(tokio::sync::Mutex::new(McpRuntime::default()));
@@ -682,6 +707,209 @@ async fn handle_daemon_connection(
     }
 
     Ok(())
+}
+
+async fn run_http_daemon(addr: &str, auth_token: Option<String>) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    println!("{}", listener.local_addr()?);
+    let runtime = Arc::new(tokio::sync::Mutex::new(McpRuntime::default()));
+    let auth_token = auth_token.map(Arc::new);
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let runtime = Arc::clone(&runtime);
+        let auth_token = auth_token.clone();
+        tokio::spawn(async move {
+            let _ = handle_http_daemon_connection(stream, runtime, auth_token).await;
+        });
+    }
+}
+
+async fn handle_http_daemon_connection(
+    mut stream: TcpStream,
+    runtime: Arc<tokio::sync::Mutex<McpRuntime>>,
+    auth_token: Option<Arc<String>>,
+) -> anyhow::Result<()> {
+    let request = read_http_request(&mut stream).await?;
+    let response = {
+        let mut runtime = runtime.lock().await;
+        handle_http_request(
+            request,
+            &mut runtime,
+            auth_token.as_deref().map(String::as_str),
+        )
+        .await
+    };
+    stream.write_all(&response.to_bytes()).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+struct HttpResponse {
+    status: u16,
+    body: Vec<u8>,
+}
+
+impl HttpResponse {
+    fn json(status: u16, value: Value) -> Self {
+        Self {
+            status,
+            body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec()),
+        }
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let reason = http_reason(self.status);
+        let mut response = format!(
+            "HTTP/1.1 {} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            self.status,
+            self.body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&self.body);
+        response
+    }
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<HttpRequest> {
+    const MAX_HEADER_BYTES: usize = 16 * 1024;
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 1024];
+
+    let header_end = loop {
+        if let Some(index) = find_http_header_end(&buffer) {
+            break index;
+        }
+        if buffer.len() >= MAX_HEADER_BYTES {
+            anyhow::bail!("HTTP headers exceeded {MAX_HEADER_BYTES} bytes");
+        }
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            anyhow::bail!("connection closed before complete HTTP headers");
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    };
+
+    let header_text = std::str::from_utf8(&buffer[..header_end])?;
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing HTTP request line"))?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing HTTP method"))?
+        .to_owned();
+    let path = request_parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing HTTP path"))?
+        .to_owned();
+
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_default();
+    let body_start = header_end + 4;
+    let mut body = buffer.get(body_start..).unwrap_or_default().to_vec();
+    while body.len() < content_length {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            anyhow::bail!("connection closed before complete HTTP body");
+        }
+        body.extend_from_slice(&chunk[..read]);
+    }
+    body.truncate(content_length);
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+fn find_http_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+async fn handle_http_request(
+    request: HttpRequest,
+    runtime: &mut McpRuntime,
+    auth_token: Option<&str>,
+) -> HttpResponse {
+    if request.method == "GET" && request.path == "/healthz" {
+        return HttpResponse::json(200, serde_json::json!({ "ok": true }));
+    }
+
+    if request.method != "POST" || request.path != "/rpc" {
+        return HttpResponse::json(
+            404,
+            serde_json::json!({ "error": "not_found", "message": "use POST /rpc" }),
+        );
+    }
+
+    if !http_request_authorized(&request, auth_token) {
+        return HttpResponse::json(
+            401,
+            serde_json::json!({ "error": "unauthorized", "message": "missing or invalid daemon token" }),
+        );
+    }
+
+    let raw = match std::str::from_utf8(&request.body) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return HttpResponse::json(
+                400,
+                serde_json::json!({ "error": "invalid_utf8", "message": error.to_string() }),
+            );
+        }
+    };
+
+    match handle_mcp_message(raw, runtime).await {
+        Some(response) => HttpResponse::json(200, response),
+        None => HttpResponse::json(202, serde_json::json!({ "accepted": true })),
+    }
+}
+
+fn http_request_authorized(request: &HttpRequest, auth_token: Option<&str>) -> bool {
+    let Some(auth_token) = auth_token else {
+        return true;
+    };
+    let bearer = request
+        .headers
+        .get("authorization")
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| token == auth_token);
+    let token_header = request
+        .headers
+        .get("x-browser-use-rs-token")
+        .is_some_and(|token| token == auth_token);
+    bearer || token_header
+}
+
+fn http_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        _ => "OK",
+    }
 }
 
 #[derive(Default)]
@@ -1098,5 +1326,163 @@ mod tests {
         assert_eq!(settings.max_history_items, Some(7));
         assert_eq!(settings.max_clickable_elements_length, 8000);
         assert_eq!(settings.include_attributes, ["data-testid", "aria-label"]);
+    }
+
+    #[test]
+    fn parses_http_daemon_flags() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "daemon",
+            "--addr",
+            "127.0.0.1:0",
+            "--transport",
+            "http",
+            "--auth-token",
+            "secret",
+        ])
+        .expect("daemon flags should parse");
+
+        match cli.command.expect("daemon command") {
+            Command::Daemon {
+                addr,
+                transport,
+                auth_token,
+            } => {
+                assert_eq!(addr, "127.0.0.1:0");
+                assert_eq!(transport, DaemonTransport::Http);
+                assert_eq!(auth_token.as_deref(), Some("secret"));
+            }
+            _ => panic!("expected daemon command"),
+        }
+    }
+
+    #[test]
+    fn authorizes_http_daemon_requests() {
+        let request = http_request(
+            "POST",
+            "/rpc",
+            [
+                ("authorization", "Bearer secret"),
+                ("x-browser-use-rs-token", "wrong"),
+            ],
+            b"{}",
+        );
+        assert!(http_request_authorized(&request, Some("secret")));
+        assert!(http_request_authorized(&request, None));
+
+        let request = http_request(
+            "POST",
+            "/rpc",
+            [("x-browser-use-rs-token", "secret")],
+            b"{}",
+        );
+        assert!(http_request_authorized(&request, Some("secret")));
+
+        let request = http_request("POST", "/rpc", [("authorization", "Bearer nope")], b"{}");
+        assert!(!http_request_authorized(&request, Some("secret")));
+    }
+
+    #[tokio::test]
+    async fn http_daemon_healthz_does_not_require_auth() {
+        let mut runtime = McpRuntime::default();
+        let response = handle_http_request(
+            http_request("GET", "/healthz", [], b""),
+            &mut runtime,
+            Some("secret"),
+        )
+        .await;
+
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn http_daemon_rejects_missing_token() {
+        let mut runtime = McpRuntime::default();
+        let response = handle_http_request(
+            http_request(
+                "POST",
+                "/rpc",
+                [],
+                br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+            ),
+            &mut runtime,
+            Some("secret"),
+        )
+        .await;
+
+        assert_eq!(response.status, 401);
+        let body: Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(body["error"], "unauthorized");
+    }
+
+    #[tokio::test]
+    async fn http_daemon_dispatches_json_rpc_with_auth() {
+        let mut runtime = McpRuntime::default();
+        let response = handle_http_request(
+            http_request(
+                "POST",
+                "/rpc",
+                [("authorization", "Bearer secret")],
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
+            ),
+            &mut runtime,
+            Some("secret"),
+        )
+        .await;
+
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["id"], 1);
+        assert!(body["result"]["tools"].as_array().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool["name"] == browser_use_mcp::STATE_TOOL_NAME)
+        }));
+    }
+
+    #[tokio::test]
+    async fn reads_http_request_with_split_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+
+        let writer = tokio::spawn(async move {
+            let mut stream = TcpStream::connect(addr).await.expect("connect");
+            stream
+                .write_all(
+                    b"POST /rpc HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\n\r\nhello",
+                )
+                .await
+                .expect("write headers");
+            stream.write_all(b" world").await.expect("write body");
+        });
+
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let request = read_http_request(&mut stream).await.expect("read request");
+        writer.await.expect("writer task");
+
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/rpc");
+        assert_eq!(request.headers["host"], "localhost");
+        assert_eq!(request.body, b"hello world");
+    }
+
+    fn http_request<const N: usize>(
+        method: &str,
+        path: &str,
+        headers: [(&str, &str); N],
+        body: &[u8],
+    ) -> HttpRequest {
+        HttpRequest {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            headers: headers
+                .into_iter()
+                .map(|(name, value)| (name.to_ascii_lowercase(), value.to_owned()))
+                .collect(),
+            body: body.to_vec(),
+        }
     }
 }

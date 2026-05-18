@@ -49,8 +49,9 @@ includes:
   and URL history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
-- CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session
-  registry, typed MCP agent settings, and conformance fixtures.
+- CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
+  bearer/header auth, persistent session registry, typed MCP agent settings,
+  and conformance fixtures.
 
 ## Design Rules
 
@@ -79,7 +80,7 @@ repository issue tracker.
 ## CLI
 
 The CLI includes one-shot browser commands, persistent local sessions, MCP
-stdio, and a local TCP JSON-RPC daemon.
+stdio, and a local TCP or HTTP JSON-RPC daemon.
 
 See [docs/CLI.md](docs/CLI.md).
 

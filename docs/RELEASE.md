@@ -61,8 +61,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   `AgentSettings`, in-process session reuse by `session_id`, and reconnection
   to persistent CLI session records.
 - MCP stdio persistent session lifecycle for start, stop, and list.
-- Local TCP JSON-RPC daemon exposing the MCP tool surface with shared
-  in-process sessions across active connections.
+- Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
+  the MCP tool surface with shared in-process sessions across active
+  connections, `GET /healthz`, and optional bearer/header token auth for
+  `POST /rpc`.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -75,8 +77,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised
   background service that owns their lifecycle.
-- The daemon is local TCP JSON-RPC only; HTTP, auth, and production supervision
-  are not implemented.
+- The daemon is still a local process; production supervision is not
+  implemented.
 - Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
   Gemini GenerateContent, and Ollama Chat is not implemented.
 - Filesystem actions are text-file focused; upstream PDF, DOCX, and image file

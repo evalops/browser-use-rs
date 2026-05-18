@@ -12,7 +12,8 @@ browser-use-rs schema action
 browser-use-rs schema browser-state
 browser-use-rs mcp-tools
 browser-use-rs mcp-stdio
-browser-use-rs daemon [--addr 127.0.0.1:8765]
+browser-use-rs daemon [--addr 127.0.0.1:8765] [--transport tcp|http] \
+  [--auth-token <token>]
 browser-use-rs open <url>
 browser-use-rs state <url> [--screenshot]
 browser-use-rs screenshot <url> <output.png>
@@ -98,10 +99,15 @@ session. `browser_use_session` can start, stop, and list persistent session
 records. If `session_id` matches a persistent session record, `mcp-stdio`
 reconnects to that Chrome session even after the stdio server process restarts.
 
-`daemon` binds a TCP listener and exposes the same newline-delimited JSON-RPC
-surface as `mcp-stdio` to each connection. It prints the bound address on
-startup, shares one in-process session runtime across active connections, and
-uses the same persistent session registry as the CLI and MCP session tool.
+`daemon` binds a local listener, prints the bound address on startup, shares one
+in-process session runtime across active connections, and uses the same
+persistent session registry as the CLI and MCP session tool. The default
+`--transport tcp` exposes the same newline-delimited JSON-RPC surface as
+`mcp-stdio` to each connection. `--transport http` exposes `GET /healthz` and
+`POST /rpc`; the `/rpc` body is the same JSON-RPC request used by stdio/TCP and
+returns the JSON-RPC response as JSON. `--auth-token <token>` or
+`BROWSER_USE_RS_DAEMON_TOKEN=<token>` requires HTTP clients to send either
+`Authorization: Bearer <token>` or `X-Browser-Use-Rs-Token: <token>`.
 
 ## Current Limits
 
@@ -118,5 +124,5 @@ uses the same persistent session registry as the CLI and MCP session tool.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.
-- The daemon is a local TCP JSON-RPC surface; it does not yet provide HTTP,
-  authentication, or production process supervision.
+- The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
+  authentication; production process supervision is still out of scope.

@@ -65,7 +65,8 @@ Implemented:
   agent settings flags.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs with typed agent settings.
-- Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.
+- Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
+  the same MCP tools as stdio, including health checks and optional HTTP auth.
 - Conformance fixtures cover a scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`, and
   serialized history, plus semantic step timing metadata checks.
@@ -83,6 +84,6 @@ Implemented:
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Harden the network daemon with HTTP, auth, and supervision options.
+2. Add supervised daemon lifecycle options for long-lived operator installs.
 3. Expand agent planning depth, replay coverage, and provider parity beyond
    OpenAI-compatible, Anthropic, Gemini, and Ollama.

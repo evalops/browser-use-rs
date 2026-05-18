@@ -6,12 +6,17 @@ server exposed through:
 ```sh
 browser-use-rs mcp-stdio
 browser-use-rs daemon --addr 127.0.0.1:8765
+browser-use-rs daemon --transport http --auth-token <token>
 ```
 
 The server implements newline-delimited JSON-RPC over stdin/stdout for the MCP
-`2025-06-18` lifecycle and tools surface. The daemon exposes the same
-newline-delimited JSON-RPC messages over TCP and shares one in-process runtime
-across active connections.
+`2025-06-18` lifecycle and tools surface. The daemon shares one in-process
+runtime across active connections. Its default TCP transport exposes the same
+newline-delimited JSON-RPC messages over each connection. Its HTTP transport
+exposes unauthenticated `GET /healthz` and JSON `POST /rpc`; when
+`--auth-token` or `BROWSER_USE_RS_DAEMON_TOKEN` is configured, `/rpc` requires
+either `Authorization: Bearer <token>` or
+`X-Browser-Use-Rs-Token: <token>`.
 
 Current tool contracts:
 
@@ -64,4 +69,13 @@ printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
   | browser-use-rs mcp-stdio
+```
+
+Minimal HTTP daemon request shape:
+
+```sh
+curl -sS -X POST http://127.0.0.1:8765/rpc \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer <token>' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
