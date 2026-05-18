@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after the latest #88 callback-control CI is green.
+- [#89 Add upstream llm_screenshot_size resizing and coordinate scaling](https://github.com/evalops/browser-use-rs/issues/89)
 
 ## Completed Tracks
 
