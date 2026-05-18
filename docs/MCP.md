@@ -74,7 +74,8 @@ input. Supported values are `json-schema`, `json-object`, `prompt-only`, and
 kebab-case enum values.
 
 `browser_use_agent` also accepts an optional typed `settings` object matching
-`browser-use-core`'s `AgentSettings`, including vision, image detail level,
+`browser-use-core`'s `AgentSettings`, including upstream-compatible
+`use_vision` values of `true`, `false`, or `"auto"`, image detail level,
 action limits, timeouts, final `done` responses after repeated failures,
 optional `done.files_to_display` text expansion, prompt-history limits,
 planning controls, thinking/flash output modes, and prompt-visible DOM
@@ -83,7 +84,9 @@ sensitive-data prompt context, opt-in recent browser events, and system-message
 override/extension fields.
 Excluded action names are removed from the model output schema and rejected
 before execution if a loose provider still returns one, while `done` remains
-available for completion. Sensitive data values
+available for completion. The `screenshot` action is exposed only when
+`use_vision` is `"auto"`; true keeps normal screenshot observations on, and
+false keeps them off even after a loose screenshot action. Sensitive data values
 are rendered to the model as placeholder names, not raw values, and placeholders
 ending in `bu_2fa_code` generate TOTP codes at execution time. Provider
 credentials remain environment-only and are intentionally absent from tool input

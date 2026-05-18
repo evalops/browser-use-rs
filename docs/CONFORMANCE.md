@@ -25,8 +25,9 @@ browser-use where compatibility is claimed.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, prompt attribute settings, extraction
    metadata, per-step timing metadata, excluded action schema/runtime controls,
-   recent-event prompt controls, vision detail levels, `done` file-display
-   controls, done semantics, and final history.
+   recent-event prompt controls, upstream-compatible auto vision modes,
+   screenshot action gating, vision detail levels, `done` file-display controls,
+   done semantics, and final history.
 5. Provider contracts: OpenAI-compatible Chat Completions, OpenAI-wire upstream
    aliases, Anthropic, Gemini, and Ollama structured-output payloads first,
    including DeepSeek forced tool-call guidance and Cerebras prompt-only

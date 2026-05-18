@@ -79,9 +79,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   lookup across Chrome OOPIF iframe targets, cached observed-node
   click/input/scroll/dropdown/upload resolution, target-aware stale-node
   fallback for cached iframe actions, and done.
-- `screenshot` requests screenshot inclusion in the next observation by default
-  and writes a local `.png` file with an attachment path when `file_name` is
-  supplied.
+- `screenshot` is model-facing only in upstream-style auto vision mode. Default
+  vision still includes screenshots in normal observations, disabled vision
+  never requests screenshots, and auto mode requests the next screenshot after
+  the model chooses `screenshot`. The action writes a local `.png` file with an
+  attachment path when `file_name` is supplied.
 - `save_as_pdf` writes a local PDF file, appends `.pdf` when missing, derives a
   safe page-title filename when omitted, avoids overwriting existing files, and
   returns the saved file as an attachment.
@@ -111,7 +113,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, upstream-style excluded-action schema controls and
   pre-execution enforcement, opt-in recent browser events, upstream-style
-  vision detail levels, upstream-style `done` file-display controls,
+  upstream-compatible `true`/`false`/`auto` vision modes with auto-only
+  screenshot action gating, vision detail levels, upstream-style `done`
+  file-display controls,
   thinking/flash output-schema controls, upstream-style flattened required
   output fields, upstream-style prompt-history inclusion and limits,
   clickable-element text limits, upstream-style one-time read-state

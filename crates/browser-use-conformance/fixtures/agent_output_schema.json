@@ -276,18 +276,6 @@
         {
           "additionalProperties": false,
           "properties": {
-            "screenshot": {
-              "$ref": "#/definitions/ScreenshotAction"
-            }
-          },
-          "required": [
-            "screenshot"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
             "save_as_pdf": {
               "$ref": "#/definitions/SaveAsPdfAction"
             }

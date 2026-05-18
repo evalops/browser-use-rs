@@ -29,7 +29,8 @@ browser-use-rs agent <url> <task> --provider openai-compatible \
   [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
   [--allowed-domain example.com] [--prohibited-domain tracker.example.com] \
   [--block-ip-addresses] \
-  [--max-steps 10] [--no-vision] [--vision-detail-level auto|low|high] \
+  [--max-steps 10] [--no-vision] [--vision-mode always|auto|never] \
+  [--vision-detail-level auto|low|high] \
   [--max-actions-per-step 5] \
   [--no-final-response-after-failure] [--no-display-files-in-done-text] \
   [--flash-mode] \
@@ -128,8 +129,9 @@ wildcard hosts such as
 URL globs such as `chrome-extension://*`.
 
 Agent runs also expose the typed `AgentSettings` knobs used by the MCP agent
-tool: `--no-vision`, `--vision-detail-level <auto|low|high>` for screenshot
-and read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
+tool: `--no-vision` or `--vision-mode <always|auto|never>` for upstream-style
+vision behavior, `--vision-detail-level <auto|low|high>` for screenshot and
+read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--llm-timeout-seconds`, `--step-timeout-seconds`,
 `--no-final-response-after-failure`, `--no-display-files-in-done-text` for
 attaching requested `done.files_to_display` paths without expanding their text
@@ -144,6 +146,9 @@ agent prompt. Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns
 one, while keeping `done` available for completion. Use repeated
+`--vision-mode auto` to expose the model-facing `screenshot` action; `always`
+keeps screenshots in normal observations, and `never` disables screenshot
+observations even if a loose model asks for the screenshot action. Use repeated
 `--sensitive-data <placeholder=value>` for global sensitive placeholders, and
 repeated `--sensitive-data-domain <domain-pattern=placeholder=value>` for
 domain-scoped placeholders. Sensitive values are replaced during action
