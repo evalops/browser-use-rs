@@ -77,8 +77,10 @@ kebab-case enum values.
 `browser-use-core`'s `AgentSettings`, including vision, action limits,
 timeouts, final `done` responses after repeated failures, prompt-history
 limits, planning controls, thinking/flash output modes, and prompt-visible DOM
-attributes plus initial actions, available file-path and sensitive-data prompt
-context, and system-message override/extension fields. Sensitive data values
+attributes plus initial actions, excluded action names, available file-path and
+sensitive-data prompt context, and system-message override/extension fields.
+Excluded action names are removed from the model output schema while `done`
+remains available for completion. Sensitive data values
 are rendered to the model as placeholder names, not raw values, and placeholders
 ending in `bu_2fa_code` generate TOTP codes at execution time. Provider
 credentials remain environment-only and are intentionally absent from tool input

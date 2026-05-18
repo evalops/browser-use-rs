@@ -161,7 +161,8 @@ Implemented:
   upstream-style final `done` responses after repeated failures,
   normalized repeated-action loop detection, loop-awareness prompt nudges,
   upstream flattened planning fields, custom
-  prompt-visible DOM attributes, configurable planning prompt nudges,
+  prompt-visible DOM attributes, upstream-style excluded-action schema
+  controls, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash
   output-schema controls, upstream-style flattened required output fields,
   upstream-style prompt-history inclusion and limits, clickable-element text

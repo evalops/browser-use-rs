@@ -67,6 +67,8 @@ pub struct AgentSettings {
     pub available_file_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub initial_actions: Vec<BrowserAction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_actions: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sensitive_data: BTreeMap<String, SensitiveDataValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,6 +98,7 @@ impl Default for AgentSettings {
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
             initial_actions: Vec::new(),
+            excluded_actions: Vec::new(),
             sensitive_data: BTreeMap::new(),
             override_system_message: None,
             extend_system_message: None,
@@ -5042,6 +5045,11 @@ fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
         prune_schema_properties(&mut schema, &remove_fields);
     }
 
+    let excluded_actions = normalized_excluded_actions(&settings.excluded_actions);
+    if !excluded_actions.is_empty() {
+        exclude_schema_actions(&mut schema, &excluded_actions);
+    }
+
     if settings.flash_mode {
         require_schema_properties(&mut schema, &["memory", "action"]);
     } else {
@@ -5061,6 +5069,30 @@ fn schema_for_final_response_after_failure(settings: &AgentSettings) -> Value {
     schema
 }
 
+fn normalized_excluded_actions(actions: &[String]) -> BTreeSet<String> {
+    actions
+        .iter()
+        .map(|action| action.trim().replace('-', "_").to_ascii_lowercase())
+        .filter(|action| !action.is_empty() && action != "done")
+        .collect()
+}
+
+fn exclude_schema_actions(schema: &mut Value, excluded_actions: &BTreeSet<String>) {
+    for pointer in [
+        "/$defs/BrowserAction/oneOf",
+        "/$defs/BrowserAction/anyOf",
+        "/definitions/BrowserAction/oneOf",
+        "/definitions/BrowserAction/anyOf",
+    ] {
+        if let Some(actions) = schema.pointer_mut(pointer).and_then(Value::as_array_mut) {
+            actions.retain(|action| {
+                schema_variant_action_name(action)
+                    .is_none_or(|name| !excluded_actions.contains(name))
+            });
+        }
+    }
+}
+
 fn restrict_schema_actions_to_done(schema: &mut Value) {
     for pointer in [
         "/$defs/BrowserAction/oneOf",
@@ -5075,16 +5107,20 @@ fn restrict_schema_actions_to_done(schema: &mut Value) {
 }
 
 fn schema_variant_is_done_action(value: &Value) -> bool {
-    let required_has_done = value
+    schema_variant_action_name(value) == Some("done")
+}
+
+fn schema_variant_action_name(value: &Value) -> Option<&str> {
+    let required_action_name = value
         .get("required")
         .and_then(Value::as_array)
-        .is_some_and(|fields| fields.iter().any(|field| field.as_str() == Some("done")));
-    let properties_have_done = value
-        .get("properties")
-        .and_then(Value::as_object)
-        .is_some_and(|properties| properties.contains_key("done"));
-
-    required_has_done || properties_have_done
+        .and_then(|fields| fields.iter().find_map(Value::as_str));
+    required_action_name.or_else(|| {
+        value
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| properties.keys().next().map(String::as_str))
+    })
 }
 
 fn prune_schema_properties(schema: &mut Value, remove_fields: &[&str]) {
@@ -5572,7 +5608,10 @@ mod tests {
         ScreenshotAction, ScrollAction, SearchPageAction, SelectDropdownOptionAction,
         SendKeysAction, SwitchTabAction, UploadFileAction, WaitAction, WriteFileAction,
     };
-    use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
+    use std::{
+        collections::{BTreeMap, BTreeSet, VecDeque},
+        sync::Mutex,
+    };
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -5620,6 +5659,7 @@ mod tests {
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
         assert!(settings.initial_actions.is_empty());
+        assert!(settings.excluded_actions.is_empty());
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
@@ -5751,6 +5791,24 @@ mod tests {
             .collect()
     }
 
+    fn schema_action_names(schema: &Value) -> BTreeSet<String> {
+        for pointer in [
+            "/$defs/BrowserAction/oneOf",
+            "/$defs/BrowserAction/anyOf",
+            "/definitions/BrowserAction/oneOf",
+            "/definitions/BrowserAction/anyOf",
+        ] {
+            if let Some(actions) = schema.pointer(pointer).and_then(Value::as_array) {
+                return actions
+                    .iter()
+                    .filter_map(schema_variant_action_name)
+                    .map(ToOwned::to_owned)
+                    .collect();
+            }
+        }
+        BTreeSet::new()
+    }
+
     #[test]
     fn agent_output_schema_exposes_planning_fields() {
         let schema = schema_for_agent_output();
@@ -5759,6 +5817,39 @@ mod tests {
         assert!(schema_text.contains("current_plan_item"));
         assert!(schema_text.contains("plan_update"));
         assert!(schema_text.contains("evaluation_previous_goal"));
+    }
+
+    #[test]
+    fn agent_output_schema_filters_excluded_actions() {
+        let settings = AgentSettings {
+            excluded_actions: vec![
+                "search".to_owned(),
+                "scroll".to_owned(),
+                "switch-tab".to_owned(),
+                "done".to_owned(),
+            ],
+            ..AgentSettings::default()
+        };
+        let schema = schema_for_agent_output_with_settings(&settings);
+        let action_names = schema_action_names(&schema);
+
+        assert!(!action_names.contains("search"));
+        assert!(!action_names.contains("scroll"));
+        assert!(!action_names.contains("switch_tab"));
+        assert!(action_names.contains("navigate"));
+        assert!(action_names.contains("done"));
+    }
+
+    #[test]
+    fn final_response_schema_keeps_done_when_actions_are_excluded() {
+        let settings = AgentSettings {
+            excluded_actions: vec!["search".to_owned(), "done".to_owned()],
+            ..AgentSettings::default()
+        };
+        let schema = schema_for_final_response_after_failure(&settings);
+        let action_names = schema_action_names(&schema);
+
+        assert_eq!(action_names, BTreeSet::from(["done".to_owned()]));
     }
 
     #[test]

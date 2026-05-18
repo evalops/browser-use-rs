@@ -31,7 +31,8 @@ browser-use-rs agent <url> <task> --provider openai-compatible \
   [--block-ip-addresses] \
   [--max-steps 10] [--no-vision] [--max-actions-per-step 5] \
   [--no-final-response-after-failure] [--flash-mode] \
-  [--include-attribute data-testid] [--available-file-path /tmp/report.pdf]
+  [--include-attribute data-testid] [--available-file-path /tmp/report.pdf] \
+  [--exclude-action search]
 browser-use-rs agent <url> <task> --provider anthropic \
   [--api-key <key>] [--model <model>] [--base-url https://api.anthropic.com/v1] \
   [--max-steps 10]
@@ -132,7 +133,9 @@ tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
 `--planning-exploration-limit`, `--max-history-items`,
 `--max-clickable-elements-length`, repeated `--include-attribute <name>` for
 prompt-visible DOM attributes, and repeated `--available-file-path <path>` for
-upstream-style file-path context in the agent prompt. Use repeated
+upstream-style file-path context in the agent prompt. Repeated
+`--exclude-action <name>` removes built-in action names from the model output
+schema while keeping `done` available for completion. Use repeated
 `--sensitive-data <placeholder=value>` for global sensitive placeholders, and
 repeated `--sensitive-data-domain <domain-pattern=placeholder=value>` for
 domain-scoped placeholders. Sensitive values are replaced during action
@@ -212,7 +215,8 @@ templates live under `packaging/`; see
   DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
   Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output
   adapters, with DeepSeek forced tool-call output, Cerebras prompt-only output,
-  and explicit OpenAI-wire output-mode overrides for fallback paths.
+  explicit OpenAI-wire output-mode overrides for fallback paths, and
+  upstream-style excluded-action schema controls.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.

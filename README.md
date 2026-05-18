@@ -114,7 +114,8 @@ includes:
   loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
   flattened planning fields,
-  configurable planning prompt nudges, thinking/flash output-schema controls,
+  configurable planning prompt nudges, upstream-style excluded-action schema
+  controls, thinking/flash output-schema controls,
   upstream-style flattened required output fields, structured extraction
   metadata, per-step timing metadata, upstream-style prompt-history inclusion
   and limits, clickable-element text limits, upstream-style one-time read-state

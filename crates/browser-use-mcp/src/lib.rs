@@ -469,6 +469,7 @@ mod tests {
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("available_file_paths"));
         assert!(schema_text.contains("initial_actions"));
+        assert!(schema_text.contains("excluded_actions"));
         assert!(schema_text.contains("sensitive_data"));
         assert!(schema_text.contains("override_system_message"));
         assert!(schema_text.contains("extend_system_message"));
@@ -487,6 +488,20 @@ mod tests {
             input.structured_output_mode,
             Some(AgentStructuredOutputMode::ToolCall)
         );
+    }
+
+    #[test]
+    fn agent_tool_preserves_excluded_action_settings() {
+        let input: AgentToolInput = serde_json::from_value(json!({
+            "url": "https://example.com",
+            "task": "extract",
+            "settings": {
+                "excluded_actions": ["search", "scroll"]
+            }
+        }))
+        .expect("agent input");
+
+        assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
     }
 
     #[test]

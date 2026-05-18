@@ -150,6 +150,8 @@ enum Command {
         include_attributes: Vec<String>,
         #[arg(long = "available-file-path")]
         available_file_paths: Vec<String>,
+        #[arg(long = "exclude-action")]
+        excluded_actions: Vec<String>,
         #[arg(long = "sensitive-data", value_parser = parse_sensitive_data_entry)]
         sensitive_data: Vec<SensitiveDataEntry>,
         #[arg(long = "sensitive-data-domain", value_parser = parse_domain_sensitive_data_entry)]
@@ -433,6 +435,7 @@ async fn main() -> anyhow::Result<()> {
             max_clickable_elements_length,
             include_attributes,
             available_file_paths,
+            excluded_actions,
             sensitive_data,
             sensitive_data_domains,
             override_system_message,
@@ -473,6 +476,7 @@ async fn main() -> anyhow::Result<()> {
                 max_clickable_elements_length,
                 include_attributes,
                 available_file_paths,
+                excluded_actions,
                 sensitive_data,
                 sensitive_data_domains,
                 override_system_message,
@@ -535,6 +539,7 @@ struct CliAgentSettingsArgs {
     max_clickable_elements_length: Option<usize>,
     include_attributes: Vec<String>,
     available_file_paths: Vec<String>,
+    excluded_actions: Vec<String>,
     sensitive_data: Vec<SensitiveDataEntry>,
     sensitive_data_domains: Vec<DomainSensitiveDataEntry>,
     override_system_message: Option<String>,
@@ -589,6 +594,7 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     settings.include_attributes = args.include_attributes;
     settings.available_file_paths = args.available_file_paths;
+    settings.excluded_actions = args.excluded_actions;
     settings.sensitive_data = cli_sensitive_data(args.sensitive_data, args.sensitive_data_domains);
     settings.override_system_message = args.override_system_message;
     settings.extend_system_message = args.extend_system_message;
@@ -1972,6 +1978,10 @@ mod tests {
             "/tmp/report.pdf",
             "--available-file-path",
             "/tmp/chart.png",
+            "--exclude-action",
+            "search",
+            "--exclude-action",
+            "scroll",
             "--sensitive-data",
             "username=evalops@example.test",
             "--sensitive-data",
@@ -2011,6 +2021,7 @@ mod tests {
                 max_clickable_elements_length,
                 include_attributes,
                 available_file_paths,
+                excluded_actions,
                 sensitive_data,
                 sensitive_data_domains,
                 override_system_message,
@@ -2039,6 +2050,7 @@ mod tests {
                 assert_eq!(max_clickable_elements_length, Some(8000));
                 assert_eq!(include_attributes, ["data-testid", "aria-label"]);
                 assert_eq!(available_file_paths, ["/tmp/report.pdf", "/tmp/chart.png"]);
+                assert_eq!(excluded_actions, ["search", "scroll"]);
                 assert_eq!(
                     sensitive_data,
                     [
@@ -2278,6 +2290,7 @@ mod tests {
             max_clickable_elements_length: Some(8000),
             include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
             available_file_paths: vec!["/tmp/report.pdf".to_owned(), "/tmp/chart.png".to_owned()],
+            excluded_actions: vec!["search".to_owned(), "scroll".to_owned()],
             sensitive_data: vec![SensitiveDataEntry {
                 placeholder: "username".to_owned(),
                 value: "evalops@example.test".to_owned(),
@@ -2318,6 +2331,7 @@ mod tests {
             settings.available_file_paths,
             ["/tmp/report.pdf", "/tmp/chart.png"]
         );
+        assert_eq!(settings.excluded_actions, ["search", "scroll"]);
         assert_eq!(
             settings.sensitive_data.get("username"),
             Some(&SensitiveDataValue::Value(
