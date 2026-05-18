@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#18 Add upstream-style PDF read_file page envelopes](https://github.com/evalops/browser-use-rs/issues/18)
+- Next parity track to be opened from the remaining gaps below.
 
 ## Completed Tracks
 
@@ -22,6 +22,7 @@ small pushed checkpoints as each surface becomes real.
 - [#15 Support DOCX write_file artifacts](https://github.com/evalops/browser-use-rs/issues/15)
 - [#16 Support PDF write_file artifacts](https://github.com/evalops/browser-use-rs/issues/16)
 - [#17 Paginate PDF write_file artifacts](https://github.com/evalops/browser-use-rs/issues/17)
+- [#18 Add upstream-style PDF read_file page envelopes](https://github.com/evalops/browser-use-rs/issues/18)
 
 ## Current Checkpoint
 
