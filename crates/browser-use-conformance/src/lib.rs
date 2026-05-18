@@ -200,6 +200,81 @@ pub fn mixed_interactive_state() -> SerializedDomState {
     ])
 }
 
+#[must_use]
+pub fn frame_shadow_state() -> SerializedDomState {
+    SerializedDomState::from_elements(vec![
+        DomElementRef {
+            index: 1,
+            target_id: "fixture-root".to_owned(),
+            backend_node_id: 301,
+            node_id: Some(401),
+            tag_name: "iframe".to_owned(),
+            role: None,
+            name: Some("Checkout frame".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "checkout-frame".to_owned()),
+                (
+                    "src".to_owned(),
+                    "https://child.example/checkout".to_owned(),
+                ),
+            ]),
+            bounds: Some(ElementBounds {
+                x: 24,
+                y: 120,
+                width: 640,
+                height: 420,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        },
+        DomElementRef {
+            index: 2,
+            target_id: "fixture-child".to_owned(),
+            backend_node_id: 302,
+            node_id: Some(402),
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Child email".to_owned()),
+            text: Some("agent@example.com".to_owned()),
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "child-email".to_owned()),
+                ("type".to_owned(), "email".to_owned()),
+            ]),
+            bounds: Some(ElementBounds {
+                x: 48,
+                y: 188,
+                width: 280,
+                height: 34,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        },
+        DomElementRef {
+            index: 3,
+            target_id: "fixture-root".to_owned(),
+            backend_node_id: 303,
+            node_id: Some(403),
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Shadow save".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("id".to_owned(), "shadow-save".to_owned())]),
+            bounds: Some(ElementBounds {
+                x: 700,
+                y: 160,
+                width: 112,
+                height: 36,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        },
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +310,16 @@ mod tests {
             serde_json::from_str(include_str!("../fixtures/mixed_interactive_state.json"))
                 .expect("golden fixture");
         let actual = serde_json::to_value(mixed_interactive_state()).expect("serialize state");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn frame_shadow_state_matches_golden_fixture() {
+        let expected: Value =
+            serde_json::from_str(include_str!("../fixtures/frame_shadow_state.json"))
+                .expect("golden fixture");
+        let actual = serde_json::to_value(frame_shadow_state()).expect("serialize state");
 
         assert_eq!(actual, expected);
     }

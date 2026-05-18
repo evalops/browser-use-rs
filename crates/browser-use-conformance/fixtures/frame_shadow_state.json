@@ -1,0 +1,65 @@
+{
+  "text": "[1] <iframe id=checkout-frame> Checkout frame\n[2] <input type=email id=child-email> Child email agent@example.com\n[3] <button id=shadow-save> Shadow save",
+  "selector_map": {
+    "1": {
+      "index": 1,
+      "target_id": "fixture-root",
+      "backend_node_id": 301,
+      "node_id": 401,
+      "tag_name": "iframe",
+      "name": "Checkout frame",
+      "attributes": {
+        "id": "checkout-frame",
+        "src": "https://child.example/checkout"
+      },
+      "bounds": {
+        "x": 24,
+        "y": 120,
+        "width": 640,
+        "height": 420
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "2": {
+      "index": 2,
+      "target_id": "fixture-child",
+      "backend_node_id": 302,
+      "node_id": 402,
+      "tag_name": "input",
+      "name": "Child email",
+      "text": "agent@example.com",
+      "attributes": {
+        "id": "child-email",
+        "type": "email"
+      },
+      "bounds": {
+        "x": 48,
+        "y": 188,
+        "width": 280,
+        "height": 34
+      },
+      "is_visible": true,
+      "is_interactive": true
+    },
+    "3": {
+      "index": 3,
+      "target_id": "fixture-root",
+      "backend_node_id": 303,
+      "node_id": 403,
+      "tag_name": "button",
+      "name": "Shadow save",
+      "attributes": {
+        "id": "shadow-save"
+      },
+      "bounds": {
+        "x": 700,
+        "y": 160,
+        "width": 112,
+        "height": 36
+      },
+      "is_visible": true,
+      "is_interactive": true
+    }
+  }
+}
