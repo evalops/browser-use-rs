@@ -84,6 +84,8 @@ Implemented:
   navigation start/complete/failure/timeout, URL-policy block/reset/popup
   outcomes, reconnect, JavaScript dialog, download, and storage-state event
   shapes without placing the full lifecycle stream into normal agent replies.
+  Live CDP wiring records target crash, JavaScript dialog, navigation failure,
+  and configured download events.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -185,6 +187,6 @@ Implemented:
 Next:
 
 1. Continue the active remaining browser-lifecycle event hook track by wiring
-   the new reconnect, target-crash/network-timeout, dialog, download, and
-   storage-state event shapes into live CDP/session behavior.
+   reconnect recovery, storage-state save/load, and deeper network-timeout
+   diagnostics into live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

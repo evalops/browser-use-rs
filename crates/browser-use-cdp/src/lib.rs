@@ -1116,6 +1116,8 @@ pub struct BrowserProfile {
     pub headless: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_data_dir: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downloads_path: Option<PathBuf>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -1140,6 +1142,7 @@ impl Default for BrowserProfile {
             remote_debugging_port: None,
             headless: default_headless(),
             user_data_dir: None,
+            downloads_path: None,
             args: Vec::new(),
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
@@ -2227,6 +2230,7 @@ pub struct CdpBrowserSession {
     security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
     lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     url_policy: UrlAccessPolicy,
+    _lifecycle_watchdog: BrowserLifecycleWatchdog,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
 }
@@ -2247,6 +2251,8 @@ impl CdpBrowserSession {
                 BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
         }
+        let lifecycle_watchdog =
+            BrowserLifecycleWatchdog::start(connection.clone(), lifecycle_events.clone());
 
         Ok(Self {
             connection,
@@ -2256,6 +2262,7 @@ impl CdpBrowserSession {
             security_events,
             lifecycle_events,
             url_policy: UrlAccessPolicy::default(),
+            _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: None,
             _launched_browser: None,
         })
@@ -2265,6 +2272,9 @@ impl CdpBrowserSession {
         let url_policy = UrlAccessPolicy::from_profile(profile);
         let launched_browser = profile.launch_local().await?;
         let connection = CdpConnection::connect(launched_browser.endpoint()).await?;
+        if let Some(downloads_path) = &profile.downloads_path {
+            enable_browser_download_events(&connection, downloads_path).await?;
+        }
         let page = attach_or_create_page(&connection).await?;
         let page = Arc::new(Mutex::new(page));
         let last_dom_state = Arc::new(Mutex::new(None));
@@ -2280,6 +2290,8 @@ impl CdpBrowserSession {
                 ),
             );
         }
+        let lifecycle_watchdog =
+            BrowserLifecycleWatchdog::start(connection.clone(), lifecycle_events.clone());
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
             page.clone(),
@@ -2299,6 +2311,7 @@ impl CdpBrowserSession {
             security_events,
             lifecycle_events,
             url_policy,
+            _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
         })
@@ -2865,6 +2878,274 @@ JSON.stringify((() => {{
 
         Ok(())
     }
+}
+
+struct BrowserLifecycleWatchdog {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl BrowserLifecycleWatchdog {
+    fn start(
+        connection: Arc<CdpConnection>,
+        lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    ) -> Self {
+        let mut events = connection.subscribe_events();
+        let handle = tokio::spawn(async move {
+            while let Ok(event) = events.recv().await {
+                handle_lifecycle_cdp_event(&connection, &lifecycle_events, event).await;
+            }
+        });
+
+        Self { handle }
+    }
+}
+
+impl Drop for BrowserLifecycleWatchdog {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+async fn handle_lifecycle_cdp_event(
+    connection: &CdpConnection,
+    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    event: CdpEvent,
+) {
+    match event.method.as_str() {
+        "Target.targetCrashed" | "Inspector.targetCrashed" => {
+            record_lifecycle_events(lifecycle_events, lifecycle_events_for_target_crash(&event))
+                .await;
+        }
+        "Page.javascriptDialogOpening" => {
+            let event = lifecycle_event_for_javascript_dialog(connection, &event).await;
+            record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+        }
+        "Browser.downloadWillBegin" => {
+            if let Some(event) = lifecycle_event_for_download_start(&event) {
+                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+            }
+        }
+        "Browser.downloadProgress" => {
+            record_lifecycle_events(
+                lifecycle_events,
+                lifecycle_events_for_download_progress(&event),
+            )
+            .await;
+        }
+        _ => {}
+    }
+}
+
+async fn record_lifecycle_events(
+    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    events: Vec<BrowserLifecycleEvent>,
+) {
+    if events.is_empty() {
+        return;
+    }
+
+    let mut queue = lifecycle_events.lock().await;
+    for event in events {
+        push_lifecycle_event(&mut queue, event);
+    }
+}
+
+async fn record_lifecycle_event_in_buffer(
+    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    event: BrowserLifecycleEvent,
+) {
+    let mut queue = lifecycle_events.lock().await;
+    push_lifecycle_event(&mut queue, event);
+}
+
+fn lifecycle_events_for_target_crash(event: &CdpEvent) -> Vec<BrowserLifecycleEvent> {
+    let target_id = event
+        .params
+        .get("targetId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut details = BTreeMap::new();
+    if let Some(session_id) = &event.session_id {
+        details.insert("session_id".to_owned(), session_id.clone());
+    }
+    if let Some(status) = event.params.get("status").and_then(cdp_value_to_string) {
+        details.insert("status".to_owned(), status);
+    }
+    if let Some(error_code) = event.params.get("errorCode").and_then(cdp_value_to_string) {
+        details.insert("error_code".to_owned(), error_code);
+    }
+
+    let error = target_crash_error_message(&details);
+    let lifecycle_event = match target_id {
+        Some(target_id) => {
+            let mut event = BrowserLifecycleEvent::target_crashed(target_id, error);
+            event.details = details;
+            event
+        }
+        None => BrowserLifecycleEvent::new(
+            BrowserLifecycleEventKind::TargetCrashed,
+            None,
+            None,
+            None,
+            Some(error.clone()),
+            details,
+            format!("Target crashed: {error}"),
+        ),
+    };
+
+    vec![lifecycle_event]
+}
+
+fn target_crash_error_message(details: &BTreeMap<String, String>) -> String {
+    match (details.get("status"), details.get("error_code")) {
+        (Some(status), Some(error_code)) => format!("{status} ({error_code})"),
+        (Some(status), None) => status.clone(),
+        (None, Some(error_code)) => error_code.clone(),
+        (None, None) => "Inspector target crashed".to_owned(),
+    }
+}
+
+async fn lifecycle_event_for_javascript_dialog(
+    connection: &CdpConnection,
+    event: &CdpEvent,
+) -> BrowserLifecycleEvent {
+    let dialog_type = event
+        .params
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("alert");
+    let dialog_message = event
+        .params
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let url = event
+        .params
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("about:blank");
+    let accepted = matches!(dialog_type, "alert" | "confirm" | "beforeunload");
+    let action = if accepted { "accepted" } else { "dismissed" };
+    let mut details = BTreeMap::from([
+        ("dialog_type".to_owned(), dialog_type.to_owned()),
+        ("dialog_message".to_owned(), dialog_message.to_owned()),
+        ("action".to_owned(), action.to_owned()),
+    ]);
+    if let Some(frame_id) = event.params.get("frameId").and_then(Value::as_str) {
+        details.insert("frame_id".to_owned(), frame_id.to_owned());
+    }
+    if let Some(session_id) = &event.session_id {
+        details.insert("session_id".to_owned(), session_id.clone());
+    }
+
+    let error = match event.session_id.as_deref() {
+        Some(session_id) => connection
+            .command(
+                "Page.handleJavaScriptDialog",
+                json!({ "accept": accepted }),
+                Some(session_id),
+            )
+            .await
+            .err()
+            .map(|error| error.to_string()),
+        None => Some("missing CDP session id".to_owned()),
+    };
+
+    let message = match &error {
+        Some(error) => {
+            format!(
+                "JavaScript {dialog_type} dialog on {url} failed to be {action}: {dialog_message}: {error}"
+            )
+        }
+        None => format!("JavaScript {dialog_type} dialog on {url} was {action}: {dialog_message}"),
+    };
+
+    BrowserLifecycleEvent::new(
+        BrowserLifecycleEventKind::JavaScriptDialogHandled,
+        None,
+        Some(url.to_owned()),
+        Some(dialog_type.to_owned()),
+        error,
+        details,
+        message,
+    )
+}
+
+fn lifecycle_event_for_download_start(event: &CdpEvent) -> Option<BrowserLifecycleEvent> {
+    let guid = event.params.get("guid")?.as_str()?;
+    let url = event
+        .params
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let suggested_filename = event
+        .params
+        .get("suggestedFilename")
+        .and_then(Value::as_str)
+        .unwrap_or("download");
+    Some(BrowserLifecycleEvent::download_started(
+        guid,
+        url,
+        suggested_filename,
+    ))
+}
+
+fn lifecycle_events_for_download_progress(event: &CdpEvent) -> Vec<BrowserLifecycleEvent> {
+    let Some(guid) = event.params.get("guid").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let received_bytes = event
+        .params
+        .get("receivedBytes")
+        .and_then(cdp_value_to_u64)
+        .unwrap_or_default();
+    let total_bytes = event.params.get("totalBytes").and_then(cdp_value_to_u64);
+    let state = event
+        .params
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let mut events = vec![BrowserLifecycleEvent::download_progress(
+        guid,
+        received_bytes,
+        total_bytes,
+        state,
+    )];
+
+    if state == "completed" {
+        if let Some(file_path) = event.params.get("filePath").and_then(Value::as_str) {
+            let file_name = Path::new(file_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("download");
+            events.push(BrowserLifecycleEvent::file_downloaded(
+                guid,
+                file_path,
+                file_name,
+                total_bytes.unwrap_or(received_bytes),
+            ));
+        }
+    }
+
+    events
+}
+
+fn cdp_value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn cdp_value_to_u64(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|value| *value >= 0.0)
+            .map(|value| value as u64)
+    })
 }
 
 struct BrowserSecurityWatchdog {
@@ -4307,6 +4588,28 @@ async fn attach_to_target(
     })
 }
 
+async fn enable_browser_download_events(
+    connection: &CdpConnection,
+    downloads_path: &Path,
+) -> Result<(), BrowserError> {
+    tokio::fs::create_dir_all(downloads_path)
+        .await
+        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+    let downloads_path = downloads_path.display().to_string();
+    connection
+        .command(
+            "Browser.setDownloadBehavior",
+            json!({
+                "behavior": "allow",
+                "downloadPath": downloads_path,
+                "eventsEnabled": true,
+            }),
+            None,
+        )
+        .await
+        .map(|_| ())
+}
+
 async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserError> {
     let targets = connection
         .command("Target.getTargets", json!({}), None)
@@ -4440,19 +4743,40 @@ impl BrowserSession for CdpBrowserSession {
                 url.to_owned(),
             ))
             .await;
-            let page = attach_to_target(&self.connection, target_id).await?;
+            let page = match attach_to_target(&self.connection, target_id.clone()).await {
+                Ok(page) => page,
+                Err(error) => {
+                    self.record_lifecycle_event(BrowserLifecycleEvent::navigation_failed(
+                        target_id.clone(),
+                        url.to_owned(),
+                        error.to_string(),
+                    ))
+                    .await;
+                    return Err(error);
+                }
+            };
             let target_id = page.target_id.clone();
             self.set_current_page(page).await;
             self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id.clone()))
                 .await;
             self.clear_cached_dom_state().await;
             let result = self.enforce_url_policy_after_settle().await;
-            if result.is_ok() {
-                self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
-                    target_id,
-                    url.to_owned(),
-                ))
-                .await;
+            match &result {
+                Ok(()) => {
+                    self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
+                        target_id,
+                        url.to_owned(),
+                    ))
+                    .await;
+                }
+                Err(error) => {
+                    self.record_lifecycle_event(BrowserLifecycleEvent::navigation_failed(
+                        target_id,
+                        url.to_owned(),
+                        error.to_string(),
+                    ))
+                    .await;
+                }
             }
             return result;
         }
@@ -4463,7 +4787,8 @@ impl BrowserSession for CdpBrowserSession {
             url.to_owned(),
         ))
         .await;
-        self.connection
+        let navigate_result = self
+            .connection
             .command(
                 "Page.navigate",
                 json!({
@@ -4471,15 +4796,34 @@ impl BrowserSession for CdpBrowserSession {
                 }),
                 Some(&page.session_id),
             )
-            .await?;
-        self.clear_cached_dom_state().await;
-        let result = self.enforce_url_policy_after_settle().await;
-        if result.is_ok() {
-            self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
-                page.target_id,
+            .await;
+        if let Err(error) = navigate_result {
+            self.record_lifecycle_event(BrowserLifecycleEvent::navigation_failed(
+                page.target_id.clone(),
                 url.to_owned(),
+                error.to_string(),
             ))
             .await;
+            return Err(error);
+        }
+        self.clear_cached_dom_state().await;
+        let result = self.enforce_url_policy_after_settle().await;
+        match &result {
+            Ok(()) => {
+                self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
+                    page.target_id,
+                    url.to_owned(),
+                ))
+                .await;
+            }
+            Err(error) => {
+                self.record_lifecycle_event(BrowserLifecycleEvent::navigation_failed(
+                    page.target_id,
+                    url.to_owned(),
+                    error.to_string(),
+                ))
+                .await;
+            }
         }
         result
     }
@@ -5778,6 +6122,67 @@ mod tests {
         assert_eq!(json[2]["kind"], "target_crashed");
         assert_eq!(json[5]["details"]["action"], "accepted");
         assert_eq!(json[8]["details"]["file_name"], "report.pdf");
+    }
+
+    #[test]
+    fn lifecycle_watchdog_maps_cdp_crash_and_download_events() {
+        let crash_event = CdpEvent {
+            method: "Target.targetCrashed".to_owned(),
+            params: json!({
+                "targetId": "target-1",
+                "status": "crashed",
+                "errorCode": 139,
+            }),
+            session_id: Some("session-1".to_owned()),
+        };
+        let crash_events = lifecycle_events_for_target_crash(&crash_event);
+        assert_eq!(crash_events.len(), 1);
+        assert_eq!(
+            crash_events[0].kind,
+            BrowserLifecycleEventKind::TargetCrashed
+        );
+        assert_eq!(crash_events[0].target_id.as_deref(), Some("target-1"));
+        assert_eq!(crash_events[0].error.as_deref(), Some("crashed (139)"));
+        assert_eq!(crash_events[0].details["session_id"], "session-1");
+
+        let download_start = lifecycle_event_for_download_start(&CdpEvent {
+            method: "Browser.downloadWillBegin".to_owned(),
+            params: json!({
+                "guid": "download-guid",
+                "url": "https://example.test/report.pdf",
+                "suggestedFilename": "report.pdf",
+            }),
+            session_id: None,
+        })
+        .expect("download start event");
+        assert_eq!(
+            download_start.kind,
+            BrowserLifecycleEventKind::DownloadStarted
+        );
+        assert_eq!(download_start.details["suggested_filename"], "report.pdf");
+
+        let download_progress = lifecycle_events_for_download_progress(&CdpEvent {
+            method: "Browser.downloadProgress".to_owned(),
+            params: json!({
+                "guid": "download-guid",
+                "receivedBytes": 4096,
+                "totalBytes": 4096,
+                "state": "completed",
+                "filePath": "/tmp/report.pdf",
+            }),
+            session_id: None,
+        });
+        assert_eq!(
+            download_progress
+                .iter()
+                .map(|event| &event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                &BrowserLifecycleEventKind::DownloadProgress,
+                &BrowserLifecycleEventKind::FileDownloaded,
+            ]
+        );
+        assert_eq!(download_progress[1].details["file_name"], "report.pdf");
     }
 
     #[test]

@@ -20,7 +20,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   browser connect/close, target create/switch/close, navigation start/complete,
   navigation failure/timeout, target crash, URL-policy block/reset/popup
   outcomes, reconnect, JavaScript dialog, download, and storage-state event
-  shapes.
+  shapes. `BrowserProfile.downloads_path` enables browser download behavior and
+  CDP download lifecycle events for launched sessions.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -145,9 +146,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser profile lifecycle support now exposes bounded public lifecycle
   diagnostics for core browser/target/navigation/security transitions and
   stable event shapes for reconnect, target-crash/network-timeout, JavaScript
-  dialog, download, and storage-state lifecycle diagnostics. Live watchdog
-  automation for those remaining exceptional paths is still lighter than
-  upstream's full browser event bus.
+  dialog, download, and storage-state lifecycle diagnostics. Live CDP wiring now
+  records target crash, JavaScript dialog, navigation failure, and configured
+  download events; reconnect recovery, storage-state persistence, and deeper
+  timeout monitoring remain lighter than upstream's full browser event bus.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

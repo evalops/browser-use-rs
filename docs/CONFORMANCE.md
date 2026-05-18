@@ -52,12 +52,13 @@ storage-state save/load notifications. These lifecycle events are available
 through the CDP session API and are intentionally kept out of normal agent
 replies; prompt state still only includes security-relevant recent events and
 closed-popup messages. The public JSON shape is locked by normal and
-exceptional lifecycle fixtures.
+exceptional lifecycle fixtures. Live CDP wiring records target crash,
+JavaScript dialog, navigation failure, and configured download events.
 
 Remaining lifecycle gaps: live CDP/watchdog wiring for reconnect recovery,
-target-crash and network-timeout monitoring, JavaScript dialog automation,
-download detection/completion, storage-state persistence, and a full
-general-purpose event bus are still lighter than upstream.
+network-timeout monitoring beyond direct navigation failures, storage-state
+persistence, and a full general-purpose event bus are still lighter than
+upstream.
 
 ## Drift Policy
 
