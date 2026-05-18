@@ -123,7 +123,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   guard when `max_steps` is reached, upstream-style 75% step-budget warning
   before finalization, normalized repeated-action loop detection, previous
   result context,
-  vision-aware screenshot capture and image prompt parts, screenshot action
+  vision-aware screenshot capture and image prompt parts, upstream-style
+  `sample_images` prompt parts before screenshots, screenshot action
   next-observation image overrides, action-result image prompt parts,
   upstream-style page-stat prompt context with loading/skeleton hints, one-time
   extraction replay handling, invalid model-output recovery, loop-awareness

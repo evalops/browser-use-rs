@@ -71,6 +71,8 @@ pub struct AgentSettings {
     pub max_clickable_elements_length: usize,
     #[serde(default)]
     pub include_recent_events: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sample_images: Vec<ContentPart>,
     #[serde(default = "default_enable_planning")]
     pub enable_planning: bool,
     #[serde(default = "default_planning_replan_on_stall")]
@@ -253,6 +255,7 @@ impl Default for AgentSettings {
             max_history_items: None,
             max_clickable_elements_length: default_max_clickable_elements_length(),
             include_recent_events: false,
+            sample_images: Vec::new(),
             enable_planning: default_enable_planning(),
             planning_replan_on_stall: default_planning_replan_on_stall(),
             planning_exploration_limit: default_planning_exploration_limit(),
@@ -6091,6 +6094,7 @@ pub fn build_step_request_with_file_system(
         &sensitive_values,
     );
     let mut user_content = vec![ContentPart::Text { text: user_text }];
+    user_content.extend(settings.sample_images.iter().cloned());
     if settings.use_vision.accepts_prompt_image()
         && let Some(screenshot) = state.screenshot.as_deref()
     {
@@ -7456,6 +7460,7 @@ mod tests {
         assert_eq!(settings.max_history_items, None);
         assert_eq!(settings.max_clickable_elements_length, 40_000);
         assert!(!settings.include_recent_events);
+        assert!(settings.sample_images.is_empty());
         assert!(settings.enable_planning);
         assert_eq!(settings.planning_replan_on_stall, 3);
         assert_eq!(settings.planning_exploration_limit, 5);
@@ -14712,6 +14717,88 @@ mod tests {
         ));
         let request_text = serde_json::to_string(user_message).expect("message json");
         assert!(!request_text.contains("old-data"));
+    }
+
+    #[test]
+    fn step_request_inserts_sample_images_before_runtime_images() {
+        let mut state = blank_state();
+        state.screenshot = Some("screen-data".to_owned());
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult {
+                    extracted_content: Some("Read image file chart.png.".to_owned()),
+                    error: None,
+                    judgement: None,
+                    long_term_memory: Some("Read image file chart.png".to_owned()),
+                    include_extracted_content_only_once: true,
+                    include_in_memory: true,
+                    is_done: false,
+                    success: None,
+                    attachments: Vec::new(),
+                    images: vec![serde_json::json!({
+                        "name": "chart.png",
+                        "data": "chart-data",
+                    })],
+                    metadata: None,
+                }],
+                state: blank_state(),
+                metadata: None,
+            }],
+            ..AgentHistory::default()
+        };
+        let settings = AgentSettings {
+            vision_detail_level: ImageDetailLevel::High,
+            sample_images: vec![
+                ContentPart::Text {
+                    text: "Sample reference:".to_owned(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: "data:image/png;base64,sample-data".to_owned(),
+                    detail: Some(ImageDetailLevel::Low),
+                },
+            ],
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("inspect samples", &state, &history, &settings)
+            .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+
+        assert!(matches!(
+            &user_message.content[0],
+            ContentPart::Text { text } if text.contains("<browser_state>")
+        ));
+        assert!(matches!(
+            &user_message.content[1],
+            ContentPart::Text { text } if text == "Sample reference:"
+        ));
+        assert!(matches!(
+            &user_message.content[2],
+            ContentPart::ImageUrl { image_url, detail }
+                if image_url == "data:image/png;base64,sample-data"
+                    && *detail == Some(ImageDetailLevel::Low)
+        ));
+        assert!(matches!(
+            &user_message.content[3],
+            ContentPart::ImageUrl { image_url, detail }
+                if image_url == "data:image/png;base64,screen-data"
+                    && *detail == Some(ImageDetailLevel::High)
+        ));
+        assert!(matches!(
+            &user_message.content[4],
+            ContentPart::Text { text } if text == "Image from file: chart.png"
+        ));
+        assert!(matches!(
+            &user_message.content[5],
+            ContentPart::ImageUrl { image_url, detail }
+                if image_url == "data:image/png;base64,chart-data"
+                    && *detail == Some(ImageDetailLevel::High)
+        ));
     }
 
     #[test]

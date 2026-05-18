@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #86 lands and CI is green.
+- [#87 Add upstream sample_images prompt support](https://github.com/evalops/browser-use-rs/issues/87)
 
 ## Completed Tracks
 
@@ -196,8 +195,9 @@ Implemented:
   upstream-style page-stat prompt context with loading/skeleton hints,
   upstream-compatible
   `true`/`false`/`auto` vision modes, auto-only screenshot action gating,
-  screenshot action next-observation image overrides, action-result image
-  prompt parts, one-time extraction replay handling, invalid model-output
+  upstream-style `sample_images` prompt parts before screenshots, screenshot
+  action next-observation image overrides, action-result image prompt parts,
+  one-time extraction replay handling, invalid model-output
   recovery,
   upstream-style final `done` responses after repeated failures,
   normalized repeated-action loop detection, loop-awareness prompt nudges,
