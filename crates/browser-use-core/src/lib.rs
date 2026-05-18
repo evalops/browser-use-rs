@@ -452,6 +452,7 @@ pub struct ActionReplayRematch {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentHistoryReplayPlan {
+    #[serde(default)]
     pub actions: Vec<AgentHistoryReplayPlanItem>,
 }
 
@@ -460,6 +461,7 @@ pub struct AgentHistoryReplayPlanItem {
     pub step_index: usize,
     pub action_index: usize,
     pub original_action: BrowserAction,
+    pub remapped_action: BrowserAction,
     pub rematch: ActionReplayRematch,
 }
 
@@ -467,8 +469,23 @@ pub struct AgentHistoryReplayPlanItem {
 pub struct AgentHistoryReplayPlanError {
     pub step_index: usize,
     pub action_index: usize,
+    pub original_action: BrowserAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_index: Option<u32>,
     pub failure: DomInteractedElementMatchFailure,
 }
+
+impl std::fmt::Display for AgentHistoryReplayPlanError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to rematch replay action {} in step {}: {}",
+            self.action_index, self.step_index, self.failure.message
+        )
+    }
+}
+
+impl std::error::Error for AgentHistoryReplayPlanError {}
 
 pub fn build_history_replay_plan(
     history: &AgentHistory,
@@ -489,12 +506,15 @@ pub fn build_history_replay_plan(
                     .map_err(|failure| AgentHistoryReplayPlanError {
                         step_index,
                         action_index,
+                        original_action: action.clone(),
+                        original_index: action.interacted_element_index(),
                         failure,
                     })?;
             actions.push(AgentHistoryReplayPlanItem {
                 step_index,
                 action_index,
                 original_action: action.clone(),
+                remapped_action: rematch.action.clone(),
                 rematch,
             });
         }
@@ -733,6 +753,14 @@ impl AgentHistory {
                     .collect()
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn replay_plan(
+        &self,
+        current_dom: &SerializedDomState,
+    ) -> Result<AgentHistoryReplayPlan, AgentHistoryReplayPlanError> {
+        build_history_replay_plan(self, current_dom)
     }
 
     #[must_use]
@@ -6008,11 +6036,15 @@ mod tests {
             ),
         ]);
 
-        let plan = build_history_replay_plan(&history, &current_dom).expect("replay plan");
+        let plan = history.replay_plan(&current_dom).expect("replay plan");
 
         assert_eq!(plan.actions.len(), 3);
         assert_eq!(plan.actions[0].step_index, 0);
         assert_eq!(plan.actions[0].action_index, 0);
+        assert_eq!(
+            plan.actions[0].remapped_action.interacted_element_index(),
+            Some(7)
+        );
         assert_eq!(
             plan.actions[0].rematch.action.interacted_element_index(),
             Some(7)
@@ -6021,12 +6053,20 @@ mod tests {
         assert_eq!(plan.actions[1].step_index, 1);
         assert_eq!(plan.actions[1].action_index, 0);
         assert_eq!(
+            plan.actions[1].remapped_action.interacted_element_index(),
+            Some(8)
+        );
+        assert_eq!(
             plan.actions[1].rematch.action.interacted_element_index(),
             Some(8)
         );
         assert!(plan.actions[1].rematch.changed);
         assert_eq!(plan.actions[2].step_index, 1);
         assert_eq!(plan.actions[2].action_index, 1);
+        assert_eq!(
+            plan.actions[2].original_action,
+            plan.actions[2].remapped_action
+        );
         assert_eq!(plan.actions[2].rematch.original_index, None);
         assert!(!plan.actions[2].rematch.changed);
     }
@@ -6049,9 +6089,13 @@ mod tests {
             BTreeMap::from([("name".to_owned(), "email".to_owned())]),
         )]);
 
-        let plan = build_history_replay_plan(&history, &current_dom).expect("replay plan");
+        let plan = history.replay_plan(&current_dom).expect("replay plan");
 
         assert_eq!(plan.actions.len(), 1);
+        assert_eq!(
+            plan.actions[0].original_action,
+            plan.actions[0].remapped_action
+        );
         assert_eq!(plan.actions[0].rematch.original_index, Some(99));
         assert_eq!(plan.actions[0].rematch.rematched_index, None);
         assert!(!plan.actions[0].rematch.changed);
@@ -6079,14 +6123,48 @@ mod tests {
         second.name = Some("Duplicate".to_owned());
         let current_dom = SerializedDomState::from_elements(vec![first, second]);
 
-        let error = build_history_replay_plan(&history, &current_dom).expect_err("ambiguous");
+        let error = history.replay_plan(&current_dom).expect_err("ambiguous");
 
         assert_eq!(error.step_index, 0);
         assert_eq!(error.action_index, 0);
+        assert_eq!(error.original_action.interacted_element_index(), Some(1));
+        assert_eq!(error.original_index, Some(1));
         assert_eq!(
             error.failure.reason,
             DomInteractedElementMatchFailureReason::Ambiguous
         );
+
+        let mut state = blank_state();
+        state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("data-testid".to_owned(), "missing".to_owned())]),
+        )]);
+        let history = AgentHistory {
+            items: vec![history_item_with_state_actions(
+                state,
+                vec![BrowserAction::Click(ClickElementAction {
+                    index: Some(1),
+                    coordinate_x: None,
+                    coordinate_y: None,
+                })],
+            )],
+        };
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            9,
+            "button",
+            BTreeMap::from([("data-testid".to_owned(), "other".to_owned())]),
+        )]);
+
+        let error = history
+            .replay_plan(&current_dom)
+            .expect_err("missing current rematch");
+
+        assert_eq!(
+            error.failure.reason,
+            DomInteractedElementMatchFailureReason::NotFound
+        );
+        assert_eq!(error.original_index, Some(1));
     }
 
     #[test]
