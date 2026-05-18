@@ -1239,6 +1239,7 @@ pub struct CloudBrowserClient {
     api_base_url: String,
     api_key: Option<String>,
     client: reqwest::Client,
+    current_session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for CloudBrowserClient {
@@ -1254,6 +1255,7 @@ impl CloudBrowserClient {
             api_base_url: "https://api.browser-use.com".to_owned(),
             api_key: None,
             client: reqwest::Client::new(),
+            current_session_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1276,21 +1278,15 @@ impl CloudBrowserClient {
         self.with_api_base_url(api_base_url)
     }
 
+    pub async fn current_session_id(&self) -> Option<String> {
+        self.current_session_id.lock().await.clone()
+    }
+
     pub async fn create_browser(
         &self,
         request: &CloudBrowserCreateRequest,
     ) -> Result<CloudBrowserResponse, BrowserError> {
-        let api_key = self
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("BROWSER_USE_API_KEY").ok())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                BrowserError::CloudAuth(
-                    "BROWSER_USE_API_KEY is not set. To use cloud browsers, get a key at https://cloud.browser-use.com/new-api-key?utm_source=oss&utm_medium=use_cloud"
-                        .to_owned(),
-                )
-            })?;
+        let api_key = self.api_key()?;
         let url = format!("{}/api/v2/browsers", self.api_base_url);
         let response = self
             .client
@@ -1321,10 +1317,87 @@ impl CloudBrowserClient {
                 render_cloud_error_body(&body)
             )));
         }
-        response
+        let response = response
             .json::<CloudBrowserResponse>()
             .await
-            .map_err(|error| BrowserError::Cloud(error.to_string()))
+            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+        *self.current_session_id.lock().await = Some(response.id.clone());
+        Ok(response)
+    }
+
+    pub async fn stop_browser(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<CloudBrowserResponse, BrowserError> {
+        let session_id = match session_id {
+            Some(session_id) if !session_id.trim().is_empty() => session_id.to_owned(),
+            _ => self.current_session_id().await.ok_or_else(|| {
+                BrowserError::Cloud(
+                    "No session ID provided and no current session available".to_owned(),
+                )
+            })?,
+        };
+        let api_key = self.api_key()?;
+        let url = format!("{}/api/v2/browsers/{session_id}", self.api_base_url);
+        let response = self
+            .client
+            .patch(url)
+            .header("X-Browser-Use-API-Key", api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&serde_json::json!({ "action": "stop" }))
+            .send()
+            .await
+            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(BrowserError::CloudAuth(
+                "Authentication failed. Please make sure BROWSER_USE_API_KEY is set for Browser Use Cloud."
+                    .to_owned(),
+            ));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            self.clear_current_session_if(&session_id).await;
+            return Err(BrowserError::Cloud(format!(
+                "Cloud browser session {session_id} not found"
+            )));
+        }
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(BrowserError::Cloud(format!(
+                "HTTP {status}{}",
+                render_cloud_error_body(&body)
+            )));
+        }
+        let response = response
+            .json::<CloudBrowserResponse>()
+            .await
+            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
+        self.clear_current_session_if(&session_id).await;
+        Ok(response)
+    }
+
+    pub async fn close(&self) {
+        let _ = self.stop_browser(None).await;
+    }
+
+    fn api_key(&self) -> Result<String, BrowserError> {
+        self.api_key
+            .clone()
+            .or_else(|| std::env::var("BROWSER_USE_API_KEY").ok())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                BrowserError::CloudAuth(
+                    "BROWSER_USE_API_KEY is not set. To use cloud browsers, get a key at https://cloud.browser-use.com/new-api-key?utm_source=oss&utm_medium=use_cloud"
+                        .to_owned(),
+                )
+            })
+    }
+
+    async fn clear_current_session_if(&self, session_id: &str) {
+        let mut current_session_id = self.current_session_id.lock().await;
+        if current_session_id.as_deref() == Some(session_id) {
+            *current_session_id = None;
+        }
     }
 }
 
@@ -7408,6 +7481,93 @@ where
 mod tests {
     use super::*;
 
+    fn cloud_browser_response_json(id: &str, status: &str) -> Value {
+        json!({
+            "id": id,
+            "status": status,
+            "liveUrl": format!("https://cloud.browser-use.com/live/{id}"),
+            "cdpUrl": format!("wss://cdp.browser-use.com/devtools/browser/{id}"),
+            "timeoutAt": "2026-05-18T20:00:00Z",
+            "startedAt": "2026-05-18T19:00:00Z",
+            "finishedAt": null
+        })
+    }
+
+    async fn cloud_test_server(
+        responses: Vec<(u16, Value)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind cloud test server");
+        let addr = listener.local_addr().expect("cloud test server addr");
+        let handle = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.expect("accept cloud request");
+                let mut buffer = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut chunk).await.expect("read cloud request");
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    if http_request_complete(&buffer) {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&buffer).to_string();
+                requests.push(request);
+                let body = body.to_string();
+                let reason = match status {
+                    200 => "OK",
+                    401 => "Unauthorized",
+                    404 => "Not Found",
+                    _ => "Error",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write cloud response");
+            }
+            requests
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn http_request_complete(buffer: &[u8]) -> bool {
+        let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let header_end = header_end + 4;
+        let headers = String::from_utf8_lossy(&buffer[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0);
+        buffer.len() >= header_end + content_length
+    }
+
+    fn request_body(request: &str) -> Value {
+        let body = request
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("request body separator");
+        serde_json::from_str(body).expect("request body json")
+    }
+
     #[test]
     fn default_profile_uses_headless_chrome_args() {
         let profile = BrowserProfile::default();
@@ -7492,6 +7652,115 @@ mod tests {
         let plan = profile.launch_plan();
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_tracks_created_session_and_stops_current() {
+        let (base_url, server) = cloud_test_server(vec![
+            (200, cloud_browser_response_json("browser-123", "running")),
+            (200, cloud_browser_response_json("browser-123", "stopped")),
+        ])
+        .await;
+        let client = CloudBrowserClient::with_api_key("test-key").with_base_url(base_url);
+
+        let created = client
+            .create_browser(&CloudBrowserCreateRequest {
+                proxy_country_code: CloudProxyCountryCode::disabled(),
+                ..CloudBrowserCreateRequest::default()
+            })
+            .await
+            .expect("create cloud browser");
+        assert_eq!(created.id, "browser-123");
+        assert_eq!(
+            client.current_session_id().await.as_deref(),
+            Some("browser-123")
+        );
+
+        let stopped = client
+            .stop_browser(None)
+            .await
+            .expect("stop current cloud browser");
+        assert_eq!(stopped.status, "stopped");
+        assert_eq!(client.current_session_id().await, None);
+
+        let requests = server.await.expect("cloud server task");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("POST /api/v2/browsers "));
+        assert!(
+            requests[0]
+                .to_ascii_lowercase()
+                .contains("x-browser-use-api-key: test-key")
+        );
+        assert_eq!(
+            request_body(&requests[0]),
+            json!({ "proxy_country_code": null })
+        );
+        assert!(requests[1].starts_with("PATCH /api/v2/browsers/browser-123 "));
+        assert_eq!(request_body(&requests[1]), json!({ "action": "stop" }));
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_stops_explicit_session_id() {
+        let (base_url, server) = cloud_test_server(vec![(
+            200,
+            cloud_browser_response_json("browser-explicit", "stopped"),
+        )])
+        .await;
+        let client = CloudBrowserClient::with_api_key("test-key").with_base_url(base_url);
+
+        let stopped = client
+            .stop_browser(Some("browser-explicit"))
+            .await
+            .expect("stop explicit cloud browser");
+        assert_eq!(stopped.id, "browser-explicit");
+        assert_eq!(client.current_session_id().await, None);
+
+        let requests = server.await.expect("cloud server task");
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("PATCH /api/v2/browsers/browser-explicit "));
+        assert_eq!(request_body(&requests[0]), json!({ "action": "stop" }));
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_reports_missing_current_session() {
+        let error = CloudBrowserClient::with_api_key("test-key")
+            .stop_browser(None)
+            .await
+            .expect_err("missing current session should fail");
+
+        assert!(error.to_string().contains("No session ID provided"));
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_clears_current_session_on_not_found() {
+        let (base_url, server) = cloud_test_server(vec![
+            (
+                200,
+                cloud_browser_response_json("browser-missing", "running"),
+            ),
+            (404, json!({ "detail": "not found" })),
+        ])
+        .await;
+        let client = CloudBrowserClient::with_api_key("test-key").with_base_url(base_url);
+        client
+            .create_browser(&CloudBrowserCreateRequest::default())
+            .await
+            .expect("create cloud browser");
+        assert_eq!(
+            client.current_session_id().await.as_deref(),
+            Some("browser-missing")
+        );
+
+        let error = client
+            .stop_browser(None)
+            .await
+            .expect_err("404 stop should fail");
+        assert!(error.to_string().contains("browser-missing not found"));
+        assert_eq!(client.current_session_id().await, None);
+
+        let requests = server.await.expect("cloud server task");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].starts_with("PATCH /api/v2/browsers/browser-missing "));
     }
 
     #[test]
