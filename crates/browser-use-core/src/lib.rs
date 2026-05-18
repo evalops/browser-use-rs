@@ -3477,6 +3477,15 @@ pub enum AgentRunError {
     LoopDetected { window: usize },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCheckpoint {
+    pub task: String,
+    pub settings: AgentSettings,
+    pub history: AgentHistory,
+    pub initial_actions_executed: bool,
+    pub file_system_state: FileSystemState,
+}
+
 pub struct Agent<M, S> {
     task: String,
     settings: AgentSettings,
@@ -3530,8 +3539,34 @@ where
         }
     }
 
+    pub fn from_checkpoint(
+        checkpoint: AgentCheckpoint,
+        llm: M,
+        session: S,
+    ) -> Result<Self, BrowserError> {
+        let file_system = ManagedFileSystem::from_state(checkpoint.file_system_state)?;
+        Ok(Self {
+            task: checkpoint.task,
+            settings: checkpoint.settings,
+            llm,
+            executor: BrowserActionExecutor::with_file_system(session, file_system),
+            history: checkpoint.history,
+            initial_actions_executed: checkpoint.initial_actions_executed,
+        })
+    }
+
     pub fn history(&self) -> &AgentHistory {
         &self.history
+    }
+
+    pub fn checkpoint(&self) -> AgentCheckpoint {
+        AgentCheckpoint {
+            task: self.task.clone(),
+            settings: self.settings.clone(),
+            history: self.history.clone(),
+            initial_actions_executed: self.initial_actions_executed,
+            file_system_state: self.file_system_state(),
+        }
     }
 
     pub fn file_system(&self) -> &ManagedFileSystem {
@@ -7915,6 +7950,146 @@ mod tests {
                 .as_deref(),
             Some("second restored extract")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_checkpoint_round_trips_and_resumes_state() {
+        let write_output = serde_json::json!({
+            "current_state": {
+                "thinking": "write checkpoint files"
+            },
+            "action": [
+                {
+                    "write_file": {
+                        "file_name": "todo.md",
+                        "content": "- resume and read report",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                },
+                {
+                    "write_file": {
+                        "file_name": "report.md",
+                        "content": "alpha\nbeta",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            initial_actions: vec![BrowserAction::Wait(WaitAction { seconds: 0 })],
+            ..AgentSettings::default()
+        };
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut agent = Agent::with_settings_and_file_system(
+            "checkpoint the agent",
+            settings,
+            QueueModel::new(vec![write_output]),
+            MockSession::new(),
+            file_system,
+        );
+
+        assert!(matches!(
+            agent.run(1).await,
+            Err(AgentRunError::StepLimitReached { max_steps: 1 })
+        ));
+        assert_eq!(agent.history().items.len(), 2);
+        assert_eq!(
+            agent
+                .history()
+                .items
+                .first()
+                .and_then(|item| item.metadata.as_ref())
+                .map(|metadata| metadata.step_number),
+            Some(0)
+        );
+        assert_eq!(
+            agent
+                .file_system_mut()
+                .save_extracted_content("checkpoint extract")
+                .expect("seed extract"),
+            "extracted_content_0.md"
+        );
+
+        let checkpoint = agent.checkpoint();
+        assert!(checkpoint.initial_actions_executed);
+        assert_eq!(checkpoint.task, "checkpoint the agent");
+        assert_eq!(checkpoint.history.items.len(), 2);
+        assert_eq!(checkpoint.file_system_state.extracted_content_count, 1);
+        let checkpoint_json =
+            serde_json::to_string_pretty(&checkpoint).expect("serialize checkpoint");
+        let checkpoint: AgentCheckpoint =
+            serde_json::from_str(&checkpoint_json).expect("deserialize checkpoint");
+        assert!(checkpoint.initial_actions_executed);
+
+        let read_output = serde_json::json!({
+            "current_state": {
+                "thinking": "read restored report"
+            },
+            "action": [
+                {
+                    "read_file": {
+                        "file_name": "report.md"
+                    }
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "checkpoint resumed",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut resumed = Agent::from_checkpoint(
+            checkpoint,
+            QueueModel::new(vec![read_output, done_output]),
+            MockSession::new(),
+        )
+        .expect("resume from checkpoint");
+
+        let history = resumed.run(2).await.expect("resumed run");
+        assert!(history.is_done());
+        assert_eq!(history.items.len(), 4);
+        assert_eq!(history.final_result(), Some("checkpoint resumed"));
+        assert!(
+            history.items[2].result[0]
+                .extracted_content
+                .as_deref()
+                .expect("read result")
+                .contains("<content>\nalpha\nbeta\n</content>")
+        );
+
+        let requests = resumed.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 2);
+        let first_prompt = request_text(&requests[0]);
+        assert!(first_prompt.contains("Wrote file report.md"));
+        assert!(first_prompt.contains("<file_system>\n<file>\nextracted_content_0.md -"));
+        assert!(
+            first_prompt.contains("<todo_contents>\n- resume and read report\n</todo_contents>")
+        );
+        let second_prompt = request_text(&requests[1]);
+        assert!(second_prompt.contains("<read_state_0>"));
+        assert!(second_prompt.contains("Read from file report.md."));
+        drop(requests);
+
+        let next_file = resumed
+            .file_system_mut()
+            .save_extracted_content("after checkpoint")
+            .expect("next extracted content");
+        assert_eq!(next_file, "extracted_content_1.md");
+        assert_eq!(resumed.file_system_state().extracted_content_count, 2);
     }
 
     #[tokio::test]
