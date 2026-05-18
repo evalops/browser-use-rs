@@ -9,7 +9,9 @@ prints or writes the result, and exits.
 ```sh
 browser-use-rs version-target
 browser-use-rs schema action
+browser-use-rs schema agent-output
 browser-use-rs schema browser-state
+browser-use-rs schema replay-run
 browser-use-rs mcp-tools
 browser-use-rs mcp-stdio
 browser-use-rs daemon [--addr 127.0.0.1:8765] [--transport tcp|http] \

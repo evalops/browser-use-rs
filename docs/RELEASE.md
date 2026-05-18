@@ -138,7 +138,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   through restored prompts, `read_file`, todo context, extracted-content
   numbering, and full `AgentCheckpoint` resume with prior history and
   initial-action state, plus public browser lifecycle event and adapter JSON
-  shapes, with semantic checks for dynamic step timing metadata.
+  shapes, public `AgentHistoryReplayRun` JSON Schema, and semantic checks for
+  dynamic step timing metadata.
 - `browser-use-dom` exposes interacted-element rematching diagnostics for
   exact hash, stable hash, XPath, AX-name, and unique-attribute history replay
   foundations without changing live action execution.

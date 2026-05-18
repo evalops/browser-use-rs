@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#51 Expose AgentHistoryReplayRun JSON Schema](https://github.com/evalops/browser-use-rs/issues/51)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -52,6 +52,7 @@ small pushed checkpoints as each surface becomes real.
 - [#46 Freeze AgentHistoryReplayRun conformance fixture](https://github.com/evalops/browser-use-rs/issues/46)
 - [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
 - [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
+- [#51 Expose AgentHistoryReplayRun JSON Schema](https://github.com/evalops/browser-use-rs/issues/51)
 
 ## Current Checkpoint
 
@@ -194,7 +195,8 @@ Implemented:
   `FileSystemState` replay through restored prompts, todo context, restored
   `read_file`, extracted-content numbering, and full `AgentCheckpoint` resume
   with prior history and initial-action state, public browser lifecycle event
-  and adapter JSON shapes, plus semantic step timing metadata checks.
+  and adapter JSON shapes, public `AgentHistoryReplayRun` JSON Schema, plus
+  semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,

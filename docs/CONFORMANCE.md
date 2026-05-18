@@ -164,6 +164,9 @@ Upstream bumps must include:
 - `agent_output_schema.json`: JSON Schema snapshot captured from the default
   agent model request, including required browser-use planning fields and
   non-empty action guidance.
+- `agent_history_replay_run_schema.json`: JSON Schema snapshot for the public
+  `AgentHistoryReplayRun` replay output contract returned by CLI and MCP replay
+  surfaces.
 - `rich_browser_state_summary.json`: top-level browser-state JSON fixture for
   DOM state, tabs, screenshot markers, page metrics, network activity,
   pagination affordances, browser errors, recent events, and popup closure
