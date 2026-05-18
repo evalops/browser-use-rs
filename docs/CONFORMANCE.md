@@ -58,9 +58,11 @@ plus attached frame-tree origin storage-state save/load events. CDP websocket
 closure records a browser-stopped lifecycle diagnostic, and direct
 `Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
 lifecycle diagnostics. Unexpected websocket drops trigger bounded actor-level
-reconnect attempts with reconnecting/reconnected/failure lifecycle diagnostics.
+attempts with reconnecting/reconnected/failure lifecycle diagnostics. Registered
+CDP target sessions are invalidated after reconnect so stale session-scoped
+commands fail locally with a clear reattach error.
 
-Remaining lifecycle gaps are tracked in #30: stale session rehydration after
+Remaining lifecycle gaps are tracked in #30: automatic session rehydration after
 reconnect, profile-wide storage discovery outside the attached frame tree, and a
 full general-purpose event bus are still lighter than upstream.
 

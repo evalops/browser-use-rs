@@ -1870,6 +1870,8 @@ pub struct CdpConnection {
     event_tx: broadcast::Sender<CdpEvent>,
     next_id: AtomicU64,
     intentional_stop: Arc<AtomicBool>,
+    connection_generation: Arc<AtomicU64>,
+    session_generations: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 struct CdpRequest {
@@ -1892,6 +1894,8 @@ impl CdpConnection {
         let (request_tx, request_rx) = mpsc::channel(64);
         let (event_tx, _) = broadcast::channel(256);
         let intentional_stop = Arc::new(AtomicBool::new(false));
+        let connection_generation = Arc::new(AtomicU64::new(0));
+        let session_generations = Arc::new(Mutex::new(HashMap::new()));
         tokio::spawn(cdp_connection_actor(
             endpoint.http_url.clone(),
             endpoint.websocket_url.clone(),
@@ -1899,6 +1903,7 @@ impl CdpConnection {
             request_rx,
             event_tx.clone(),
             intentional_stop.clone(),
+            connection_generation.clone(),
         ));
 
         Ok(Arc::new(Self {
@@ -1906,6 +1911,8 @@ impl CdpConnection {
             event_tx,
             next_id: AtomicU64::new(1),
             intentional_stop,
+            connection_generation,
+            session_generations,
         }))
     }
 
@@ -1917,12 +1924,50 @@ impl CdpConnection {
         self.intentional_stop.store(true, Ordering::Relaxed);
     }
 
+    fn current_generation(&self) -> u64 {
+        self.connection_generation.load(Ordering::Relaxed)
+    }
+
+    async fn register_attached_session(&self, session_id: &str) {
+        self.session_generations
+            .lock()
+            .await
+            .insert(session_id.to_owned(), self.current_generation());
+    }
+
+    async fn ensure_session_generation_current(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<(), BrowserError> {
+        let Some(session_id) = session_id else {
+            return Ok(());
+        };
+        let Some(session_generation) = self
+            .session_generations
+            .lock()
+            .await
+            .get(session_id)
+            .copied()
+        else {
+            return Ok(());
+        };
+        let current_generation = self.current_generation();
+        if session_generation == current_generation {
+            return Ok(());
+        }
+        Err(BrowserError::Transport(format!(
+            "CDP session {session_id} is stale after reconnect; reattach target before sending session-scoped commands"
+        )))
+    }
+
     pub async fn command(
         &self,
         method: &str,
         params: Value,
         session_id: Option<&str>,
     ) -> Result<Value, BrowserError> {
+        self.ensure_session_generation_current(session_id).await?;
+
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut request = json!({
             "id": id,
@@ -1974,6 +2019,7 @@ async fn cdp_connection_actor(
     mut request_rx: mpsc::Receiver<CdpRequest>,
     event_tx: broadcast::Sender<CdpEvent>,
     intentional_stop: Arc<AtomicBool>,
+    connection_generation: Arc<AtomicU64>,
 ) {
     let mut pending: HashMap<u64, (String, oneshot::Sender<Result<Value, BrowserError>>)> =
         HashMap::new();
@@ -2075,7 +2121,9 @@ async fn cdp_connection_actor(
             break;
         }
 
-        match reconnect_cdp_socket(&cdp_url, &websocket_url, &event_tx).await {
+        match reconnect_cdp_socket(&cdp_url, &websocket_url, &event_tx, &connection_generation)
+            .await
+        {
             Some(reconnected_socket) => {
                 socket = reconnected_socket;
             }
@@ -2088,6 +2136,7 @@ async fn reconnect_cdp_socket(
     cdp_url: &str,
     websocket_url: &str,
     event_tx: &broadcast::Sender<CdpEvent>,
+    connection_generation: &AtomicU64,
 ) -> Option<CdpSocket> {
     let started_at = Instant::now();
     let mut last_error = None;
@@ -2101,10 +2150,12 @@ async fn reconnect_cdp_socket(
 
         match connect_cdp_socket(websocket_url).await {
             Ok(socket) => {
+                let generation = connection_generation.fetch_add(1, Ordering::Relaxed) + 1;
                 let _ = event_tx.send(cdp_websocket_reconnected_event(
                     cdp_url,
                     attempt,
                     started_at.elapsed(),
+                    generation,
                 ));
                 return Some(socket);
             }
@@ -2176,13 +2227,19 @@ fn cdp_websocket_reconnecting_event(cdp_url: &str, attempt: u32, max_attempts: u
     }
 }
 
-fn cdp_websocket_reconnected_event(cdp_url: &str, attempt: u32, downtime: Duration) -> CdpEvent {
+fn cdp_websocket_reconnected_event(
+    cdp_url: &str,
+    attempt: u32,
+    downtime: Duration,
+    generation: u64,
+) -> CdpEvent {
     CdpEvent {
         method: "browser-use-rs.websocket-reconnected".to_owned(),
         params: json!({
             "cdp_url": cdp_url,
             "attempt": attempt,
             "downtime_seconds": format!("{:.3}", downtime.as_secs_f64()),
+            "connection_generation": generation,
         }),
         session_id: None,
     }
@@ -3406,11 +3463,18 @@ fn lifecycle_event_for_websocket_reconnected(event: &CdpEvent) -> Option<Browser
     let cdp_url = event.params.get("cdp_url")?.as_str()?;
     let attempt = event.params.get("attempt")?.as_u64()? as u32;
     let downtime_seconds = event.params.get("downtime_seconds")?.as_str()?;
-    Some(BrowserLifecycleEvent::browser_reconnected(
-        cdp_url,
-        attempt,
-        downtime_seconds,
-    ))
+    let mut lifecycle_event =
+        BrowserLifecycleEvent::browser_reconnected(cdp_url, attempt, downtime_seconds);
+    if let Some(generation) = event
+        .params
+        .get("connection_generation")
+        .and_then(Value::as_u64)
+    {
+        lifecycle_event
+            .details
+            .insert("connection_generation".to_owned(), generation.to_string());
+    }
+    Some(lifecycle_event)
 }
 
 fn lifecycle_event_for_websocket_reconnect_failed(event: &CdpEvent) -> BrowserLifecycleEvent {
@@ -5095,6 +5159,7 @@ async fn attach_to_target(
             BrowserError::MissingResponseData("Target.attachToTarget sessionId".to_owned())
         })?;
 
+    connection.register_attached_session(&session_id).await;
     connection
         .command("Page.enable", json!({}), Some(&session_id))
         .await?;
@@ -7176,6 +7241,7 @@ mod tests {
                 "http://127.0.0.1:9222",
                 2,
                 Duration::from_millis(1_250),
+                4,
             ))
             .expect("reconnected lifecycle event");
         assert_eq!(
@@ -7183,6 +7249,7 @@ mod tests {
             BrowserLifecycleEventKind::BrowserReconnected
         );
         assert_eq!(reconnected.details["downtime_seconds"], "1.250");
+        assert_eq!(reconnected.details["connection_generation"], "4");
 
         let reconnect_failed =
             lifecycle_event_for_websocket_reconnect_failed(&cdp_websocket_reconnect_failed_event(
@@ -7258,6 +7325,41 @@ mod tests {
             ]
         );
         assert_eq!(download_progress[1].details["file_name"], "report.pdf");
+    }
+
+    #[tokio::test]
+    async fn cdp_connection_rejects_stale_registered_sessions() {
+        let (request_tx, _request_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+        let connection = CdpConnection {
+            request_tx,
+            event_tx,
+            next_id: AtomicU64::new(1),
+            intentional_stop: Arc::new(AtomicBool::new(false)),
+            connection_generation: Arc::new(AtomicU64::new(0)),
+            session_generations: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        connection.register_attached_session("session-1").await;
+        connection
+            .ensure_session_generation_current(Some("session-1"))
+            .await
+            .expect("session is current before reconnect");
+        connection
+            .connection_generation
+            .fetch_add(1, Ordering::Relaxed);
+
+        let error = connection
+            .ensure_session_generation_current(Some("session-1"))
+            .await
+            .expect_err("session is stale after reconnect generation advances");
+        assert!(matches!(error, BrowserError::Transport(_)));
+        assert!(error.to_string().contains("stale after reconnect"));
+
+        connection
+            .ensure_session_generation_current(Some("unknown-session"))
+            .await
+            .expect("unknown sessions are left to Chrome");
     }
 
     #[test]

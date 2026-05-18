@@ -30,7 +30,9 @@ includes:
   diagnostics without adding that full event stream to normal agent replies.
   CDP websocket closure is recorded as a browser-stopped lifecycle diagnostic,
   and unexpected websocket drops trigger bounded actor-level reconnect attempts
-  with reconnecting/reconnected/failure lifecycle diagnostics.
+  with reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP
+  target sessions are invalidated after reconnect so stale session-scoped
+  commands fail locally with a clear reattach error.
   `navigation_timeout_ms` bounds direct `Page.navigate` calls and records
   network-timeout lifecycle diagnostics when they hang.
   `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
@@ -38,8 +40,9 @@ includes:
   Launch profiles can set `downloads_path` to enable Chrome download behavior
   and browser-level download lifecycle events, and `storage_state_path` to
   load/save browser cookie and attached frame-tree origin local/session storage
-  state with lifecycle notifications. Stale session rehydration after reconnect
-  and profile-wide storage discovery are tracked in
+  state with lifecycle notifications. Automatic session rehydration after
+  reconnect and profile-wide storage discovery outside the attached frame tree
+  are tracked in
   [#30](https://github.com/evalops/browser-use-rs/issues/30).
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
