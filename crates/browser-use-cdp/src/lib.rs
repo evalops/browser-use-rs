@@ -1612,6 +1612,8 @@ pub struct BrowserProfile {
     pub remote_debugging_port: Option<u16>,
     #[serde(default = "default_headless")]
     pub headless: bool,
+    #[serde(default = "default_chromium_sandbox")]
+    pub chromium_sandbox: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_data_dir: Option<PathBuf>,
     #[serde(default = "default_profile_directory")]
@@ -1657,6 +1659,7 @@ impl Default for BrowserProfile {
             executable_path: None,
             remote_debugging_port: None,
             headless: default_headless(),
+            chromium_sandbox: default_chromium_sandbox(),
             user_data_dir: None,
             profile_directory: default_profile_directory(),
             downloads_path: None,
@@ -1685,6 +1688,10 @@ fn default_headless() -> bool {
     true
 }
 
+fn default_chromium_sandbox() -> bool {
+    true
+}
+
 fn default_profile_directory() -> String {
     "Default".to_owned()
 }
@@ -1709,6 +1716,16 @@ const CHROME_DISABLE_SECURITY_ARGS: &[&str] = &[
     "--ignore-certificate-errors",
     "--ignore-ssl-errors",
     "--ignore-certificate-errors-spki-list",
+];
+
+const CHROME_DOCKER_ARGS: &[&str] = &[
+    "--no-sandbox",
+    "--disable-gpu-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--no-xshm",
+    "--no-zygote",
+    "--disable-site-isolation-trials",
 ];
 
 const CHROME_DETERMINISTIC_RENDERING_ARGS: &[&str] = &[
@@ -1803,6 +1820,10 @@ impl BrowserProfile {
             if !self.profile_directory.is_empty() {
                 args.push(format!("--profile-directory={}", self.profile_directory));
             }
+        }
+
+        if !self.chromium_sandbox {
+            args.extend(CHROME_DOCKER_ARGS.iter().map(|arg| (*arg).to_owned()));
         }
 
         if self.disable_security {
@@ -7832,6 +7853,12 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert!(profile.chromium_sandbox);
+        assert!(
+            !CHROME_DOCKER_ARGS
+                .iter()
+                .any(|arg| plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg))
+        );
         assert_eq!(profile.profile_directory, "Default");
         assert!(
             !plan
@@ -7886,6 +7913,15 @@ mod tests {
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert_eq!(encoded["profile_directory"], json!("Default"));
+    }
+
+    #[test]
+    fn browser_profile_chromium_sandbox_defaults_true_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(decoded.chromium_sandbox);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["chromium_sandbox"], json!(true));
     }
 
     #[test]
@@ -8374,6 +8410,47 @@ mod tests {
         assert_eq!(profile_directory_index, user_data_index + 1);
         assert!(profile_directory_index < security_index);
         assert!(profile_directory_index < custom_profile_directory_index);
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_chromium_sandbox_args_when_disabled() {
+        let profile = BrowserProfile {
+            chromium_sandbox: false,
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        for arg in CHROME_DOCKER_ARGS {
+            assert!(
+                plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg),
+                "missing chromium_sandbox=false launch arg {arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_plan_keeps_chromium_sandbox_args_before_custom_args() {
+        let profile = BrowserProfile {
+            chromium_sandbox: false,
+            user_data_dir: Some(PathBuf::from("/tmp/browser-use-rs-profile")),
+            args: vec!["--no-sandbox=false".to_owned(), "--custom-last".to_owned()],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let profile_directory_index = arg_index(&plan.args, "--profile-directory=Default");
+        let sandbox_index = arg_index(&plan.args, "--no-sandbox");
+        let first_custom_arg_index = arg_index(&plan.args, "--no-sandbox=false");
+
+        assert!(profile_directory_index < sandbox_index);
+        for arg in CHROME_DOCKER_ARGS {
+            assert!(
+                arg_index(&plan.args, arg) < first_custom_arg_index,
+                "generated chromium_sandbox=false launch arg {arg} should come before caller args"
+            );
+        }
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
