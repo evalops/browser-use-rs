@@ -67,7 +67,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     '[onmouseup]',
     '[onkeydown]',
     '[onkeyup]',
-    '[tabindex]:not([tabindex="-1"])',
+    '[tabindex]',
     '[contenteditable]:not([contenteditable="false"])',
     '[aria-checked]',
     '[aria-expanded]',
@@ -654,7 +654,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     '[onmouseup]',
     '[onkeydown]',
     '[onkeyup]',
-    '[tabindex]:not([tabindex="-1"])',
+    '[tabindex]',
     '[contenteditable]:not([contenteditable="false"])',
     '[aria-checked]',
     '[aria-expanded]',
@@ -5247,6 +5247,16 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_indexes_all_tabindex_values_like_upstream() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("[tabindex]"));
+        assert!(!INTERACTIVE_ELEMENTS_JS.contains("[tabindex]:not"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("[tabindex]"));
+        assert!(!action_script.contains("[tabindex]:not"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_aria_interactivity_properties() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasAriaInteractivityProperty"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("aria-required"));
@@ -6951,6 +6961,47 @@ mod tests {
         assert!(
             !ids.contains(&"plain-static"),
             "plain static div should not be indexed: {}",
+            state.dom_state.llm_representation()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_negative_tabindex_like_upstream() {
+        let profile = BrowserProfile {
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>tabindex smoke</title></head><body><div id='negative-tabindex' tabindex='-1' style='width:140px;height:32px'>Programmatic focus target</div><div id='plain-tabindex' tabindex='0' style='width:140px;height:32px'>Keyboard focus target</div><div id='plain-div' style='width:140px;height:32px'>Plain div</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let ids = state
+            .dom_state
+            .selector_map
+            .values()
+            .filter_map(|element| element.attributes.get("id").map(String::as_str))
+            .collect::<Vec<_>>();
+        for expected in ["negative-tabindex", "plain-tabindex"] {
+            assert!(
+                ids.contains(&expected),
+                "DOM state did not index {expected}: {}",
+                state.dom_state.llm_representation()
+            );
+        }
+        assert!(
+            !ids.contains(&"plain-div"),
+            "plain div should not be indexed: {}",
             state.dom_state.llm_representation()
         );
     }

@@ -39,8 +39,9 @@ includes:
   file-input upload targets, plain scroll-container indexing, and scrollable
   element metadata with prompt-visible pages-above/below context,
   plus href-less anchor tags, common ARIA widget roles, search affordance
-  signals, ARIA required/autocomplete/keyshortcut interactivity signals with
-  prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
+  signals, tabindex-backed controls including `tabindex="-1"`, ARIA
+  required/autocomplete/keyshortcut interactivity signals with prompt-visible
+  `keyshortcuts`, AX-shaped numeric value aliases,
   human-readable value text, contenteditable editor variants, media control
   compounds, small icon controls, cursor-pointer controls,
   decorative SVG child pruning, contained duplicate descendant pruning for

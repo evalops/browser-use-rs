@@ -111,10 +111,11 @@ Implemented:
   input mask/autocomplete/date-format datepicker hints, live-region and
   hierarchy metadata, and static
   history-matching attributes, renders native and text datepicker input format
-  hints, indexes ARIA required/autocomplete/keyshortcut interactivity signals,
-  renders keyboard shortcuts as `keyshortcuts`, renders numeric ARIA value
-  metadata in AX-shaped fields, detects search affordance signals and small icon
-  controls, indexes contenteditable editor variants and media controls, detects
+  hints, indexes tabindex-backed controls including `tabindex="-1"`, ARIA
+  required/autocomplete/keyshortcut interactivity signals, renders keyboard
+  shortcuts as `keyshortcuts`, renders numeric ARIA value metadata in AX-shaped
+  fields, detects search affordance signals and small icon controls, indexes
+  contenteditable editor variants and media controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
   controls, prunes duplicate long attribute values, prunes decorative SVG child
   elements, detects static mouse/keyboard
@@ -124,9 +125,9 @@ Implemented:
   upstream empty-DOM load hint, filters occluded elements with a topmost-center
   check, keeps hidden file-input upload targets, indexes plain scroll containers
   without interactive descendants, renders pages-above/below scroll context for
-  indexed scroll containers, indexes href-less anchor tags and ARIA
-  required/autocomplete/keyshortcut interactivity signals, renders
-  human-readable value text, prunes non-content
+  indexed scroll containers, indexes href-less anchor tags and tabindex-backed
+  controls including `tabindex="-1"`, renders human-readable value text, prunes
+  non-content
   `head`/`script`/`style`/metadata tags, and excludes hidden, disabled, or
   `data-browser-use-exclude` subtrees from the selector map.
 - `browser-use-dom` now also exposes a tree-shaped eval/judge representation

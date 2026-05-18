@@ -29,10 +29,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   scroll containers, href-less anchor tags, accessible names from labels, ARIA
   references, image alt text, selected dropdown values, compound control
   metadata, compact select option summaries, common ARIA widget roles, search
-  affordance signals, small icon controls, ARIA required/autocomplete/keyshortcut
-  interactivity signals with prompt-visible `keyshortcuts`, AX-shaped numeric
-  value aliases, human-readable value text, contenteditable editor variants,
-  media control compounds, duplicate long-attribute pruning,
+  affordance signals, small icon controls, tabindex-backed controls including
+  `tabindex="-1"`, ARIA required/autocomplete/keyshortcut interactivity signals
+  with prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
+  human-readable value text, contenteditable editor variants, media control
+  compounds, duplicate long-attribute pruning,
   input mask/autocomplete/date-format datepicker hints, live-region, hierarchy,
   and multiselect state aliases, JavaScript click/pointer listener-backed
   controls, cursor-pointer controls, decorative SVG child pruning, static
