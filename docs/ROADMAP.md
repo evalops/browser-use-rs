@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#13 Expand browser-profile watchdog diagnostics](https://github.com/evalops/browser-use-rs/issues/13)
+- Next parity track to be opened from the remaining gaps below.
 
 ## Completed Tracks
 
@@ -17,6 +17,7 @@ small pushed checkpoints as each surface becomes real.
 - [#9 Add event-driven browser security watchdog](https://github.com/evalops/browser-use-rs/issues/9)
 - [#10 Expand provider-specific structured output fallbacks](https://github.com/evalops/browser-use-rs/issues/10)
 - [#12 Port upstream FileSystem CSV normalization](https://github.com/evalops/browser-use-rs/issues/12)
+- [#13 Expand browser-profile watchdog diagnostics](https://github.com/evalops/browser-use-rs/issues/13)
 
 ## Current Checkpoint
 
