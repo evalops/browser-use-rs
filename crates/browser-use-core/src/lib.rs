@@ -4812,6 +4812,13 @@ pub enum AgentRunError {
     MaxFailuresExceeded { failures: u32 },
     #[error("agent repeated the same action sequence for {window} steps")]
     LoopDetected { window: usize },
+    #[error("agent stopped programmatically")]
+    Stopped,
+    #[error("agent callback {callback} failed: {message}")]
+    Callback {
+        callback: &'static str,
+        message: String,
+    },
     #[error("failed to save conversation to {path}: {source}")]
     ConversationSave {
         path: String,
@@ -4835,6 +4842,12 @@ pub struct AgentCheckpoint {
     pub file_system_state: FileSystemState,
 }
 
+pub type AgentStepCallback = Box<
+    dyn FnMut(&BrowserStateSummary, &AgentOutput, usize) -> Result<(), String> + Send + 'static,
+>;
+pub type AgentDoneCallback = Box<dyn FnMut(&AgentHistory) -> Result<(), String> + Send + 'static>;
+pub type AgentShouldStopCallback = Box<dyn FnMut() -> Result<bool, String> + Send + 'static>;
+
 pub struct Agent<M, S> {
     id: Uuid,
     task: String,
@@ -4843,6 +4856,10 @@ pub struct Agent<M, S> {
     executor: BrowserActionExecutor<S>,
     history: AgentHistory,
     initial_actions_executed: bool,
+    stopped: bool,
+    step_callbacks: Vec<AgentStepCallback>,
+    done_callbacks: Vec<AgentDoneCallback>,
+    should_stop_callback: Option<AgentShouldStopCallback>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4900,6 +4917,10 @@ where
             executor,
             history: AgentHistory::default(),
             initial_actions_executed: false,
+            stopped: false,
+            step_callbacks: Vec::new(),
+            done_callbacks: Vec::new(),
+            should_stop_callback: None,
         }
     }
 
@@ -4922,6 +4943,10 @@ where
             executor,
             history: checkpoint.history,
             initial_actions_executed: checkpoint.initial_actions_executed,
+            stopped: false,
+            step_callbacks: Vec::new(),
+            done_callbacks: Vec::new(),
+            should_stop_callback: None,
         })
     }
 
@@ -4955,9 +4980,95 @@ where
         self.executor.file_system().get_state()
     }
 
+    pub fn register_new_step_callback<F, E>(&mut self, mut callback: F)
+    where
+        F: FnMut(&BrowserStateSummary, &AgentOutput, usize) -> Result<(), E> + Send + 'static,
+        E: ToString + 'static,
+    {
+        self.step_callbacks
+            .push(Box::new(move |state, output, step| {
+                callback(state, output, step).map_err(|error| error.to_string())
+            }));
+    }
+
+    pub fn register_done_callback<F, E>(&mut self, mut callback: F)
+    where
+        F: FnMut(&AgentHistory) -> Result<(), E> + Send + 'static,
+        E: ToString + 'static,
+    {
+        self.done_callbacks.push(Box::new(move |history| {
+            callback(history).map_err(|error| error.to_string())
+        }));
+    }
+
+    pub fn register_should_stop_callback<F, E>(&mut self, mut callback: F)
+    where
+        F: FnMut() -> Result<bool, E> + Send + 'static,
+        E: ToString + 'static,
+    {
+        self.should_stop_callback = Some(Box::new(move || {
+            callback().map_err(|error| error.to_string())
+        }));
+    }
+
+    pub fn stop(&mut self) {
+        self.stopped = true;
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped
+    }
+
+    fn check_stop_requested(&mut self) -> Result<(), AgentRunError> {
+        if self.stopped {
+            return Err(AgentRunError::Stopped);
+        }
+
+        if let Some(callback) = self.should_stop_callback.as_mut() {
+            let should_stop = callback().map_err(|message| AgentRunError::Callback {
+                callback: "should_stop",
+                message,
+            })?;
+            if should_stop {
+                self.stopped = true;
+                return Err(AgentRunError::Stopped);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn invoke_step_callbacks(
+        &mut self,
+        state: &BrowserStateSummary,
+        model_output: &AgentOutput,
+        step_number: usize,
+    ) -> Result<(), AgentRunError> {
+        for callback in &mut self.step_callbacks {
+            callback(state, model_output, step_number).map_err(|message| {
+                AgentRunError::Callback {
+                    callback: "new_step",
+                    message,
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    fn invoke_done_callbacks(&mut self) -> Result<(), AgentRunError> {
+        for callback in &mut self.done_callbacks {
+            callback(&self.history).map_err(|message| AgentRunError::Callback {
+                callback: "done",
+                message,
+            })?;
+        }
+        Ok(())
+    }
+
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
 
+        self.check_stop_requested()?;
         self.execute_initial_actions().await?;
         if self
             .history
@@ -4969,6 +5080,7 @@ where
         }
 
         for step_index in 0..max_steps {
+            self.check_stop_requested()?;
             let (is_done, has_error) = {
                 let seconds = self.settings.step_timeout_seconds;
                 let steps_used = step_index + 1;
@@ -4994,6 +5106,7 @@ where
                 )
             };
 
+            self.check_stop_requested()?;
             if is_done {
                 return self.finish_successful_run().await;
             }
@@ -5033,6 +5146,7 @@ where
     }
 
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+        self.check_stop_requested()?;
         let seconds = self.settings.step_timeout_seconds;
         timeout(Duration::from_secs(seconds), self.step_inner())
             .await
@@ -5168,6 +5282,11 @@ where
         if let Some(error) = excluded_action_error(&model_output.action, &self.settings) {
             return self.record_model_error(state, error, step_start_time);
         }
+        let step_number = latest_history_step_number(&self.history)
+            .map(|step| step + 1)
+            .unwrap_or(1);
+        self.invoke_step_callbacks(&state, &model_output, step_number)?;
+        self.check_stop_requested()?;
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
         let result = self.execute_agent_sequence(&actions).await;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
@@ -5478,6 +5597,7 @@ where
 
     async fn finish_successful_run(&mut self) -> Result<&AgentHistory, AgentRunError> {
         self.maybe_judge_done_result().await;
+        self.invoke_done_callbacks()?;
         self.save_history_gif()?;
         Ok(&self.history)
     }
@@ -7409,7 +7529,7 @@ mod tests {
     };
     use std::{
         collections::{BTreeMap, BTreeSet, VecDeque},
-        sync::Mutex,
+        sync::{Arc, Mutex},
     };
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
@@ -13089,6 +13209,133 @@ mod tests {
             explicit_agent.executor.session().events(),
             vec!["navigate:https://explicit.example/start:false"]
         );
+    }
+
+    #[tokio::test]
+    async fn agent_run_invokes_step_and_done_callbacks() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut agent = Agent::with_settings(
+            "complete",
+            AgentSettings {
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let step_events = Arc::clone(&events);
+        agent.register_new_step_callback(move |_state, output, step_number| {
+            let action_name = output
+                .action
+                .first()
+                .map(BrowserAction::name)
+                .unwrap_or("none");
+            step_events
+                .lock()
+                .expect("step events lock")
+                .push(format!("step:{step_number}:{action_name}"));
+            Ok::<(), String>(())
+        });
+
+        let done_events = Arc::clone(&events);
+        agent.register_done_callback(move |history| {
+            done_events
+                .lock()
+                .expect("done events lock")
+                .push(format!("done:{}", history.items.len()));
+            Ok::<(), String>(())
+        });
+
+        let history = agent.run(1).await.expect("agent run");
+
+        assert_eq!(history.final_result(), Some("complete"));
+        assert_eq!(
+            events.lock().expect("events lock").as_slice(),
+            ["step:1:done", "done:1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_stops_before_model_when_stop_requested() {
+        let mut agent = Agent::new("complete", QueueModel::new(vec![]), MockSession::new());
+
+        agent.stop();
+        let error = agent.run(1).await.expect_err("run should stop");
+
+        assert!(matches!(error, AgentRunError::Stopped));
+        assert!(agent.is_stopped());
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+        assert!(agent.executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_run_stops_before_model_when_should_stop_callback_requests_it() {
+        let calls = Arc::new(Mutex::new(0usize));
+        let mut agent = Agent::new("complete", QueueModel::new(vec![]), MockSession::new());
+        let callback_calls = Arc::clone(&calls);
+        agent.register_should_stop_callback(move || {
+            let mut calls = callback_calls.lock().expect("callback calls lock");
+            *calls += 1;
+            Ok::<_, String>(*calls >= 1)
+        });
+
+        let error = agent.run(1).await.expect_err("run should stop");
+
+        assert!(matches!(error, AgentRunError::Stopped));
+        assert!(agent.is_stopped());
+        assert_eq!(*calls.lock().expect("calls lock"), 1);
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_run_reports_callback_failures_without_side_effects() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::with_settings(
+            "click after callback",
+            AgentSettings {
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+        agent.register_new_step_callback(|_state, _output, _step_number| {
+            Err::<(), _>("callback refused step")
+        });
+
+        let error = agent.run(2).await.expect_err("callback should fail");
+
+        assert!(matches!(
+            error,
+            AgentRunError::Callback {
+                callback: "new_step",
+                message
+            } if message == "callback refused step"
+        ));
+        assert!(agent.history.items.is_empty());
+        assert!(agent.executor.session().events().is_empty());
     }
 
     #[tokio::test]
