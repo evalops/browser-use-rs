@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #97 lands and CI is green.
+- [#96 Add upstream pause/resume agent state](https://github.com/evalops/browser-use-rs/issues/96)
 
 ## Completed Tracks
 
