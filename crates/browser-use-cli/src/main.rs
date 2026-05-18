@@ -137,6 +137,8 @@ enum Command {
         step_timeout_seconds: Option<u64>,
         #[arg(long)]
         action_timeout_seconds: Option<f64>,
+        #[arg(long)]
+        wait_between_actions_seconds: Option<f64>,
         #[arg(long, default_value_t = false)]
         no_directly_open_url: bool,
         #[arg(long, default_value_t = false)]
@@ -521,6 +523,7 @@ async fn main() -> anyhow::Result<()> {
             llm_timeout_seconds,
             step_timeout_seconds,
             action_timeout_seconds,
+            wait_between_actions_seconds,
             no_directly_open_url,
             no_final_response_after_failure,
             no_display_files_in_done_text,
@@ -585,6 +588,7 @@ async fn main() -> anyhow::Result<()> {
                 llm_timeout_seconds,
                 step_timeout_seconds,
                 action_timeout_seconds,
+                wait_between_actions_seconds,
                 no_directly_open_url,
                 no_final_response_after_failure,
                 no_display_files_in_done_text,
@@ -671,6 +675,7 @@ struct CliAgentSettingsArgs {
     llm_timeout_seconds: Option<u64>,
     step_timeout_seconds: Option<u64>,
     action_timeout_seconds: Option<f64>,
+    wait_between_actions_seconds: Option<f64>,
     no_directly_open_url: bool,
     no_final_response_after_failure: bool,
     no_display_files_in_done_text: bool,
@@ -739,6 +744,9 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     if let Some(value) = args.action_timeout_seconds {
         settings.action_timeout_seconds = value;
+    }
+    if let Some(value) = args.wait_between_actions_seconds {
+        settings.wait_between_actions_seconds = value;
     }
     if args.no_directly_open_url {
         settings.directly_open_url = false;
@@ -2223,6 +2231,8 @@ mod tests {
             "22",
             "--action-timeout-seconds",
             "33.5",
+            "--wait-between-actions-seconds",
+            "0.25",
             "--no-directly-open-url",
             "--no-final-response-after-failure",
             "--no-display-files-in-done-text",
@@ -2307,6 +2317,7 @@ mod tests {
                 llm_timeout_seconds,
                 step_timeout_seconds,
                 action_timeout_seconds,
+                wait_between_actions_seconds,
                 no_directly_open_url,
                 no_final_response_after_failure,
                 no_display_files_in_done_text,
@@ -2358,6 +2369,7 @@ mod tests {
                 assert_eq!(llm_timeout_seconds, Some(11));
                 assert_eq!(step_timeout_seconds, Some(22));
                 assert_eq!(action_timeout_seconds, Some(33.5));
+                assert_eq!(wait_between_actions_seconds, Some(0.25));
                 assert!(no_directly_open_url);
                 assert!(no_final_response_after_failure);
                 assert!(no_display_files_in_done_text);
@@ -2701,6 +2713,7 @@ mod tests {
             llm_timeout_seconds: Some(11),
             step_timeout_seconds: Some(22),
             action_timeout_seconds: Some(33.5),
+            wait_between_actions_seconds: Some(0.25),
             no_directly_open_url: true,
             no_final_response_after_failure: true,
             no_display_files_in_done_text: true,
@@ -2769,6 +2782,7 @@ mod tests {
         assert_eq!(settings.llm_timeout_seconds, 11);
         assert_eq!(settings.step_timeout_seconds, 22);
         assert_eq!(settings.action_timeout_seconds, 33.5);
+        assert_eq!(settings.wait_between_actions_seconds, 0.25);
         assert!(!settings.directly_open_url);
         assert!(!settings.final_response_after_failure);
         assert!(!settings.display_files_in_done_text);
