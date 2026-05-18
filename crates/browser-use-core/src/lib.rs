@@ -4930,6 +4930,7 @@ pub struct Agent<M, S> {
     settings: AgentSettings,
     llm: M,
     page_extraction_llm: Option<M>,
+    judge_llm: Option<M>,
     fallback_llm: Option<M>,
     using_fallback_llm: bool,
     executor: BrowserActionExecutor<S>,
@@ -5008,6 +5009,7 @@ where
             settings,
             llm,
             page_extraction_llm: None,
+            judge_llm: None,
             fallback_llm: None,
             using_fallback_llm: false,
             executor,
@@ -5037,6 +5039,7 @@ where
             settings: checkpoint.settings,
             llm,
             page_extraction_llm: None,
+            judge_llm: None,
             fallback_llm: None,
             using_fallback_llm: false,
             executor,
@@ -5068,6 +5071,19 @@ where
 
     pub fn clear_page_extraction_llm(&mut self) {
         self.page_extraction_llm = None;
+    }
+
+    pub fn with_judge_llm(mut self, judge_llm: M) -> Self {
+        self.set_judge_llm(judge_llm);
+        self
+    }
+
+    pub fn set_judge_llm(&mut self, judge_llm: M) {
+        self.judge_llm = Some(judge_llm);
+    }
+
+    pub fn clear_judge_llm(&mut self) {
+        self.judge_llm = None;
     }
 
     pub fn with_fallback_llm(mut self, fallback_llm: M) -> Self {
@@ -5808,15 +5824,13 @@ where
         }
 
         let request = build_judge_request(&self.task, &self.history, &self.settings);
-        let Ok(completion) = timeout(
-            Duration::from_secs(self.settings.llm_timeout_seconds),
-            self.llm.invoke_json(request),
+        let Ok(completion) = Self::invoke_json_once(
+            self.judge_llm.as_ref().unwrap_or(&self.llm),
+            self.settings.llm_timeout_seconds,
+            request,
         )
         .await
         else {
-            return;
-        };
-        let Ok(completion) = completion else {
             return;
         };
         let Ok(judgement) = serde_json::from_value::<JudgementResult>(completion.content) else {
@@ -14606,6 +14620,54 @@ mod tests {
                 })
             }),
             "judge request should include recent screenshots"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_uses_configured_judge_llm() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let judge_output = serde_json::json!({
+            "reasoning": "Dedicated judge reviewed the final answer.",
+            "verdict": true,
+            "failure_reason": null,
+            "impossible_task": false,
+            "reached_captcha": false
+        });
+        let primary = QueueModel::with_model("primary", vec![done_output]);
+        let judge = QueueModel::with_model("judge", vec![judge_output]);
+        let mut agent =
+            Agent::new("complete with judge", primary, MockSession::new()).with_judge_llm(judge);
+
+        let history = agent.run(1).await.expect("agent run").clone();
+
+        assert_eq!(history.final_result(), Some("complete"));
+        assert_eq!(history.is_validated(), Some(true));
+        assert_eq!(
+            history
+                .judgement()
+                .and_then(|judgement| judgement.reasoning.as_deref()),
+            Some("Dedicated judge reviewed the final answer.")
+        );
+        assert_eq!(
+            agent.llm.requests.lock().expect("primary requests").len(),
+            1
+        );
+        let judge_llm = agent.judge_llm.as_ref().expect("judge llm");
+        let judge_requests = judge_llm.requests.lock().expect("judge requests");
+        assert_eq!(judge_requests.len(), 1);
+        assert!(
+            request_text(&judge_requests[0]).contains("<final_result>\ncomplete\n</final_result>")
         );
     }
 
