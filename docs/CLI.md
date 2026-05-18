@@ -159,6 +159,11 @@ paths or files created in the managed agent filesystem. Repeated
 `conversation_<agent-id>_<step>.txt` after each successfully parsed model
 output by default; `--save-conversation-path-encoding <encoding>` accepts
 standard text encoding labels and fails rather than writing lossy transcripts.
+When the final allowed `--max-steps` step is reached, the agent switches to an
+upstream-style done-only finalization contract. The model must call `done` with
+either a complete answer or useful partial results with `success=false`;
+non-`done` output on that final step is recorded as an error before any browser
+action is executed.
 By default, completed agent runs make a non-fatal judge request and
 attach `JudgementResult` to the final `done` action without overriding the
 agent-reported `success`; `--no-judge` disables that, and `--ground-truth`

@@ -4837,6 +4837,12 @@ pub struct Agent<M, S> {
     initial_actions_executed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepRequestKind {
+    Normal,
+    FinalStep { max_steps: usize },
+}
+
 impl<M, S> Agent<M, S>
 where
     M: ChatModel,
@@ -4951,12 +4957,17 @@ where
             return self.finish_successful_run().await;
         }
 
-        for _ in 0..max_steps {
+        for step_index in 0..max_steps {
             let (is_done, has_error) = {
                 let seconds = self.settings.step_timeout_seconds;
+                let step_kind = if step_index + 1 == max_steps {
+                    StepRequestKind::FinalStep { max_steps }
+                } else {
+                    StepRequestKind::Normal
+                };
                 let item = timeout(
                     Duration::from_secs(seconds),
-                    self.step_recovering_model_errors(),
+                    self.step_recovering_model_errors_with_kind(step_kind),
                 )
                 .await
                 .map_err(|_| AgentRunError::StepTimedOut { seconds })??;
@@ -5038,17 +5049,32 @@ where
             .await
     }
 
-    async fn step_recovering_model_errors(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
+    async fn step_recovering_model_errors_with_kind(
+        &mut self,
+        step_kind: StepRequestKind,
+    ) -> Result<&AgentHistoryItem, AgentRunError> {
         let step_start_time = now_seconds();
         let include_screenshot = self.should_include_screenshot();
         let state = self.executor.session().state(include_screenshot).await?;
-        let request = build_step_request_with_file_system(
-            &self.task,
-            &state,
-            &self.history,
-            &self.settings,
-            Some(self.executor.file_system()),
-        )?;
+        let request = match step_kind {
+            StepRequestKind::Normal => build_step_request_with_file_system(
+                &self.task,
+                &state,
+                &self.history,
+                &self.settings,
+                Some(self.executor.file_system()),
+            )?,
+            StepRequestKind::FinalStep { max_steps } => {
+                build_final_response_after_step_limit_request(
+                    &self.task,
+                    &state,
+                    &self.history,
+                    &self.settings,
+                    Some(self.executor.file_system()),
+                    max_steps,
+                )?
+            }
+        };
         let request_for_transcript = request.clone();
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
@@ -5086,6 +5112,15 @@ where
             }
         };
         self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
+        if matches!(step_kind, StepRequestKind::FinalStep { .. })
+            && !is_single_done_output(&model_output)
+        {
+            return self.record_model_error(
+                state,
+                "final response at step limit must return exactly one done action".to_owned(),
+                Some(step_start_time),
+            );
+        }
         self.record_model_output(state, model_output, Some(step_start_time))
             .await
     }
@@ -5932,6 +5967,34 @@ fn build_final_response_after_failure_request(
     let instruction = format!(
         "You failed {failures} times. We are terminating the agent. Your only available action is done. Return exactly one done action. \
          If the task is not fully finished, set success to false. Include everything useful you found for the original task in done.text."
+    );
+    if let Some(message) = request
+        .messages
+        .iter_mut()
+        .find(|message| message.role == MessageRole::User)
+    {
+        message
+            .content
+            .push(ContentPart::Text { text: instruction });
+    }
+    Ok(request)
+}
+
+fn build_final_response_after_step_limit_request(
+    task: &str,
+    state: &BrowserStateSummary,
+    history: &AgentHistory,
+    settings: &AgentSettings,
+    file_system: Option<&ManagedFileSystem>,
+    max_steps: usize,
+) -> Result<ChatRequest, AgentRunError> {
+    let mut request =
+        build_step_request_with_file_system(task, state, history, settings, file_system)?;
+    request.output_schema = Some(schema_for_final_response_after_failure(settings));
+    let instruction = format!(
+        "You reached max_steps ({max_steps}) - this is your last step. Your only available action is done. \
+         Return exactly one done action. If the task is not fully finished, set success to false. \
+         Include everything useful you found for the original task in done.text."
     );
     if let Some(message) = request
         .messages
@@ -7547,6 +7610,27 @@ mod tests {
         let action_names = schema_action_names(&schema);
 
         assert_eq!(action_names, BTreeSet::from(["done".to_owned()]));
+    }
+
+    #[test]
+    fn step_limit_final_response_request_uses_done_only_schema_and_instruction() {
+        let request = build_final_response_after_step_limit_request(
+            "finish the task",
+            &blank_state(),
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+            None,
+            3,
+        )
+        .expect("step limit final response request");
+        let action_names =
+            schema_action_names(request.output_schema.as_ref().expect("output schema"));
+
+        assert_eq!(action_names, BTreeSet::from(["done".to_owned()]));
+        let text = request_text(&request);
+        assert!(text.contains("You reached max_steps (3)"));
+        assert!(text.contains("only available action is done"));
+        assert!(text.contains("set success to false"));
     }
 
     #[test]
@@ -11804,10 +11888,11 @@ mod tests {
             file_system,
         );
 
-        assert!(matches!(
-            agent.run(1).await,
-            Err(AgentRunError::StepLimitReached { max_steps: 1 })
-        ));
+        agent
+            .execute_initial_actions()
+            .await
+            .expect("initial checkpoint action");
+        agent.step().await.expect("write checkpoint files");
         assert_eq!(agent.history().items.len(), 2);
         assert_eq!(
             agent
@@ -13341,6 +13426,63 @@ mod tests {
             AgentRunError::StepLimitReached { max_steps: 1 }
         ));
         assert_eq!(agent.history().items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_run_uses_final_step_done_response_to_finish() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "finished with final step",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "finish on final step",
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("final step done");
+
+        assert_eq!(history.final_result(), Some("finished with final step"));
+        assert_eq!(history.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_run_rejects_non_done_final_step_without_side_effects() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "do not click on final step",
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(1).await.expect_err("step limit");
+
+        assert!(matches!(
+            error,
+            AgentRunError::StepLimitReached { max_steps: 1 }
+        ));
+        assert!(agent.executor.session().events().is_empty());
+        assert_eq!(
+            agent.history().errors()[0],
+            Some("final response at step limit must return exactly one done action")
+        );
     }
 
     #[tokio::test]

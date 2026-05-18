@@ -86,6 +86,10 @@ contract-preserved `generate_gif`, `calculate_cost`, and
 `include_tool_call_examples` flags,
 available file-path and sensitive-data prompt context, opt-in recent browser
 events, and system-message override/extension fields.
+On the final allowed `max_steps` step, `browser_use_agent` uses the same
+done-only finalization contract as upstream browser-use so partial results are
+returned through `done` instead of spending the last step on another browser
+action.
 When `generate_gif` is enabled, successful agent runs write an agent-history
 GIF from recorded screenshots to `agent_history.gif` or the provided path.
 Token-cost accounting and tool-call example prompt side effects remain explicit

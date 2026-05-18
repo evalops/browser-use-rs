@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #82 lands and CI is green.
+- [#83 Add upstream max_steps final done guard](https://github.com/evalops/browser-use-rs/issues/83)
 
 ## Completed Tracks
 
@@ -185,8 +184,9 @@ Implemented:
   upstream-style initial actions, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
   per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
-  `action_timeout_seconds`, upstream-style page-stat prompt context with
-  loading/skeleton hints, upstream-compatible
+  `action_timeout_seconds`, upstream-style final-step done-only guard for
+  `max_steps`, upstream-style page-stat prompt context with loading/skeleton
+  hints, upstream-compatible
   `true`/`false`/`auto` vision modes, auto-only screenshot action gating,
   screenshot action next-observation image overrides, action-result image
   prompt parts, one-time extraction replay handling, invalid model-output
