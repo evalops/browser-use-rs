@@ -39,11 +39,25 @@ jobs:
           mkdir -p dist/package/packaging/systemd dist/package/packaging/launchd
           cp target/release/browser-use-rs dist/package/browser-use-rs
           cp README.md LICENSE NOTICE dist/package/
+          cp docs/INSTALL.md dist/package/INSTALL.md
           cp docs/RELEASE.md dist/package/RELEASE.md
           cp docs/DAEMON_SUPERVISION.md dist/package/DAEMON_SUPERVISION.md
           cp packaging/systemd/browser-use-rs.service dist/package/packaging/systemd/
           cp packaging/launchd/com.evalops.browser-use-rs.plist dist/package/packaging/launchd/
           tar -C dist/package -czf "dist/browser-use-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" .
+          (cd dist && sha256sum "browser-use-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" > SHA256SUMS)
+
+      - name: Generate Homebrew formula
+        run: |
+          mkdir -p dist/homebrew
+          version="${GITHUB_REF_NAME#v}"
+          sha256="$(cut -d ' ' -f 1 "dist/SHA256SUMS")"
+          sed \
+            -e "s/__VERSION__/${version}/g" \
+            -e "s/__SHA256__/${sha256}/g" \
+            packaging/homebrew/browser-use-rs.rb.template \
+            > dist/homebrew/browser-use-rs.rb
+          ruby -c dist/homebrew/browser-use-rs.rb
 
       - name: Smoke packaged artifact
         run: |
@@ -58,11 +72,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: browser-use-rs-linux
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/homebrew/browser-use-rs.rb
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           body_path: docs/RELEASE.md
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/homebrew/browser-use-rs.rb

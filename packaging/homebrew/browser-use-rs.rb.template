@@ -1,0 +1,19 @@
+class BrowserUseRs < Formula
+  desc "Rust behavioral conformance port of browser-use"
+  homepage "https://github.com/evalops/browser-use-rs"
+  url "https://github.com/evalops/browser-use-rs/releases/download/v__VERSION__/browser-use-rs-v__VERSION__-x86_64-unknown-linux-gnu.tar.gz"
+  sha256 "__SHA256__"
+  license "MIT"
+
+  depends_on :linux
+
+  def install
+    bin.install "browser-use-rs"
+    doc.install "README.md", "INSTALL.md", "RELEASE.md", "DAEMON_SUPERVISION.md"
+    prefix.install "packaging"
+  end
+
+  test do
+    assert_match "browser-use/browser-use@", shell_output("#{bin}/browser-use-rs version-target")
+  end
+end
