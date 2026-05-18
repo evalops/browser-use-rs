@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -53,6 +53,7 @@ small pushed checkpoints as each surface becomes real.
 - [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
 - [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
 - [#51 Expose AgentHistoryReplayRun JSON Schema](https://github.com/evalops/browser-use-rs/issues/51)
+- [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
 
 ## Current Checkpoint
 
@@ -178,9 +179,9 @@ Implemented:
   structured-output modes.
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
-- MCP tool contract schemas and stdio JSON-RPC tool execution for state,
-  actions, `AgentHistory` replay, and provider-selectable agent runs with typed
-  agent settings.
+- MCP tool input/output contract schemas and stdio JSON-RPC tool execution for
+  state, actions, `AgentHistory` replay, and provider-selectable agent runs
+  with typed agent settings.
 - CLI agent settings expose available-file-path and sensitive-data placeholder
   context plus system-message override/extension.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing

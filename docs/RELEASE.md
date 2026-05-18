@@ -154,10 +154,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   OpenAI-wire structured-output mode overrides, system-message control,
   `mcp-tools`, `mcp-stdio`, and local persistent `session` commands.
 - MCP stdio tools for state, actions, `AgentHistory` replay, and agent runs,
-  including typed `AgentSettings`, OpenAI-wire structured-output mode
-  overrides, in-process session reuse by `session_id`, and reconnection to
-  persistent CLI session records, plus persistent record creation for new
-  `session_id` calls when a URL is supplied.
+  including typed input/output schemas for structured content, typed
+  `AgentSettings`, OpenAI-wire structured-output mode overrides, in-process
+  session reuse by `session_id`, and reconnection to persistent CLI session
+  records, plus persistent record creation for new `session_id` calls when a
+  URL is supplied.
 - MCP stdio persistent session lifecycle for start, stop, list, and cleanup,
   with liveness status and conservative stale-record cleanup on session
   records.

@@ -37,6 +37,10 @@ Current tool contracts:
   typed agent history.
 - `browser_use_session`: start, stop, and list persistent browser sessions.
 
+`tools/list` includes both `inputSchema` and `outputSchema` for each tool.
+`outputSchema` describes the JSON object returned in the call result's
+`structuredContent` field.
+
 Provider secrets are intentionally not part of MCP tool input schemas. A server
 implementation reads provider credentials from its process environment or host
 configuration. `browser_use_agent` accepts an optional `provider` input:
