@@ -4929,6 +4929,7 @@ pub struct Agent<M, S> {
     task: String,
     settings: AgentSettings,
     llm: M,
+    page_extraction_llm: Option<M>,
     fallback_llm: Option<M>,
     using_fallback_llm: bool,
     executor: BrowserActionExecutor<S>,
@@ -5006,6 +5007,7 @@ where
             task,
             settings,
             llm,
+            page_extraction_llm: None,
             fallback_llm: None,
             using_fallback_llm: false,
             executor,
@@ -5034,6 +5036,7 @@ where
             task: checkpoint.task,
             settings: checkpoint.settings,
             llm,
+            page_extraction_llm: None,
             fallback_llm: None,
             using_fallback_llm: false,
             executor,
@@ -5052,6 +5055,19 @@ where
 
     pub fn id(&self) -> Uuid {
         self.id
+    }
+
+    pub fn with_page_extraction_llm(mut self, page_extraction_llm: M) -> Self {
+        self.set_page_extraction_llm(page_extraction_llm);
+        self
+    }
+
+    pub fn set_page_extraction_llm(&mut self, page_extraction_llm: M) {
+        self.page_extraction_llm = Some(page_extraction_llm);
+    }
+
+    pub fn clear_page_extraction_llm(&mut self) {
+        self.page_extraction_llm = None;
     }
 
     pub fn with_fallback_llm(mut self, fallback_llm: M) -> Self {
@@ -5593,20 +5609,20 @@ where
         };
 
         let request = build_extract_llm_request(params, raw_content);
-        let completion = match timeout(
-            Duration::from_secs(self.settings.llm_timeout_seconds),
-            self.llm.invoke_json(request),
+        let completion = match Self::invoke_json_once(
+            self.page_extraction_llm.as_ref().unwrap_or(&self.llm),
+            self.settings.llm_timeout_seconds,
+            request,
         )
         .await
         {
-            Ok(Ok(completion)) => completion,
-            Ok(Err(error)) => {
+            Ok(completion) => completion,
+            Err(AgentLlmCallError::Provider(error)) => {
                 return ActionResult::error(format!("LLM-backed extract failed: {error}"));
             }
-            Err(_) => {
+            Err(AgentLlmCallError::TimedOut { seconds }) => {
                 return ActionResult::error(format!(
-                    "LLM-backed extract timed out after {} seconds",
-                    self.settings.llm_timeout_seconds
+                    "LLM-backed extract timed out after {seconds} seconds"
                 ));
             }
         };
@@ -12463,6 +12479,50 @@ mod tests {
                 .as_ref()
                 .is_some_and(|schema| schema["properties"]["result"]["type"] == "string")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_extract_action_uses_configured_page_extraction_llm() {
+        let agent_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "extract": {
+                        "query": "company summary",
+                        "extract_links": false,
+                        "extract_images": false,
+                        "start_from_char": 0,
+                        "already_collected": []
+                    }
+                }
+            ]
+        });
+        let extract_output = serde_json::json!({
+            "result": "Extracted by the dedicated model."
+        });
+        let primary = QueueModel::with_model("primary", vec![agent_output]);
+        let extraction = QueueModel::with_model("extractor", vec![extract_output]);
+        let mut agent = Agent::new("extract with dedicated model", primary, MockSession::new())
+            .with_page_extraction_llm(extraction);
+
+        let result = {
+            let item = agent.step().await.expect("agent step");
+            item.result[0].clone()
+        };
+
+        let content = result.extracted_content.as_deref().expect("extract result");
+        assert!(content.contains("Extracted by the dedicated model."));
+        assert_eq!(
+            agent.llm.requests.lock().expect("primary requests").len(),
+            1
+        );
+        let extraction_llm = agent
+            .page_extraction_llm
+            .as_ref()
+            .expect("page extraction llm");
+        let extraction_requests = extraction_llm.requests.lock().expect("extract requests");
+        assert_eq!(extraction_requests.len(), 1);
+        assert!(request_text(&extraction_requests[0]).contains("<webpage_content>"));
     }
 
     #[tokio::test]
