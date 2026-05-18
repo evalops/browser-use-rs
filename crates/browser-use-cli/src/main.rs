@@ -1501,6 +1501,7 @@ async fn handle_mcp_tool_call(id: Value, params: Option<Value>, runtime: &mut Mc
         params.name.as_str(),
         browser_use_mcp::STATE_TOOL_NAME
             | browser_use_mcp::ACTIONS_TOOL_NAME
+            | browser_use_mcp::REPLAY_TOOL_NAME
             | browser_use_mcp::AGENT_TOOL_NAME
             | browser_use_mcp::SESSION_TOOL_NAME
     ) {
@@ -1549,6 +1550,20 @@ async fn execute_mcp_tool(
             let results = executor.execute_sequence(&input.actions).await;
             let state = executor.session().state(input.screenshot).await?;
             let output = browser_use_mcp::ActionsToolOutput { results, state };
+            Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
+                output,
+            )?))
+        }
+        browser_use_mcp::REPLAY_TOOL_NAME => {
+            let input: browser_use_mcp::ReplayToolInput = serde_json::from_value(arguments)?;
+            let session = if let Some(session_id) = input.session_id {
+                runtime.session(&session_id, input.url).await?
+            } else {
+                Arc::new(launch_and_navigate(&require_mcp_url(input.url)?).await?)
+            };
+            let mut executor = BrowserActionExecutor::new(session);
+            let replay = executor.replay_history(&input.history).await?;
+            let output = browser_use_mcp::ReplayToolOutput { replay };
             Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
                 output,
             )?))
@@ -2439,6 +2454,25 @@ mod tests {
 
         let request = http_request("POST", "/rpc", [("authorization", "Bearer nope")], b"{}");
         assert!(!http_request_authorized(&request, Some("secret")));
+    }
+
+    #[tokio::test]
+    async fn mcp_replay_tool_dispatches_to_schema_errors() {
+        let mut runtime = McpRuntime::default();
+        let response = handle_mcp_message(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_use_replay","arguments":{}}}"#,
+            &mut runtime,
+        )
+        .await
+        .expect("response");
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 1);
+        assert_eq!(response["result"]["isError"], true);
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text content");
+        assert!(text.contains("history"));
     }
 
     #[tokio::test]

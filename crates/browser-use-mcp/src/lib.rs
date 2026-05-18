@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use browser_use_cdp::DevToolsEndpoint;
-use browser_use_core::{ActionResult, AgentHistory, AgentSettings};
+use browser_use_core::{ActionResult, AgentHistory, AgentHistoryReplayRun, AgentSettings};
 use browser_use_dom::BrowserStateSummary;
 use browser_use_tools::BrowserAction;
 use schemars::{JsonSchema, schema_for};
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 pub const STATE_TOOL_NAME: &str = "browser_use_state";
 pub const ACTIONS_TOOL_NAME: &str = "browser_use_actions";
+pub const REPLAY_TOOL_NAME: &str = "browser_use_replay";
 pub const AGENT_TOOL_NAME: &str = "browser_use_agent";
 pub const SESSION_TOOL_NAME: &str = "browser_use_session";
 
@@ -61,6 +62,15 @@ pub struct ActionsToolInput {
     pub actions: Vec<BrowserAction>,
     #[serde(default = "default_true")]
     pub screenshot: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ReplayToolInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub history: AgentHistory,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -194,6 +204,11 @@ pub struct ActionsToolOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ReplayToolOutput {
+    pub replay: AgentHistoryReplayRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentToolOutput {
     pub history: AgentHistory,
 }
@@ -233,6 +248,10 @@ pub fn tool_manifest() -> Vec<McpToolContract> {
             ACTIONS_TOOL_NAME,
             "Launch a browser, run browser-use actions, and return action results plus final state.",
         ),
+        tool_contract::<ReplayToolInput>(
+            REPLAY_TOOL_NAME,
+            "Replay saved browser-use AgentHistory against current browser state.",
+        ),
         tool_contract::<AgentToolInput>(
             AGENT_TOOL_NAME,
             "Launch a browser, run a bounded browser-use agent task, and return agent history.",
@@ -263,7 +282,7 @@ pub fn initialize_result() -> Value {
             "title": "browser-use-rs",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use browser_use_state for page state, browser_use_actions for deterministic browser actions, browser_use_agent for bounded agent runs, and browser_use_session for persistent session lifecycle."
+        "instructions": "Use browser_use_state for page state, browser_use_actions for deterministic browser actions, browser_use_replay for saved AgentHistory replay, browser_use_agent for bounded agent runs, and browser_use_session for persistent session lifecycle."
     })
 }
 
@@ -346,6 +365,7 @@ mod tests {
             vec![
                 STATE_TOOL_NAME,
                 ACTIONS_TOOL_NAME,
+                REPLAY_TOOL_NAME,
                 AGENT_TOOL_NAME,
                 SESSION_TOOL_NAME,
             ]
@@ -363,6 +383,20 @@ mod tests {
 
         assert!(schema_text.contains("actions"));
         assert!(schema_text.contains("array"));
+    }
+
+    #[test]
+    fn replay_tool_schema_exposes_history() {
+        let manifest = tool_manifest();
+        let replay_tool = manifest
+            .iter()
+            .find(|tool| tool.name == REPLAY_TOOL_NAME)
+            .expect("replay tool");
+        let schema_text = serde_json::to_string(&replay_tool.input_schema).expect("schema text");
+
+        assert!(schema_text.contains("history"));
+        assert!(schema_text.contains("session_id"));
+        assert!(schema_text.contains("url"));
     }
 
     #[test]
