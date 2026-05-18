@@ -90,6 +90,13 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (rect.width < 10 || rect.width > 50 || rect.height < 10 || rect.height > 50) return false;
     return ['class', 'role', 'onclick', 'data-action', 'aria-label'].some((name) => el.hasAttribute(name));
   };
+  const hasPointerCursor = (el) => {
+    try {
+      return window.getComputedStyle(el).cursor === 'pointer';
+    } catch (_) {
+      return false;
+    }
+  };
   const canInspectJsListeners = typeof getEventListeners === 'function' && document.querySelectorAll('*').length <= 10000;
   const hasJsClickListener = (el) => {
     if (!canInspectJsListeners) return false;
@@ -120,6 +127,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
     if (hasSearchIndicator(el)) return true;
     if (hasIconSignal(el)) return true;
+    if (hasPointerCursor(el)) return true;
     return el.matches(selector);
   };
   const isScrollable = (el) => {
@@ -375,6 +383,13 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (rect.width < 10 || rect.width > 50 || rect.height < 10 || rect.height > 50) return false;
     return ['class', 'role', 'onclick', 'data-action', 'aria-label'].some((name) => el.hasAttribute(name));
   }};
+  const hasPointerCursor = (el) => {{
+    try {{
+      return window.getComputedStyle(el).cursor === 'pointer';
+    }} catch (_) {{
+      return false;
+    }}
+  }};
   const isDisabledOrHidden = (el) => {{
     return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
@@ -394,6 +409,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
     if (hasSearchIndicator(el)) return true;
     if (hasIconSignal(el)) return true;
+    if (hasPointerCursor(el)) return true;
     return el.matches(selector);
   }};
   const elements = [];
@@ -3464,6 +3480,16 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_detects_pointer_cursor_controls() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("hasPointerCursor"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("cursor === 'pointer'"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("hasPointerCursor"));
+        assert!(action_script.contains("cursor === 'pointer'"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_javascript_click_listeners() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
@@ -4319,6 +4345,42 @@ mod tests {
             .click(favorite.index)
             .await
             .expect("click icon control by index");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_pointer_cursor_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>pointer cursor</title></head><body><div id='pointer' style='cursor:pointer;width:120px;height:32px'>Pointer target</div><div id='plain' style='width:120px;height:32px'>Plain target</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let ids = state
+            .dom_state
+            .selector_map
+            .values()
+            .filter_map(|element| element.attributes.get("id").map(String::as_str))
+            .collect::<Vec<_>>();
+        assert!(
+            ids.contains(&"pointer"),
+            "DOM state did not index pointer cursor control: {}",
+            state.dom_state.llm_representation()
+        );
+        assert!(
+            !ids.contains(&"plain"),
+            "plain non-pointer div should not be indexed: {}",
+            state.dom_state.llm_representation()
+        );
     }
 
     #[tokio::test]
