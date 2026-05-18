@@ -112,6 +112,8 @@ enum Command {
         #[arg(long)]
         step_timeout_seconds: Option<u64>,
         #[arg(long, default_value_t = false)]
+        no_final_response_after_failure: bool,
+        #[arg(long, default_value_t = false)]
         no_loop_detection: bool,
         #[arg(long)]
         loop_detection_window: Option<usize>,
@@ -302,6 +304,7 @@ async fn main() -> anyhow::Result<()> {
             max_actions_per_step,
             llm_timeout_seconds,
             step_timeout_seconds,
+            no_final_response_after_failure,
             no_loop_detection,
             loop_detection_window,
             no_thinking,
@@ -321,6 +324,7 @@ async fn main() -> anyhow::Result<()> {
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
+                no_final_response_after_failure,
                 no_loop_detection,
                 loop_detection_window,
                 no_thinking,
@@ -365,6 +369,7 @@ struct CliAgentSettingsArgs {
     max_actions_per_step: Option<usize>,
     llm_timeout_seconds: Option<u64>,
     step_timeout_seconds: Option<u64>,
+    no_final_response_after_failure: bool,
     no_loop_detection: bool,
     loop_detection_window: Option<usize>,
     no_thinking: bool,
@@ -394,6 +399,9 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     if let Some(value) = args.step_timeout_seconds {
         settings.step_timeout_seconds = value;
+    }
+    if args.no_final_response_after_failure {
+        settings.final_response_after_failure = false;
     }
     if args.no_loop_detection {
         settings.loop_detection_enabled = false;
@@ -1227,6 +1235,7 @@ mod tests {
             "11",
             "--step-timeout-seconds",
             "22",
+            "--no-final-response-after-failure",
             "--no-loop-detection",
             "--loop-detection-window",
             "4",
@@ -1257,6 +1266,7 @@ mod tests {
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
+                no_final_response_after_failure,
                 no_loop_detection,
                 loop_detection_window,
                 no_thinking,
@@ -1276,6 +1286,7 @@ mod tests {
                 assert_eq!(max_actions_per_step, Some(1));
                 assert_eq!(llm_timeout_seconds, Some(11));
                 assert_eq!(step_timeout_seconds, Some(22));
+                assert!(no_final_response_after_failure);
                 assert!(no_loop_detection);
                 assert_eq!(loop_detection_window, Some(4));
                 assert!(no_thinking);
@@ -1299,6 +1310,7 @@ mod tests {
             max_actions_per_step: Some(1),
             llm_timeout_seconds: Some(11),
             step_timeout_seconds: Some(22),
+            no_final_response_after_failure: true,
             no_loop_detection: true,
             loop_detection_window: Some(4),
             no_thinking: true,
@@ -1316,6 +1328,7 @@ mod tests {
         assert_eq!(settings.max_actions_per_step, 1);
         assert_eq!(settings.llm_timeout_seconds, 11);
         assert_eq!(settings.step_timeout_seconds, 22);
+        assert!(!settings.final_response_after_failure);
         assert!(!settings.loop_detection_enabled);
         assert_eq!(settings.loop_detection_window, 4);
         assert!(!settings.use_thinking);

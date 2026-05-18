@@ -43,7 +43,8 @@ includes:
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, compact page-stat prompt context, one-time extraction replay handling,
   step/LLM timeouts, max-failure handling, page-change guards, normalized
-  repeated-action loop detection, loop-awareness prompt nudges, upstream
+  repeated-action loop detection, loop-awareness prompt nudges, an
+  upstream-style final `done` response after repeated failures, upstream
   flattened planning fields,
   configurable planning prompt nudges, thinking/flash output-schema controls,
   structured extraction metadata, per-step timing metadata, configurable

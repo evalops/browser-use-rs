@@ -38,7 +38,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, max actions per step, max
-  steps, max failures, step and LLM timeouts, normalized repeated-action loop detection,
+  steps, max failures, step and LLM timeouts, upstream-style final `done`
+  responses after repeated failures, normalized repeated-action loop detection,
   previous result context, vision-aware screenshot capture and image prompt
   parts, screenshot action next-observation image overrides, compact page-stat
   prompt context, one-time extraction replay handling, invalid model-output

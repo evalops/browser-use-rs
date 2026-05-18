@@ -24,7 +24,8 @@ browser-use-rs actions <url> <actions.json> [--screenshot]
 browser-use-rs agent <url> <task> --provider openai-compatible \
   [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
   [--max-steps 10] [--no-vision] [--max-actions-per-step 5] \
-  [--flash-mode] [--include-attribute data-testid]
+  [--no-final-response-after-failure] [--flash-mode] \
+  [--include-attribute data-testid]
 browser-use-rs agent <url> <task> --provider anthropic \
   [--api-key <key>] [--model <model>] [--base-url https://api.anthropic.com/v1] \
   [--max-steps 10]
@@ -79,11 +80,16 @@ apply.
 
 Agent runs also expose the typed `AgentSettings` knobs used by the MCP agent
 tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
-`--llm-timeout-seconds`, `--step-timeout-seconds`, `--no-loop-detection`,
-`--loop-detection-window`, `--no-thinking`, `--flash-mode`, `--no-planning`,
-`--planning-replan-on-stall`, `--planning-exploration-limit`,
-`--max-history-items`, `--max-clickable-elements-length`, and repeated
-`--include-attribute <name>` for prompt-visible DOM attributes.
+`--llm-timeout-seconds`, `--step-timeout-seconds`,
+`--no-final-response-after-failure`, `--no-loop-detection`,
+`--loop-detection-window`, `--no-thinking`, `--flash-mode`,
+`--no-planning`, `--planning-replan-on-stall`,
+`--planning-exploration-limit`, `--max-history-items`,
+`--max-clickable-elements-length`, and repeated `--include-attribute <name>`
+for prompt-visible DOM attributes. By default, when repeated model/provider
+failures hit `--max-failures`, the agent makes one last side-effect-free
+`done`-only model call so it can return any partial findings with
+`success=false`.
 
 `session` commands persist a local Chrome session across CLI invocations. The
 session registry defaults to `~/.browser-use-rs/sessions` and can be overridden

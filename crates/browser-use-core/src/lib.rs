@@ -36,6 +36,8 @@ pub struct AgentSettings {
     pub llm_timeout_seconds: u64,
     #[serde(default = "default_step_timeout_seconds")]
     pub step_timeout_seconds: u64,
+    #[serde(default = "default_final_response_after_failure")]
+    pub final_response_after_failure: bool,
     #[serde(default = "default_loop_detection_window")]
     pub loop_detection_window: usize,
     #[serde(default = "default_loop_detection_enabled")]
@@ -66,6 +68,7 @@ impl Default for AgentSettings {
             max_actions_per_step: default_max_actions_per_step(),
             llm_timeout_seconds: default_llm_timeout_seconds(),
             step_timeout_seconds: default_step_timeout_seconds(),
+            final_response_after_failure: default_final_response_after_failure(),
             loop_detection_window: default_loop_detection_window(),
             loop_detection_enabled: default_loop_detection_enabled(),
             max_history_items: None,
@@ -98,6 +101,10 @@ fn default_llm_timeout_seconds() -> u64 {
 
 fn default_step_timeout_seconds() -> u64 {
     180
+}
+
+fn default_final_response_after_failure() -> bool {
+    true
 }
 
 fn default_loop_detection_window() -> usize {
@@ -1796,6 +1803,14 @@ where
             if has_error {
                 consecutive_failures += 1;
                 if consecutive_failures >= self.settings.max_failures {
+                    if self.settings.final_response_after_failure {
+                        let final_item = self
+                            .record_final_response_after_failure(consecutive_failures)
+                            .await?;
+                        if final_item.result.iter().any(|result| result.is_done) {
+                            return Ok(&self.history);
+                        }
+                    }
                     return Err(AgentRunError::MaxFailuresExceeded {
                         failures: consecutive_failures,
                     });
@@ -1908,6 +1923,69 @@ where
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
 
+    async fn record_final_response_after_failure(
+        &mut self,
+        failures: u32,
+    ) -> Result<&AgentHistoryItem, AgentRunError> {
+        let step_start_time = now_seconds();
+        let include_screenshot = self.should_include_screenshot();
+        let state = self.executor.session().state(include_screenshot).await?;
+        let request = build_final_response_after_failure_request(
+            &self.task,
+            &state,
+            &self.history,
+            &self.settings,
+            failures,
+        )?;
+        let completion = match timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        {
+            Ok(Ok(completion)) => completion,
+            Ok(Err(error)) => {
+                return self.record_model_error(
+                    state,
+                    format!("LLM provider error during final response after failure: {error}"),
+                    Some(step_start_time),
+                );
+            }
+            Err(_) => {
+                return self.record_model_error(
+                    state,
+                    format!(
+                        "LLM call timed out after {} seconds during final response after failure",
+                        self.settings.llm_timeout_seconds
+                    ),
+                    Some(step_start_time),
+                );
+            }
+        };
+
+        let model_output: AgentOutput = match serde_json::from_value(completion.content) {
+            Ok(model_output) => model_output,
+            Err(error) => {
+                return self.record_model_error(
+                    state,
+                    format!("invalid final response after failure: {error}"),
+                    Some(step_start_time),
+                );
+            }
+        };
+
+        if !is_single_done_output(&model_output) {
+            return self.record_model_error(
+                state,
+                "final response after failure must return exactly one done action".to_owned(),
+                Some(step_start_time),
+            );
+        }
+
+        self.record_model_output(state, model_output, Some(step_start_time))
+            .await
+    }
+
     fn record_model_error(
         &mut self,
         state: BrowserStateSummary,
@@ -1970,6 +2048,10 @@ fn now_seconds() -> f64 {
         .as_secs_f64()
 }
 
+fn is_single_done_output(output: &AgentOutput) -> bool {
+    matches!(output.action.as_slice(), [BrowserAction::Done(_)])
+}
+
 pub fn build_step_request(
     task: &str,
     state: &BrowserStateSummary,
@@ -2028,6 +2110,31 @@ pub fn build_step_request(
         ],
         output_schema: Some(schema_for_agent_output_with_settings(settings)),
     })
+}
+
+fn build_final_response_after_failure_request(
+    task: &str,
+    state: &BrowserStateSummary,
+    history: &AgentHistory,
+    settings: &AgentSettings,
+    failures: u32,
+) -> Result<ChatRequest, AgentRunError> {
+    let mut request = build_step_request(task, state, history, settings)?;
+    request.output_schema = Some(schema_for_final_response_after_failure(settings));
+    let instruction = format!(
+        "You failed {failures} times. We are terminating the agent. Your only available action is done. Return exactly one done action. \
+         If the task is not fully finished, set success to false. Include everything useful you found for the original task in done.text."
+    );
+    if let Some(message) = request
+        .messages
+        .iter_mut()
+        .find(|message| message.role == MessageRole::User)
+    {
+        message
+            .content
+            .push(ContentPart::Text { text: instruction });
+    }
+    Ok(request)
 }
 
 fn screenshot_data_url(screenshot: &str) -> String {
@@ -2112,6 +2219,38 @@ fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
     }
 
     schema
+}
+
+fn schema_for_final_response_after_failure(settings: &AgentSettings) -> Value {
+    let mut schema = schema_for_agent_output_with_settings(settings);
+    restrict_schema_actions_to_done(&mut schema);
+    schema
+}
+
+fn restrict_schema_actions_to_done(schema: &mut Value) {
+    for pointer in [
+        "/$defs/BrowserAction/oneOf",
+        "/$defs/BrowserAction/anyOf",
+        "/definitions/BrowserAction/oneOf",
+        "/definitions/BrowserAction/anyOf",
+    ] {
+        if let Some(actions) = schema.pointer_mut(pointer).and_then(Value::as_array_mut) {
+            actions.retain(schema_variant_is_done_action);
+        }
+    }
+}
+
+fn schema_variant_is_done_action(value: &Value) -> bool {
+    let required_has_done = value
+        .get("required")
+        .and_then(Value::as_array)
+        .is_some_and(|fields| fields.iter().any(|field| field.as_str() == Some("done")));
+    let properties_have_done = value
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| properties.contains_key("done"));
+
+    required_has_done || properties_have_done
 }
 
 fn prune_schema_properties(schema: &mut Value, remove_fields: &[&str]) {
@@ -2418,6 +2557,7 @@ mod tests {
         assert_eq!(settings.max_actions_per_step, 5);
         assert_eq!(settings.llm_timeout_seconds, 60);
         assert_eq!(settings.step_timeout_seconds, 180);
+        assert!(settings.final_response_after_failure);
         assert_eq!(settings.loop_detection_window, 20);
         assert!(settings.loop_detection_enabled);
         assert_eq!(settings.max_history_items, None);
@@ -2507,6 +2647,27 @@ mod tests {
         assert!(!properties.contains_key("plan_update"));
         assert!(properties.contains_key("memory"));
         assert!(properties.contains_key("action"));
+    }
+
+    #[test]
+    fn final_response_after_failure_schema_allows_only_done_action() {
+        let schema = schema_for_final_response_after_failure(&AgentSettings::default());
+        let variants = schema
+            .pointer("/$defs/BrowserAction/oneOf")
+            .or_else(|| schema.pointer("/$defs/BrowserAction/anyOf"))
+            .or_else(|| schema.pointer("/definitions/BrowserAction/oneOf"))
+            .or_else(|| schema.pointer("/definitions/BrowserAction/anyOf"))
+            .expect("browser action variants")
+            .as_array()
+            .expect("variant array");
+
+        assert_eq!(variants.len(), 1);
+        let properties = variants[0]
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("done action properties");
+        assert_eq!(properties.len(), 1);
+        assert!(properties.contains_key("done"));
     }
 
     #[test]
@@ -3856,6 +4017,19 @@ mod tests {
         }
     }
 
+    fn request_text(request: &ChatRequest) -> String {
+        request
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::ImageUrl { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[async_trait]
     impl ChatModel for QueueModel {
         fn provider(&self) -> &str {
@@ -4136,6 +4310,7 @@ mod tests {
         });
         let settings = AgentSettings {
             max_failures: 2,
+            final_response_after_failure: false,
             ..AgentSettings::default()
         };
         let mut agent = Agent::with_settings(
@@ -4182,6 +4357,7 @@ mod tests {
         });
         let settings = AgentSettings {
             max_failures: 2,
+            final_response_after_failure: false,
             ..AgentSettings::default()
         };
         let mut agent = Agent::with_settings(
@@ -4198,6 +4374,97 @@ mod tests {
             AgentRunError::MaxFailuresExceeded { failures: 2 }
         ));
         assert_eq!(agent.history().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn agent_run_requests_final_response_after_max_failures() {
+        let invalid_output = serde_json::json!({
+            "not_agent_output": true
+        });
+        let final_done = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "could not finish, but here is what I found",
+                        "success": false,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_failures: 2,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "recover with final answer",
+            settings,
+            QueueModel::new(vec![invalid_output.clone(), invalid_output, final_done]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(5).await.expect("final response");
+
+        assert_eq!(history.items.len(), 3);
+        assert_eq!(
+            history.final_result(),
+            Some("could not finish, but here is what I found")
+        );
+        assert_eq!(history.is_successful(), Some(false));
+        assert_eq!(history.errors().len(), 3);
+        assert!(history.errors()[0].is_some());
+        assert!(history.errors()[1].is_some());
+        assert_eq!(history.errors()[2], None);
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 3);
+        let final_request_text = request_text(&requests[2]);
+        assert!(final_request_text.contains("You failed 2 times"));
+        assert!(final_request_text.contains("Your only available action is done"));
+        assert!(final_request_text.contains("set success to false"));
+    }
+
+    #[tokio::test]
+    async fn final_response_after_failure_rejects_non_done_actions_before_side_effects() {
+        let invalid_output = serde_json::json!({
+            "not_agent_output": true
+        });
+        let final_click = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            max_failures: 1,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "avoid side effects after failure",
+            settings,
+            QueueModel::new(vec![invalid_output, final_click]),
+            MockSession::new(),
+        );
+
+        let error = agent.run(5).await.expect_err("max failures");
+
+        assert!(matches!(
+            error,
+            AgentRunError::MaxFailuresExceeded { failures: 1 }
+        ));
+        assert!(agent.executor.session().events().is_empty());
+        assert_eq!(agent.history().items.len(), 2);
+        let errors = agent.history().errors();
+        assert!(
+            errors[1]
+                .expect("final response error")
+                .contains("exactly one done action")
+        );
     }
 
     #[tokio::test]
