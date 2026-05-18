@@ -29,7 +29,8 @@ includes:
   diagnostics, reconnect, JavaScript dialog, download, and storage-state
   diagnostics without adding that full event stream to normal agent replies.
   Launch profiles can set `downloads_path` to enable Chrome download behavior
-  and browser-level download lifecycle events.
+  and browser-level download lifecycle events, and `storage_state_path` to
+  load/save browser cookie storage state with lifecycle notifications.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and

@@ -1118,6 +1118,8 @@ pub struct BrowserProfile {
     pub user_data_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub downloads_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_state_path: Option<PathBuf>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -1143,6 +1145,7 @@ impl Default for BrowserProfile {
             headless: default_headless(),
             user_data_dir: None,
             downloads_path: None,
+            storage_state_path: None,
             args: Vec::new(),
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
@@ -2230,6 +2233,7 @@ pub struct CdpBrowserSession {
     security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
     lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     url_policy: UrlAccessPolicy,
+    storage_state_path: Option<PathBuf>,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
@@ -2262,6 +2266,7 @@ impl CdpBrowserSession {
             security_events,
             lifecycle_events,
             url_policy: UrlAccessPolicy::default(),
+            storage_state_path: None,
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: None,
             _launched_browser: None,
@@ -2281,6 +2286,19 @@ impl CdpBrowserSession {
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        let storage_state_loaded_event = if let Some(storage_state_path) =
+            &profile.storage_state_path
+        {
+            let storage_state = load_browser_storage_state(&connection, storage_state_path).await?;
+            let (cookies_count, origins_count) = storage_state_counts(&storage_state);
+            Some(BrowserLifecycleEvent::storage_state_loaded(
+                storage_state_path.display().to_string(),
+                cookies_count,
+                origins_count,
+            ))
+        } else {
+            None
+        };
         {
             let mut events = lifecycle_events.lock().await;
             push_lifecycle_event(
@@ -2289,6 +2307,9 @@ impl CdpBrowserSession {
                     launched_browser.endpoint().http_url.clone(),
                 ),
             );
+            if let Some(event) = storage_state_loaded_event {
+                push_lifecycle_event(&mut events, event);
+            }
         }
         let lifecycle_watchdog =
             BrowserLifecycleWatchdog::start(connection.clone(), lifecycle_events.clone());
@@ -2311,6 +2332,7 @@ impl CdpBrowserSession {
             security_events,
             lifecycle_events,
             url_policy,
+            storage_state_path: profile.storage_state_path.clone(),
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
@@ -2320,10 +2342,38 @@ impl CdpBrowserSession {
     pub async fn close_browser(&self) -> Result<(), BrowserError> {
         self.record_lifecycle_event(BrowserLifecycleEvent::browser_close_requested())
             .await;
+        if let Some(path) = &self.storage_state_path {
+            self.save_storage_state(path).await?;
+        }
         self.connection
             .command("Browser.close", json!({}), None)
             .await
             .map(|_| ())
+    }
+
+    pub async fn save_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
+        let storage_state = browser_storage_state(&self.connection).await?;
+        let (cookies_count, origins_count) = storage_state_counts(&storage_state);
+        write_storage_state(path, &storage_state).await?;
+        self.record_lifecycle_event(BrowserLifecycleEvent::storage_state_saved(
+            path.display().to_string(),
+            cookies_count,
+            origins_count,
+        ))
+        .await;
+        Ok(())
+    }
+
+    pub async fn load_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
+        let storage_state = load_browser_storage_state(&self.connection, path).await?;
+        let (cookies_count, origins_count) = storage_state_counts(&storage_state);
+        self.record_lifecycle_event(BrowserLifecycleEvent::storage_state_loaded(
+            path.display().to_string(),
+            cookies_count,
+            origins_count,
+        ))
+        .await;
+        Ok(())
     }
 
     async fn current_page(&self) -> AttachedPage {
@@ -4610,6 +4660,72 @@ async fn enable_browser_download_events(
         .map(|_| ())
 }
 
+async fn browser_storage_state(connection: &CdpConnection) -> Result<Value, BrowserError> {
+    let cookies = connection
+        .command("Network.getAllCookies", json!({}), None)
+        .await?
+        .get("cookies")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    Ok(json!({
+        "cookies": cookies,
+        "origins": [],
+    }))
+}
+
+async fn load_browser_storage_state(
+    connection: &CdpConnection,
+    path: &Path,
+) -> Result<Value, BrowserError> {
+    if !path.exists() {
+        return Ok(json!({
+            "cookies": [],
+            "origins": [],
+        }));
+    }
+    let text = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+    let storage_state: Value = serde_json::from_str(&text)
+        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+    if let Some(cookies) = storage_state.get("cookies").and_then(Value::as_array) {
+        if !cookies.is_empty() {
+            connection
+                .command("Network.setCookies", json!({ "cookies": cookies }), None)
+                .await?;
+        }
+    }
+    Ok(storage_state)
+}
+
+async fn write_storage_state(path: &Path, storage_state: &Value) -> Result<(), BrowserError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+    }
+    let text = serde_json::to_string_pretty(storage_state)
+        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+    tokio::fs::write(path, text)
+        .await
+        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))
+}
+
+fn storage_state_counts(storage_state: &Value) -> (usize, usize) {
+    let cookies_count = storage_state
+        .get("cookies")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let origins_count = storage_state
+        .get("origins")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    (cookies_count, origins_count)
+}
+
 async fn page_tabs(connection: &CdpConnection) -> Result<Vec<TabInfo>, BrowserError> {
     let targets = connection
         .command("Target.getTargets", json!({}), None)
@@ -6183,6 +6299,23 @@ mod tests {
             ]
         );
         assert_eq!(download_progress[1].details["file_name"], "report.pdf");
+    }
+
+    #[test]
+    fn storage_state_counts_browser_use_shape() {
+        assert_eq!(
+            storage_state_counts(&json!({
+                "cookies": [
+                    { "name": "sid", "value": "1", "domain": ".example.test", "path": "/" },
+                    { "name": "pref", "value": "dark", "domain": ".example.test", "path": "/" }
+                ],
+                "origins": [
+                    { "origin": "https://example.test", "localStorage": [] }
+                ]
+            })),
+            (2, 1)
+        );
+        assert_eq!(storage_state_counts(&json!({})), (0, 0));
     }
 
     #[test]
