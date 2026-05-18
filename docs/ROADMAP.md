@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #98 lands and CI is green.
+- [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
 
 ## Completed Tracks
 
