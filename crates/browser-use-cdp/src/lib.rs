@@ -50,6 +50,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     '[role="tab"]',
     '[role="textbox"]',
     '[role="combobox"]',
+    '[role="listbox"]',
     '[role="slider"]',
     '[role="spinbutton"]',
     '[role="search"]',
@@ -58,6 +59,10 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     '[role="cell"]',
     '[role="gridcell"]',
     '[onclick]',
+    '[onmousedown]',
+    '[onmouseup]',
+    '[onkeydown]',
+    '[onkeyup]',
     '[tabindex]:not([tabindex="-1"])',
     '[contenteditable="true"]',
     '[contenteditable=""]',
@@ -343,6 +348,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     '[role="tab"]',
     '[role="textbox"]',
     '[role="combobox"]',
+    '[role="listbox"]',
     '[role="slider"]',
     '[role="spinbutton"]',
     '[role="search"]',
@@ -351,6 +357,10 @@ fn element_eval_js(index: u32, body: &str) -> String {
     '[role="cell"]',
     '[role="gridcell"]',
     '[onclick]',
+    '[onmousedown]',
+    '[onmouseup]',
+    '[onkeydown]',
+    '[onkeyup]',
     '[tabindex]:not([tabindex="-1"])',
     '[contenteditable="true"]',
     '[contenteditable=""]',
@@ -3490,6 +3500,18 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_detects_static_handlers_and_listboxes() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("[role=\"listbox\"]"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("[onmousedown]"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("[onkeydown]"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("[role=\"listbox\"]"));
+        assert!(action_script.contains("[onmouseup]"));
+        assert!(action_script.contains("[onkeyup]"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_javascript_click_listeners() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
@@ -4379,6 +4401,44 @@ mod tests {
         assert!(
             !ids.contains(&"plain"),
             "plain non-pointer div should not be indexed: {}",
+            state.dom_state.llm_representation()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_static_handlers_and_listboxes() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>static handler</title></head><body><div id='choices' role='listbox' style='width:160px;height:32px'>Choices</div><div id='mouse-down' onmousedown='document.body.dataset.mouse=\"down\"' style='width:120px;height:32px'>Mouse down</div><div id='key-down' onkeydown='document.body.dataset.key=\"down\"' style='width:120px;height:32px'>Key down</div><div id='plain-static' style='width:120px;height:32px'>Plain static</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let ids = state
+            .dom_state
+            .selector_map
+            .values()
+            .filter_map(|element| element.attributes.get("id").map(String::as_str))
+            .collect::<Vec<_>>();
+        for expected in ["choices", "mouse-down", "key-down"] {
+            assert!(
+                ids.contains(&expected),
+                "DOM state did not index {expected}: {}",
+                state.dom_state.llm_representation()
+            );
+        }
+        assert!(
+            !ids.contains(&"plain-static"),
+            "plain static div should not be indexed: {}",
             state.dom_state.llm_representation()
         );
     }
