@@ -8323,7 +8323,7 @@ mod tests {
             .chain(CHROME_DETERMINISTIC_RENDERING_ARGS.iter())
         {
             assert!(
-                arg_index(&plan.args, *arg) < first_custom_arg_index,
+                arg_index(&plan.args, arg) < first_custom_arg_index,
                 "generated launch arg {arg} should come before caller args"
             );
         }
