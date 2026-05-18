@@ -16,7 +16,8 @@
         "aria-labelledby": "submit-name",
         "aria-live": "polite",
         "data-testid": "submit-request",
-        "id": "submit"
+        "id": "submit",
+        "role": "button"
       },
       "bounds": {
         "x": 12,

@@ -394,6 +394,9 @@ fn render_element_attributes_with_attribute_names(
             if *attribute == "type" && value.eq_ignore_ascii_case(&element.tag_name) {
                 return None;
             }
+            if *attribute == "role" && value.eq_ignore_ascii_case(&element.tag_name) {
+                return None;
+            }
             if *attribute == "invalid" && value.eq_ignore_ascii_case("false") {
                 return None;
             }
@@ -858,6 +861,33 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "expanded=true");
+    }
+
+    #[test]
+    fn rendered_attributes_drop_redundant_role_matching_tag_name() {
+        let native_role = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: Some("button".to_owned()),
+            name: Some("Submit request".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([("role".to_owned(), "button".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let semantic_override = DomElementRef {
+            tag_name: "div".to_owned(),
+            attributes: BTreeMap::from([("role".to_owned(), "button".to_owned())]),
+            ..native_role.clone()
+        };
+
+        assert_eq!(render_element_attributes(&native_role), "");
+        assert_eq!(render_element_attributes(&semantic_override), "role=button");
     }
 
     #[test]

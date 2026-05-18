@@ -58,6 +58,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
                 ("aria-live".to_owned(), "polite".to_owned()),
                 ("data-testid".to_owned(), "submit-request".to_owned()),
                 ("id".to_owned(), "submit".to_owned()),
+                ("role".to_owned(), "button".to_owned()),
             ]),
             bounds: Some(ElementBounds {
                 x: 12,
