@@ -53,11 +53,12 @@ includes:
   metadata, per-step timing metadata, upstream-style prompt-history inclusion
   and limits, clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
-  prompt sections, upstream-style available-file-path context, upstream-style
-  prompt context and error truncation, upstream-style last-result completion
-  helpers, upstream-compatible action-result success validation, judgement
-  results, step-error, model-output/action/thought, duration, action, and URL
-  history accessors, and history.
+  prompt sections, upstream-style available-file-path and sensitive-data
+  placeholder context, upstream-style prompt context and error truncation,
+  upstream-style last-result completion helpers, upstream-compatible
+  action-result success validation, judgement results, step-error,
+  model-output/action/thought, duration, action, and URL history accessors, and
+  history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional

@@ -62,8 +62,8 @@ Implemented:
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
   agent-history/agent-state/browser-state prompt sections, upstream-style
-  available-file-path context, upstream-style last-result completion helpers,
-  upstream-style prompt context/error truncation,
+  available-file-path and sensitive-data placeholder context, upstream-style
+  last-result completion helpers, upstream-style prompt context/error truncation,
   upstream-compatible action-result success validation, judgement results,
   per-step error slots, model-output/action/thought accessors, duration helpers,
   and URL helpers.

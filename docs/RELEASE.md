@@ -51,11 +51,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   flattened required output fields, upstream-style prompt-history inclusion and
   limits, clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
-  prompt sections, upstream-style available-file-path context, upstream-style
-  prompt context/error truncation, typed upstream-style last-result completion
-  helpers, upstream-compatible action-result success validation, judgement
-  results, and step-error, model-output, model-action, thought, duration, and
-  URL accessors.
+  prompt sections, upstream-style available-file-path and sensitive-data
+  placeholder context, upstream-style prompt context/error truncation, typed
+  upstream-style last-result completion helpers, upstream-compatible
+  action-result success validation, judgement results, and step-error,
+  model-output, model-action, thought, duration, and URL accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.

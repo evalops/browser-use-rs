@@ -3,6 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -60,6 +61,8 @@ pub struct AgentSettings {
     pub include_attributes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sensitive_data: BTreeMap<String, SensitiveDataValue>,
 }
 
 impl Default for AgentSettings {
@@ -82,6 +85,7 @@ impl Default for AgentSettings {
             flash_mode: false,
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
+            sensitive_data: BTreeMap::new(),
         }
     }
 }
@@ -136,6 +140,13 @@ fn default_planning_exploration_limit() -> usize {
 
 fn default_use_thinking() -> bool {
     true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SensitiveDataValue {
+    Value(String),
+    Domain(BTreeMap<String, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2104,7 +2115,8 @@ where
                 self.settings.max_actions_per_step
             ))]
         } else {
-            self.executor.execute_sequence(&model_output.action).await
+            let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
+            self.executor.execute_sequence(&actions).await
         };
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
@@ -2250,6 +2262,69 @@ fn is_single_done_output(output: &AgentOutput) -> bool {
     matches!(output.action.as_slice(), [BrowserAction::Done(_)])
 }
 
+fn actions_for_execution(
+    actions: &[BrowserAction],
+    settings: &AgentSettings,
+    current_url: &str,
+) -> Vec<BrowserAction> {
+    let sensitive_data = applicable_sensitive_data_values(&settings.sensitive_data, current_url);
+    if sensitive_data.is_empty() {
+        return actions.to_vec();
+    }
+
+    actions
+        .iter()
+        .map(|action| {
+            let Ok(mut value) = serde_json::to_value(action) else {
+                return action.clone();
+            };
+            replace_sensitive_placeholders_in_value(&mut value, &sensitive_data);
+            serde_json::from_value(value).unwrap_or_else(|_| action.clone())
+        })
+        .collect()
+}
+
+fn replace_sensitive_placeholders_in_value(
+    value: &mut Value,
+    sensitive_data: &BTreeMap<String, String>,
+) {
+    match value {
+        Value::String(text) => {
+            *text = replace_sensitive_placeholders_in_string(text, sensitive_data);
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_sensitive_placeholders_in_value(item, sensitive_data);
+            }
+        }
+        Value::Object(entries) => {
+            for entry in entries.values_mut() {
+                replace_sensitive_placeholders_in_value(entry, sensitive_data);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn replace_sensitive_placeholders_in_string(
+    text: &str,
+    sensitive_data: &BTreeMap<String, String>,
+) -> String {
+    let secret_pattern =
+        regex::Regex::new(r"<secret>(.*?)</secret>").expect("valid secret tag regex");
+    let replaced = secret_pattern
+        .replace_all(text, |captures: &regex::Captures<'_>| {
+            let placeholder = captures.get(1).map(|match_| match_.as_str()).unwrap_or("");
+            sensitive_data
+                .get(placeholder)
+                .cloned()
+                .unwrap_or_else(|| captures[0].to_owned())
+        })
+        .into_owned();
+
+    sensitive_data.get(&replaced).cloned().unwrap_or(replaced)
+}
+
 pub fn build_step_request(
     task: &str,
     state: &BrowserStateSummary,
@@ -2275,11 +2350,14 @@ pub fn build_step_request(
     let read_state = render_read_state_description(history)
         .map(|description| format!("\n<read_state>\n{description}\n</read_state>\n"))
         .unwrap_or_default();
-    let mut user_content = vec![ContentPart::Text {
-        text: format!(
+    let sensitive_values = collect_sensitive_data_values(&settings.sensitive_data);
+    let user_text = redact_sensitive_string(
+        &format!(
             "<agent_history>\n{agent_history}\n</agent_history>\n\n<agent_state>\n{agent_state}\n</agent_state>\n<browser_state>\n{state_json}\n</browser_state>{read_state}"
         ),
-    }];
+        &sensitive_values,
+    );
+    let mut user_content = vec![ContentPart::Text { text: user_text }];
     if settings.use_vision
         && let Some(screenshot) = state.screenshot.as_deref()
     {
@@ -2443,6 +2521,9 @@ fn render_agent_state_description(
     if let Some(message) = render_loop_awareness(history, state, settings) {
         description.push_str(&format!("\n\nLoop awareness:\n{message}"));
     }
+    if let Some(message) = render_sensitive_data_description(&state.url, settings) {
+        description.push_str(&format!("\n\n<sensitive_data>{message}</sensitive_data>"));
+    }
     if !settings.available_file_paths.is_empty() {
         description.push_str(&format!(
             "\n\n<available_file_paths>{}\nUse with absolute paths</available_file_paths>",
@@ -2450,6 +2531,184 @@ fn render_agent_state_description(
         ));
     }
     description
+}
+
+fn render_sensitive_data_description(
+    current_url: &str,
+    settings: &AgentSettings,
+) -> Option<String> {
+    let placeholders = sensitive_data_placeholders_for_url(&settings.sensitive_data, current_url);
+    if placeholders.is_empty() {
+        return None;
+    }
+
+    let first = placeholders.first().expect("placeholder exists");
+    let formatted_placeholders = placeholders
+        .iter()
+        .map(|placeholder| format!("  - {placeholder}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Some(format!(
+        "SENSITIVE DATA - Use these placeholders for secure input:\n{formatted_placeholders}\n\nIMPORTANT: When entering sensitive values, you MUST wrap the placeholder name in <secret> tags.\nExample: To enter the value for \"{first}\", use: <secret>{first}</secret>\nThe system will automatically replace these tags with the actual secret values."
+    ))
+}
+
+fn sensitive_data_placeholders_for_url(
+    sensitive_data: &BTreeMap<String, SensitiveDataValue>,
+    current_url: &str,
+) -> Vec<String> {
+    let mut placeholders = BTreeSet::new();
+    for (key_or_domain, value) in sensitive_data {
+        match value {
+            SensitiveDataValue::Value(_) => {
+                placeholders.insert(key_or_domain.clone());
+            }
+            SensitiveDataValue::Domain(domain_values)
+                if match_url_with_domain_pattern(current_url, key_or_domain) =>
+            {
+                placeholders.extend(domain_values.keys().cloned());
+            }
+            SensitiveDataValue::Domain(_) => {}
+        }
+    }
+
+    placeholders.into_iter().collect()
+}
+
+fn collect_sensitive_data_values(
+    sensitive_data: &BTreeMap<String, SensitiveDataValue>,
+) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    for (key_or_domain, value) in sensitive_data {
+        match value {
+            SensitiveDataValue::Value(secret) if !secret.is_empty() => {
+                values.insert(key_or_domain.clone(), secret.clone());
+            }
+            SensitiveDataValue::Value(_) => {}
+            SensitiveDataValue::Domain(domain_values) => {
+                for (placeholder, secret) in domain_values {
+                    if !secret.is_empty() {
+                        values.insert(placeholder.clone(), secret.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    values
+}
+
+fn applicable_sensitive_data_values(
+    sensitive_data: &BTreeMap<String, SensitiveDataValue>,
+    current_url: &str,
+) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    for (key_or_domain, value) in sensitive_data {
+        match value {
+            SensitiveDataValue::Value(secret) if !secret.is_empty() => {
+                values.insert(key_or_domain.clone(), secret.clone());
+            }
+            SensitiveDataValue::Value(_) => {}
+            SensitiveDataValue::Domain(secrets)
+                if match_url_with_domain_pattern(current_url, key_or_domain) =>
+            {
+                for (placeholder, secret) in secrets {
+                    if !secret.is_empty() {
+                        values.insert(placeholder.clone(), secret.clone());
+                    }
+                }
+            }
+            SensitiveDataValue::Domain(_) => {}
+        }
+    }
+
+    values
+}
+
+fn redact_sensitive_string(value: &str, sensitive_values: &BTreeMap<String, String>) -> String {
+    let mut redacted = value.to_owned();
+    let mut entries = sensitive_values.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.1.len()));
+    for (placeholder, secret) in entries {
+        redacted = redacted.replace(secret, &format!("<secret>{placeholder}</secret>"));
+    }
+
+    redacted
+}
+
+fn match_url_with_domain_pattern(url: &str, domain_pattern: &str) -> bool {
+    if is_new_tab_page(url) {
+        return false;
+    }
+
+    let Ok(parsed_url) = url::Url::parse(url) else {
+        return false;
+    };
+    let scheme = parsed_url.scheme().to_ascii_lowercase();
+    let Some(domain) = parsed_url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if scheme.is_empty() || domain.is_empty() {
+        return false;
+    }
+
+    let domain_pattern = domain_pattern.to_ascii_lowercase();
+    let (pattern_scheme, pattern_domain) = domain_pattern
+        .split_once("://")
+        .map_or(("https", domain_pattern.as_str()), |(scheme, domain)| {
+            (scheme, domain)
+        });
+    let pattern_domain = pattern_domain
+        .split_once(':')
+        .map_or(pattern_domain, |(domain, _)| domain);
+
+    if !glob_match(&scheme, pattern_scheme) {
+        return false;
+    }
+    if pattern_domain == "*" || domain == pattern_domain {
+        return true;
+    }
+
+    if !pattern_domain.contains('*') {
+        return false;
+    }
+    if pattern_domain.matches("*.").count() > 1 || pattern_domain.matches(".*").count() > 1 {
+        return false;
+    }
+    if pattern_domain.ends_with(".*") {
+        return false;
+    }
+    let bare_domain = pattern_domain.replace("*.", "");
+    if bare_domain.contains('*') {
+        return false;
+    }
+
+    if let Some(parent_domain) = pattern_domain.strip_prefix("*.")
+        && domain == parent_domain
+    {
+        return true;
+    }
+
+    glob_match(&domain, pattern_domain)
+}
+
+fn is_new_tab_page(url: &str) -> bool {
+    matches!(
+        url,
+        "about:blank"
+            | "chrome://new-tab-page/"
+            | "chrome://new-tab-page"
+            | "chrome://newtab/"
+            | "chrome://newtab"
+    )
+}
+
+fn glob_match(value: &str, pattern: &str) -> bool {
+    let pattern = format!("^{}$", regex::escape(pattern).replace("\\*", ".*"));
+    regex::Regex::new(&pattern)
+        .map(|regex| regex.is_match(value))
+        .unwrap_or(false)
 }
 
 fn schema_for_agent_output() -> Value {
@@ -2969,6 +3228,7 @@ mod tests {
         assert!(!settings.flash_mode);
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
+        assert!(settings.sensitive_data.is_empty());
     }
 
     #[test]
@@ -4761,6 +5021,108 @@ mod tests {
         assert_eq!(agent.history().final_result(), Some("finished"));
     }
 
+    #[tokio::test]
+    async fn agent_replaces_sensitive_input_tags_for_execution_without_history_leak() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "input": {
+                        "index": 1,
+                        "text": "<secret>password</secret>",
+                        "clear": true
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([(
+                "password".to_owned(),
+                SensitiveDataValue::Value("correct horse battery staple".to_owned()),
+            )]),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "enter password",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let recorded_action_text = {
+            let item = agent.step().await.expect("agent step");
+            let model_output = item.model_output.as_ref().expect("model output");
+            let BrowserAction::Input(params) = &model_output.action[0] else {
+                panic!("expected input action");
+            };
+            params.text.clone()
+        };
+
+        assert_eq!(
+            agent.executor.session().events(),
+            vec!["input:1:correct horse battery staple:true"]
+        );
+        assert_eq!(recorded_action_text, "<secret>password</secret>");
+
+        let request = agent.llm.requests.lock().expect("requests lock");
+        let prompt_text = request_text(&request[0]);
+        assert!(prompt_text.contains("<sensitive_data>SENSITIVE DATA"));
+        assert!(prompt_text.contains("<secret>password</secret>"));
+        assert!(!prompt_text.contains("correct horse battery staple"));
+    }
+
+    #[test]
+    fn actions_for_execution_replaces_sensitive_tags_and_literals_across_params() {
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([
+                (
+                    "api_key".to_owned(),
+                    SensitiveDataValue::Value("sk-live-123".to_owned()),
+                ),
+                (
+                    "username".to_owned(),
+                    SensitiveDataValue::Value("evalops-user".to_owned()),
+                ),
+            ]),
+            ..AgentSettings::default()
+        };
+        let actions = vec![
+            BrowserAction::WriteFile(WriteFileAction {
+                file_name: "request.txt".to_owned(),
+                content: "Authorization: Bearer <secret>api_key</secret>".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            }),
+            BrowserAction::Input(InputTextAction {
+                index: 1,
+                text: "username".to_owned(),
+                clear: true,
+            }),
+        ];
+
+        let replaced = actions_for_execution(&actions, &settings, "https://example.test");
+
+        assert_eq!(
+            replaced[0],
+            BrowserAction::WriteFile(WriteFileAction {
+                file_name: "request.txt".to_owned(),
+                content: "Authorization: Bearer sk-live-123".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            })
+        );
+        assert_eq!(
+            replaced[1],
+            BrowserAction::Input(InputTextAction {
+                index: 1,
+                text: "evalops-user".to_owned(),
+                clear: true,
+            })
+        );
+    }
+
     struct SlowModel;
 
     #[async_trait]
@@ -5456,6 +5818,151 @@ mod tests {
         ));
         assert!(user_text.contains("<agent_state>"));
         assert!(user_text.contains("</agent_state>"));
+    }
+
+    #[test]
+    fn step_request_includes_sensitive_data_placeholders_like_upstream() {
+        let mut state = blank_state();
+        state.url = "https://secure.example.test/login".to_owned();
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([
+                (
+                    "*.example.test".to_owned(),
+                    SensitiveDataValue::Domain(BTreeMap::from([(
+                        "password".to_owned(),
+                        "super-secret".to_owned(),
+                    )])),
+                ),
+                (
+                    "username".to_owned(),
+                    SensitiveDataValue::Value("evalops@example.test".to_owned()),
+                ),
+            ]),
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("log in", &state, &AgentHistory::default(), &settings)
+            .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let user_text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+
+        assert!(user_text.contains("<sensitive_data>SENSITIVE DATA"));
+        assert!(user_text.contains("  - password"));
+        assert!(user_text.contains("  - username"));
+        assert!(user_text.contains("use: <secret>password</secret>"));
+        assert!(!user_text.contains("super-secret"));
+        assert!(!user_text.contains("evalops@example.test"));
+    }
+
+    #[test]
+    fn step_request_filters_domain_scoped_sensitive_data_by_url() {
+        let mut state = blank_state();
+        state.url = "https://other.example.test/login".to_owned();
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([
+                (
+                    "secure.example.test".to_owned(),
+                    SensitiveDataValue::Domain(BTreeMap::from([(
+                        "password".to_owned(),
+                        "super-secret".to_owned(),
+                    )])),
+                ),
+                (
+                    "username".to_owned(),
+                    SensitiveDataValue::Value("evalops@example.test".to_owned()),
+                ),
+            ]),
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("log in", &state, &AgentHistory::default(), &settings)
+            .expect("step request");
+        let user_text = request_text(&request);
+
+        assert!(user_text.contains("<sensitive_data>SENSITIVE DATA"));
+        assert!(user_text.contains("  - username"));
+        assert!(!user_text.contains("  - password"));
+        assert!(!user_text.contains("super-secret"));
+        assert!(!user_text.contains("evalops@example.test"));
+    }
+
+    #[test]
+    fn sensitive_data_domain_pattern_matching_follows_upstream_security_defaults() {
+        assert!(match_url_with_domain_pattern(
+            "https://secure.example.test/login",
+            "secure.example.test"
+        ));
+        assert!(!match_url_with_domain_pattern(
+            "http://secure.example.test/login",
+            "secure.example.test"
+        ));
+        assert!(match_url_with_domain_pattern(
+            "http://secure.example.test/login",
+            "http*://secure.example.test"
+        ));
+        assert!(match_url_with_domain_pattern(
+            "https://child.example.test",
+            "*.example.test"
+        ));
+        assert!(match_url_with_domain_pattern(
+            "https://example.test",
+            "*.example.test"
+        ));
+        assert!(match_url_with_domain_pattern(
+            "chrome-extension://aaaaaaaaaaaa/options",
+            "chrome-extension://*"
+        ));
+        assert!(!match_url_with_domain_pattern("about:blank", "*"));
+        assert!(!match_url_with_domain_pattern(
+            "https://deep.example.test",
+            "*.*.example.test"
+        ));
+    }
+
+    #[test]
+    fn step_request_redacts_sensitive_values_from_state_and_history() {
+        let mut state = blank_state();
+        state.url = "https://secure.example.test/login".to_owned();
+        state.dom_state.text = "Password field currently contains super-secret".to_owned();
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::extracted(
+                    "Previous action saw token sk-live-123",
+                )],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([
+                (
+                    "password".to_owned(),
+                    SensitiveDataValue::Value("super-secret".to_owned()),
+                ),
+                (
+                    "api_key".to_owned(),
+                    SensitiveDataValue::Value("sk-live-123".to_owned()),
+                ),
+            ]),
+            ..AgentSettings::default()
+        };
+
+        let request =
+            build_step_request("continue", &state, &history, &settings).expect("step request");
+        let user_text = request_text(&request);
+
+        assert!(user_text.contains("<secret>password</secret>"));
+        assert!(user_text.contains("<secret>api_key</secret>"));
+        assert!(!user_text.contains("super-secret"));
+        assert!(!user_text.contains("sk-live-123"));
     }
 
     #[test]
