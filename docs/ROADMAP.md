@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None.
+- [#60 Publish generated formula to EvalOps Homebrew tap](https://github.com/evalops/browser-use-rs/issues/60)
 
 ## Completed Tracks
 
