@@ -2321,14 +2321,63 @@ fn replace_sensitive_placeholders_in_string(
     let replaced = secret_pattern
         .replace_all(text, |captures: &regex::Captures<'_>| {
             let placeholder = captures.get(1).map(|match_| match_.as_str()).unwrap_or("");
-            sensitive_data
-                .get(placeholder)
-                .cloned()
+            sensitive_replacement_value(placeholder, sensitive_data)
                 .unwrap_or_else(|| captures[0].to_owned())
         })
         .into_owned();
 
-    sensitive_data.get(&replaced).cloned().unwrap_or(replaced)
+    sensitive_replacement_value(&replaced, sensitive_data).unwrap_or(replaced)
+}
+
+fn sensitive_replacement_value(
+    placeholder: &str,
+    sensitive_data: &BTreeMap<String, String>,
+) -> Option<String> {
+    let secret = sensitive_data.get(placeholder)?;
+    if placeholder.ends_with("bu_2fa_code") {
+        return totp_code(secret, now_seconds() as u64);
+    }
+
+    Some(secret.clone())
+}
+
+fn totp_code(secret: &str, unix_seconds: u64) -> Option<String> {
+    totp_code_at(secret, unix_seconds, 30, 6)
+}
+
+fn totp_code_at(
+    secret: &str,
+    unix_seconds: u64,
+    period_seconds: u64,
+    digits: u32,
+) -> Option<String> {
+    if period_seconds == 0 || digits == 0 || digits > 9 {
+        return None;
+    }
+
+    let normalized_secret = secret
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let unpadded_secret = normalized_secret.trim_end_matches('=');
+    let key_bytes = data_encoding::BASE32_NOPAD
+        .decode(unpadded_secret.as_bytes())
+        .or_else(|_| data_encoding::BASE32.decode(normalized_secret.as_bytes()))
+        .ok()?;
+    let counter = unix_seconds / period_seconds;
+    let message = counter.to_be_bytes();
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &key_bytes);
+    let tag = ring::hmac::sign(&key, &message);
+    let digest = tag.as_ref();
+    let offset = usize::from(digest.last()? & 0x0f);
+    let binary = (u32::from(digest.get(offset)? & 0x7f) << 24)
+        | (u32::from(*digest.get(offset + 1)?) << 16)
+        | (u32::from(*digest.get(offset + 2)?) << 8)
+        | u32::from(*digest.get(offset + 3)?);
+    let code = binary % 10_u32.pow(digits);
+
+    Some(format!("{code:0width$}", width = digits as usize))
 }
 
 pub fn build_step_request(
@@ -5142,6 +5191,41 @@ mod tests {
                 clear: true,
             })
         );
+    }
+
+    #[test]
+    fn sensitive_bu_2fa_code_placeholders_generate_totp_values() {
+        let settings = AgentSettings {
+            sensitive_data: BTreeMap::from([(
+                "login_bu_2fa_code".to_owned(),
+                SensitiveDataValue::Value("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_owned()),
+            )]),
+            ..AgentSettings::default()
+        };
+        let actions = vec![BrowserAction::Input(InputTextAction {
+            index: 1,
+            text: "<secret>login_bu_2fa_code</secret>".to_owned(),
+            clear: true,
+        })];
+
+        assert_eq!(
+            totp_code_at("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 59, 30, 8),
+            Some("94287082".to_owned())
+        );
+
+        let replaced = actions_for_execution(&actions, &settings, "https://example.test");
+        let BrowserAction::Input(params) = &replaced[0] else {
+            panic!("expected input action");
+        };
+
+        assert_eq!(params.text.len(), 6);
+        assert!(
+            params
+                .text
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        );
+        assert_ne!(params.text, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
     }
 
     struct SlowModel;

@@ -62,11 +62,12 @@ Implemented:
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
   agent-history/agent-state/browser-state prompt sections, upstream-style
-  available-file-path and sensitive-data placeholder context, system-message
-  override/extension controls, upstream-style last-result completion helpers,
-  upstream-style prompt context/error truncation, upstream-compatible
-  action-result success validation, judgement results, per-step error slots,
-  model-output/action/thought accessors, duration helpers, and URL helpers.
+  available-file-path and sensitive-data placeholder context with `bu_2fa_code`
+  TOTP generation, system-message override/extension controls, upstream-style
+  last-result completion helpers, upstream-style prompt context/error
+  truncation, upstream-compatible action-result success validation, judgement
+  results, per-step error slots, model-output/action/thought accessors, duration
+  helpers, and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.

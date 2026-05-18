@@ -91,7 +91,8 @@ upstream-style file-path context in the agent prompt. Use repeated
 `--sensitive-data <placeholder=value>` for global sensitive placeholders, and
 repeated `--sensitive-data-domain <domain-pattern=placeholder=value>` for
 domain-scoped placeholders. Sensitive values are replaced during action
-execution while prompt context shows only placeholder names. Use
+execution while prompt context shows only placeholder names; placeholders whose
+names end in `bu_2fa_code` are treated as TOTP seeds. Use
 `--override-system-message` to replace the default system prompt or
 `--extend-system-message` to append extra instructions to it. By default, when
 repeated model/provider failures hit `--max-failures`, the agent makes one last

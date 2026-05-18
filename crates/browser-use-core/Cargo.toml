@@ -14,7 +14,11 @@ browser-use-dom = { path = "../browser-use-dom" }
 browser-use-llm = { path = "../browser-use-llm" }
 browser-use-tools = { path = "../browser-use-tools" }
 async-trait.workspace = true
+data-encoding.workspace = true
+pdf-extract.workspace = true
+quick-xml.workspace = true
 regex.workspace = true
+ring.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,6 +26,7 @@ thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
