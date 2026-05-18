@@ -65,7 +65,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   override/extension controls, upstream-style prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, and step-error,
-  model-output, model-action, thought, duration, and URL accessors.
+  model-output, model-action, thought, duration, truncated action-history, and
+  URL accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.

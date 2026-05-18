@@ -559,6 +559,39 @@ impl AgentHistory {
     }
 
     #[must_use]
+    pub fn action_history(&self) -> Vec<Vec<Value>> {
+        self.items
+            .iter()
+            .map(|item| {
+                let Some(output) = item.model_output.as_ref() else {
+                    return Vec::new();
+                };
+
+                output
+                    .action
+                    .iter()
+                    .zip(item.result.iter())
+                    .filter_map(|(action, result)| {
+                        let mut action_output = serde_json::to_value(action).ok()?;
+                        if let Value::Object(attributes) = &mut action_output {
+                            attributes.insert("interacted_element".to_owned(), Value::Null);
+                            attributes.insert(
+                                "result".to_owned(),
+                                result
+                                    .long_term_memory
+                                    .as_ref()
+                                    .map(|memory| Value::String(memory.clone()))
+                                    .unwrap_or(Value::Null),
+                            );
+                        }
+                        Some(action_output)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[must_use]
     pub fn model_actions_filtered(&self, include: &[&str]) -> Vec<Value> {
         self.items
             .iter()
@@ -4028,6 +4061,27 @@ mod tests {
         assert_eq!(history.model_thoughts().len(), 2);
         assert_eq!(history.model_actions().len(), 2);
         assert_eq!(history.model_actions_filtered(&["click"]).len(), 1);
+        assert_eq!(
+            history.action_history(),
+            vec![
+                vec![serde_json::json!({
+                    "click": {
+                        "index": 1
+                    },
+                    "interacted_element": null,
+                    "result": "Clicked element 1"
+                })],
+                vec![serde_json::json!({
+                    "done": {
+                        "text": "finished",
+                        "success": true,
+                        "files_to_display": []
+                    },
+                    "interacted_element": null,
+                    "result": null
+                })],
+            ]
+        );
         assert_eq!(
             history.last_action().expect("last action"),
             serde_json::json!({
