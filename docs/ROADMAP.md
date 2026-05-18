@@ -101,9 +101,10 @@ Implemented:
   tags and contents, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names,
   state/value properties, and backend/frontend node ids, carries image alt text
-  into image-only control names, renders selected dropdown values, preserves
-  automation-friendly data/ARIA/value attributes, validation patterns,
-  `data-state`, input mask/autocomplete/date-format hints, and static
+  into image-only control names, renders selected dropdown values and compact
+  select option summaries, preserves automation-friendly data/ARIA/value
+  attributes, validation patterns, `data-state`,
+  input mask/autocomplete/date-format hints, and static
   history-matching attributes, renders native and text datepicker input format
   hints, detects search affordance signals and small icon controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer

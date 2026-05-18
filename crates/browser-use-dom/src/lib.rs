@@ -325,6 +325,7 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
     "contenteditable",
     "pseudo",
     "selected",
+    "compound_components",
     "expanded",
     "pressed",
     "disabled",
@@ -664,6 +665,40 @@ mod tests {
         assert_eq!(state.llm_representation(), "[1] <input> Name EvalOps");
         assert_eq!(state.element_count(), 1);
         assert_eq!(state.selector_map[&1].bounds.expect("bounds").width, 120);
+    }
+
+    #[test]
+    fn serialized_state_renders_compound_component_metadata() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "select".to_owned(),
+            role: None,
+            name: Some("Plan".to_owned()),
+            text: Some("Enterprise".to_owned()),
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "plan".to_owned()),
+                ("value".to_owned(), "Enterprise".to_owned()),
+                (
+                    "compound_components".to_owned(),
+                    "(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=2,options=Starter|Enterprise)"
+                        .to_owned(),
+                ),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let state = SerializedDomState::from_elements(vec![element]);
+
+        assert_eq!(
+            state.llm_representation(),
+            "[1] <select id=plan value=Enterprise compound_components=(name=Dropdown Toggle,role=button),(name=Options,role=listbox,count=2,options=Starter|Enterprise)> Plan Enterprise"
+        );
     }
 
     #[test]

@@ -279,6 +279,42 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (tag === 'input' || tag === 'textarea') return (el.value || '').trim();
     return '';
   };
+  const compactOptionText = (value) => {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > 30 ? `${text.slice(0, 30)}...` : text;
+  };
+  const inferSelectFormatHint = (values) => {
+    const sample = values.filter(Boolean).slice(0, 5);
+    if (sample.length < 2) return '';
+    if (sample.every((value) => /^\d+$/.test(value))) return 'numeric';
+    if (sample.every((value) => value.length === 2 && value === value.toUpperCase())) return 'country/state codes';
+    if (sample.every((value) => value.includes('/') || value.includes('-'))) return 'date/path format';
+    if (sample.some((value) => value.includes('@'))) return 'email addresses';
+    return '';
+  };
+  const selectCompoundComponents = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag !== 'select') return '';
+    const options = Array.from(el.querySelectorAll('option') || [])
+      .map((option) => {
+        const text = compactOptionText(option.text || option.textContent || option.value || '');
+        const value = String(option.getAttribute('value') || option.value || text || '').trim();
+        return { text, value };
+      })
+      .filter((option) => option.text || option.value);
+    const components = ['(name=Dropdown Toggle,role=button)'];
+    const optionParts = ['name=Options', 'role=listbox'];
+    if (options.length > 0) {
+      optionParts.push(`count=${options.length}`);
+      const firstOptions = options.slice(0, 4).map((option) => option.text || compactOptionText(option.value)).filter(Boolean);
+      if (options.length > 4) firstOptions.push(`... ${options.length - 4} more options...`);
+      if (firstOptions.length > 0) optionParts.push(`options=${firstOptions.join('|')}`);
+      const formatHint = inferSelectFormatHint(options.map((option) => option.value));
+      if (formatHint) optionParts.push(`format=${formatHint}`);
+    }
+    components.push(`(${optionParts.join(',')})`);
+    return components.join(',');
+  };
   const elements = [];
   const stats = {
     links: 0,
@@ -353,6 +389,8 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (controlText && type !== 'password') attrs.value = controlText;
     if ((tag === 'input' || tag === 'option') && 'checked' in el) attrs.checked = String(el.checked);
     if (tag === 'option' && 'selected' in el) attrs.selected = String(el.selected);
+    const compoundComponents = selectCompoundComponents(el);
+    if (compoundComponents) attrs.compound_components = compoundComponents;
     const text = (controlText || el.innerText || altText || '').trim().slice(0, 200);
     const name = (el.getAttribute('aria-label') || labelText(el) || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || referencedText(el, 'aria-describedby') || altText || text || '').trim();
     return {
@@ -3980,6 +4018,16 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_summarizes_select_compound_options() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("selectCompoundComponents"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("compound_components"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("Dropdown Toggle"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("count=${options.length}"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("format=${formatHint}"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("... ${options.length - 4} more options..."));
+    }
+
+    #[test]
     fn interactive_snapshot_preserves_automation_attributes() {
         for attribute in [
             "aria-controls",
@@ -5130,6 +5178,13 @@ mod tests {
         let select = state.dom_state.selector_map.get(&1).expect("select");
         assert_eq!(select.name.as_deref(), Some("Plan"));
         assert_eq!(select.text.as_deref(), Some("Enterprise"));
+        let compound_components = select
+            .attributes
+            .get("compound_components")
+            .expect("select compound components");
+        assert!(compound_components.contains("Dropdown Toggle"));
+        assert!(compound_components.contains("count=3"));
+        assert!(compound_components.contains("options=Starter|Enterprise|Internal"));
         assert!(
             state
                 .dom_state

@@ -25,9 +25,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   topmost/occlusion filtering, while keeping hidden file-input upload targets,
   plain scroll-container indexing, and non-content tag pruning, plus basic
   accessible names from labels, ARIA references, and image alt text, plus
-  selected dropdown values, common ARIA widget roles, search affordance signals,
-  small icon controls, input mask/autocomplete/date-format hints, JavaScript
-  click/pointer listener-backed controls, cursor-pointer controls, decorative
+  selected dropdown values and compact select option summaries, common ARIA
+  widget roles, search affordance signals, small icon controls,
+  input mask/autocomplete/date-format hints, JavaScript click/pointer
+  listener-backed controls, cursor-pointer controls, decorative
   SVG child pruning, static
   mouse/keyboard handler attributes, contained duplicate-descendant pruning for
   action containers, pagination affordance detection, configurable
