@@ -65,10 +65,10 @@ includes:
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
-  bearer/header auth and supervisor pid/ready files, persistent session
-  registry, typed MCP/CLI agent settings including available-file-path and
-  sensitive-data placeholder context plus system-message control, and
-  conformance fixtures.
+  bearer/header auth, supervisor pid/ready files, packaged systemd/launchd
+  templates, persistent session registry, typed MCP/CLI agent settings
+  including available-file-path and sensitive-data placeholder context plus
+  system-message control, and conformance fixtures.
 
 ## Design Rules
 
@@ -104,6 +104,9 @@ See [docs/CLI.md](docs/CLI.md).
 The MCP stdio server and contract surface are documented in
 [docs/MCP.md](docs/MCP.md).
 
+Packaged systemd and launchd supervision templates are documented in
+[docs/DAEMON_SUPERVISION.md](docs/DAEMON_SUPERVISION.md).
+
 ## Install
 
 From source:
@@ -114,7 +117,8 @@ browser-use-rs version-target
 ```
 
 Tagged GitHub releases publish a Linux x86_64 tarball containing the
-`browser-use-rs` binary, license files, and the release support matrix.
+`browser-use-rs` binary, license files, release support matrix, and daemon
+supervision templates.
 
 See [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
 browser-use surface.

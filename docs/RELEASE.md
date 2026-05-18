@@ -77,7 +77,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
   the MCP tool surface with shared in-process sessions across active
   connections, `GET /healthz`, and optional bearer/header token auth for
-  `POST /rpc`, plus graceful signal shutdown and supervisor pid/ready files.
+  `POST /rpc`, plus graceful signal shutdown, supervisor pid/ready files, and
+  packaged systemd/launchd templates for long-lived local installs.
+- Release tarballs include daemon supervision docs plus systemd and launchd
+  templates alongside the binary and license files.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -90,8 +93,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised
   background service that owns their lifecycle.
-- The daemon is still a local process with supervisor pid/ready artifacts;
-  packaged systemd/launchd units are not implemented.
+- The packaged daemon service files are local user-service templates; distro
+  packages, Homebrew formulas, and installer-managed secret stores are not
+  implemented.
 - Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
   Gemini GenerateContent, and Ollama Chat is not implemented.
 - Rich filesystem state and sandboxing are still lighter than upstream's

@@ -126,7 +126,10 @@ returns the JSON-RPC response as JSON. `--auth-token <token>` or
 For supervised installs, `--pid-file <path>` writes the daemon process id after
 the listener binds, and `--ready-file <path>` writes JSON with `ready`, `pid`,
 `addr`, and `transport`. The daemon handles Ctrl-C/SIGINT/SIGTERM and removes
-those lifecycle files on graceful shutdown.
+those lifecycle files on graceful shutdown. Packaged systemd and launchd
+templates live under `packaging/`; see
+[DAEMON_SUPERVISION.md](DAEMON_SUPERVISION.md) for install commands and
+`/healthz` smokes.
 
 ## Current Limits
 
@@ -146,5 +149,5 @@ those lifecycle files on graceful shutdown.
   `session_id`; persistent sessions must be created explicitly with the CLI
   session command or `browser_use_session`.
 - The daemon is a local TCP or HTTP JSON-RPC surface with optional HTTP
-  authentication and pid/ready files for external supervisors; packaged
-  systemd/launchd units are still out of scope.
+  authentication, pid/ready files, and packaged systemd/launchd templates for
+  external supervisors.

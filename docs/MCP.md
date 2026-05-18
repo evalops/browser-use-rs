@@ -21,6 +21,8 @@ either `Authorization: Bearer <token>` or
 `X-Browser-Use-Rs-Token: <token>`. For long-lived local installs, the daemon
 can write supervisor-friendly `--pid-file` and `--ready-file` artifacts after a
 successful bind and remove them on graceful Ctrl-C/SIGINT/SIGTERM shutdown.
+Packaged systemd and launchd templates are documented in
+[DAEMON_SUPERVISION.md](DAEMON_SUPERVISION.md).
 
 Current tool contracts:
 

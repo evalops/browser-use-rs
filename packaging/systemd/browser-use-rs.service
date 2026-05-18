@@ -1,0 +1,23 @@
+[Unit]
+Description=browser-use-rs HTTP daemon
+Documentation=https://github.com/evalops/browser-use-rs/blob/main/docs/DAEMON_SUPERVISION.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=BROWSER_USE_RS_STATE_DIR=%h/.local/state/browser-use-rs
+Environment=BROWSER_USE_RS_DAEMON_TOKEN=change-me
+# Add provider credentials when browser_use_agent should call hosted models.
+# Environment=OPENAI_API_KEY=sk-change-me
+# Environment=OPENAI_MODEL=gpt-4.1-mini
+WorkingDirectory=%h
+ExecStart=%h/.cargo/bin/browser-use-rs daemon --transport http --addr 127.0.0.1:8765 --pid-file %t/browser-use-rs/daemon.pid --ready-file %t/browser-use-rs/daemon.ready.json
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

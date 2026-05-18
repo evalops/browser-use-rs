@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.evalops.browser-use-rs</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/.cargo/bin/browser-use-rs</string>
+    <string>daemon</string>
+    <string>--transport</string>
+    <string>http</string>
+    <string>--addr</string>
+    <string>127.0.0.1:8765</string>
+    <string>--pid-file</string>
+    <string>/Users/YOU/Library/Caches/browser-use-rs/daemon.pid</string>
+    <string>--ready-file</string>
+    <string>/Users/YOU/Library/Caches/browser-use-rs/daemon.ready.json</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BROWSER_USE_RS_STATE_DIR</key>
+    <string>/Users/YOU/Library/Application Support/browser-use-rs</string>
+    <key>BROWSER_USE_RS_DAEMON_TOKEN</key>
+    <string>change-me</string>
+    <!-- Add provider credentials when browser_use_agent should call hosted models.
+    <key>OPENAI_API_KEY</key>
+    <string>sk-change-me</string>
+    <key>OPENAI_MODEL</key>
+    <string>gpt-4.1-mini</string>
+    -->
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/browser-use-rs/daemon.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/browser-use-rs/daemon.stderr.log</string>
+
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+</dict>
+</plist>
