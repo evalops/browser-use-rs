@@ -93,7 +93,7 @@ jobs:
               exit 1
             fi
 
-            cargo metadata --format-version 1 --no-deps >/tmp/browser-use-rs-metadata.json
+            cargo check --workspace --all-targets
             git diff --check
 
             git config user.name "github-actions[bot]"

@@ -8,6 +8,7 @@ tap_remote_url="${HOMEBREW_TAP_REMOTE_URL:-}"
 tap_token="${HOMEBREW_TAP_TOKEN:-}"
 ref_type="${GITHUB_REF_TYPE:-}"
 ref_name="${GITHUB_REF_NAME:-}"
+release_tag="${RELEASE_TAG:-}"
 
 notice() {
   echo "::notice title=Homebrew tap::$*"
@@ -18,7 +19,11 @@ if [[ ! -f "${formula_path}" ]]; then
   exit 1
 fi
 
-if [[ "${ref_type}" != "tag" ]]; then
+if [[ "${ref_type}" == "tag" ]]; then
+  publish_ref="${ref_name}"
+elif [[ -n "${release_tag}" ]]; then
+  publish_ref="${release_tag}"
+else
   notice "skipping tap publication because this run is not a tag release"
   exit 0
 fi
@@ -45,10 +50,10 @@ git -C "${tap_dir}" config user.email "${GITHUB_ACTOR_EMAIL:-41898282+github-act
 git -C "${tap_dir}" add Formula/browser-use-rs.rb
 
 if git -C "${tap_dir}" diff --cached --quiet; then
-  notice "tap formula already matches ${ref_name:-the generated formula}"
+  notice "tap formula already matches ${publish_ref}"
   exit 0
 fi
 
-git -C "${tap_dir}" commit -m "Update browser-use-rs formula for ${ref_name:-release}"
+git -C "${tap_dir}" commit -m "Update browser-use-rs formula for ${publish_ref}"
 git -C "${tap_dir}" push origin "HEAD:${tap_branch}"
 notice "published Formula/browser-use-rs.rb to ${tap_repo}@${tap_branch}"

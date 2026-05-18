@@ -7,8 +7,9 @@ pass.
 ## Automatic Update Releases
 
 The weekday scheduled run uses `release_type=auto`. Auto mode compares `HEAD`
-with the latest stable `vX.Y.Z` tag, skips roadmap/CI-only churn, and cuts a
-release only when release-worthy files changed.
+with the latest stable `vX.Y.Z` tag, skips roadmap, documentation-only, CI-only,
+and release-bookkeeping churn, and cuts a release only when release-worthy files
+changed.
 
 Auto mode chooses:
 
@@ -16,8 +17,8 @@ Auto mode chooses:
   `BREAKING CHANGE` or a Conventional Commit `!`.
 - `minor` when Rust crate behavior changed and the unreleased commits look like
   feature or public-surface additions.
-- `patch` for release-worthy fixes, packaging changes, and packaged
-  documentation changes.
+- `patch` for release-worthy fixes, packaging changes, and release automation
+  changes.
 
 If there is nothing release-worthy after the latest stable tag, the scheduled
 run exits successfully without committing, tagging, building, or publishing.
@@ -38,6 +39,8 @@ For workflow-dispatched cuts, the workflow:
   validates the exact version,
 - updates `[workspace.package].version`,
 - validates that every crate inherits `version.workspace = true`,
+- refreshes `Cargo.lock` before tagging so the tag contains the workspace package
+  versions used by the build,
 - commits `Cut browser-use-rs vX.Y.Z` to `main`,
 - creates the matching annotated `vX.Y.Z` tag,
 - builds Linux and macOS release tarballs from that tag,
