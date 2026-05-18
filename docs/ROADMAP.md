@@ -166,7 +166,7 @@ Implemented:
   upstream flattened planning fields, custom
   prompt-visible DOM attributes, upstream-style excluded-action schema
   controls and pre-execution enforcement, opt-in recent browser events,
-  configurable planning prompt nudges,
+  upstream-style vision detail levels, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash
   output-schema controls, upstream-style flattened required output fields,
   upstream-style prompt-history inclusion and limits, clickable-element text

@@ -29,7 +29,8 @@ browser-use-rs agent <url> <task> --provider openai-compatible \
   [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
   [--allowed-domain example.com] [--prohibited-domain tracker.example.com] \
   [--block-ip-addresses] \
-  [--max-steps 10] [--no-vision] [--max-actions-per-step 5] \
+  [--max-steps 10] [--no-vision] [--vision-detail-level auto|low|high] \
+  [--max-actions-per-step 5] \
   [--no-final-response-after-failure] [--flash-mode] \
   [--include-recent-events] \
   [--include-attribute data-testid] [--available-file-path /tmp/report.pdf] \
@@ -126,7 +127,8 @@ wildcard hosts such as
 URL globs such as `chrome-extension://*`.
 
 Agent runs also expose the typed `AgentSettings` knobs used by the MCP agent
-tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
+tool: `--no-vision`, `--vision-detail-level <auto|low|high>` for screenshot
+and read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--llm-timeout-seconds`, `--step-timeout-seconds`,
 `--no-final-response-after-failure`, `--no-loop-detection`,
 `--loop-detection-window`, `--no-thinking`, `--flash-mode`,

@@ -19,11 +19,36 @@ pub enum MessageRole {
     Tool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageDetailLevel {
+    Auto,
+    Low,
+    High,
+}
+
+impl ImageDetailLevel {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Low => "low",
+            Self::High => "high",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
-    Text { text: String },
-    ImageUrl { image_url: String },
+    Text {
+        text: String,
+    },
+    ImageUrl {
+        image_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<ImageDetailLevel>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -645,12 +670,18 @@ fn openai_content(parts: Vec<ContentPart>) -> Value {
                     "type": "text",
                     "text": text,
                 }),
-                ContentPart::ImageUrl { image_url } => json!({
-                    "type": "image_url",
-                    "image_url": {
+                ContentPart::ImageUrl { image_url, detail } => {
+                    let mut image_url_value = json!({
                         "url": image_url,
-                    },
-                }),
+                    });
+                    if let Some(detail) = detail {
+                        image_url_value["detail"] = json!(detail.as_str());
+                    }
+                    json!({
+                        "type": "image_url",
+                        "image_url": image_url_value,
+                    })
+                }
             })
             .collect(),
     )
@@ -710,7 +741,7 @@ fn ollama_text_content(parts: &[ContentPart]) -> String {
 
 fn ollama_image_part(part: ContentPart) -> Option<String> {
     match part {
-        ContentPart::ImageUrl { image_url } => {
+        ContentPart::ImageUrl { image_url, .. } => {
             if let Some((_media_type, data)) = data_url_image_source(&image_url) {
                 Some(data)
             } else {
@@ -777,7 +808,7 @@ fn gemini_part(part: ContentPart) -> Value {
         ContentPart::Text { text } => json!({
             "text": text,
         }),
-        ContentPart::ImageUrl { image_url } => match data_url_image_source(&image_url) {
+        ContentPart::ImageUrl { image_url, .. } => match data_url_image_source(&image_url) {
             Some((media_type, data)) => json!({
                 "inlineData": {
                     "mimeType": media_type,
@@ -951,7 +982,7 @@ fn anthropic_content_part(part: ContentPart) -> Value {
             "type": "text",
             "text": text,
         }),
-        ContentPart::ImageUrl { image_url } => match data_url_image_source(&image_url) {
+        ContentPart::ImageUrl { image_url, .. } => match data_url_image_source(&image_url) {
             Some((media_type, data)) => json!({
                 "type": "image",
                 "source": {
@@ -971,7 +1002,7 @@ fn anthropic_content_part(part: ContentPart) -> Value {
 fn text_content_part(part: ContentPart) -> Option<String> {
     match part {
         ContentPart::Text { text } => Some(text),
-        ContentPart::ImageUrl { image_url } => Some(format!("[image_url: {image_url}]")),
+        ContentPart::ImageUrl { image_url, .. } => Some(format!("[image_url: {image_url}]")),
     }
 }
 
@@ -1195,6 +1226,7 @@ mod tests {
                         },
                         ContentPart::ImageUrl {
                             image_url: "data:image/png;base64,abc".to_owned(),
+                            detail: None,
                         },
                     ],
                 }],
@@ -1204,6 +1236,30 @@ mod tests {
 
         assert_eq!(payload["messages"][0]["content"][0]["type"], "text");
         assert_eq!(payload["messages"][0]["content"][1]["type"], "image_url");
+    }
+
+    #[test]
+    fn openai_payload_includes_image_detail_when_present() {
+        let payload = openai_chat_payload(
+            "gpt-test",
+            "agent_output",
+            OpenAiStructuredOutputMode::JsonSchema,
+            ChatRequest {
+                messages: vec![ChatMessage {
+                    role: MessageRole::User,
+                    content: vec![ContentPart::ImageUrl {
+                        image_url: "data:image/png;base64,abc".to_owned(),
+                        detail: Some(ImageDetailLevel::High),
+                    }],
+                }],
+                output_schema: None,
+            },
+        );
+
+        assert_eq!(
+            payload["messages"][0]["content"][0]["image_url"]["detail"],
+            "high"
+        );
     }
 
     #[test]
@@ -1242,6 +1298,7 @@ mod tests {
                         },
                         ContentPart::ImageUrl {
                             image_url: "data:image/png;base64,abc".to_owned(),
+                            detail: None,
                         },
                     ],
                 }],
@@ -1300,6 +1357,7 @@ mod tests {
                         },
                         ContentPart::ImageUrl {
                             image_url: "data:image/png;base64,abc".to_owned(),
+                            detail: None,
                         },
                     ],
                 }],
@@ -1365,6 +1423,7 @@ mod tests {
                     },
                     ContentPart::ImageUrl {
                         image_url: "data:image/png;base64,abc".to_owned(),
+                        detail: None,
                     },
                 ],
             }],

@@ -22,7 +22,8 @@ pub use browser_use_dom::{
 };
 pub use browser_use_llm::{
     AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ContentPart,
-    GeminiChatModel, LlmError, MessageRole, OllamaChatModel, OpenAiCompatibleChatModel,
+    GeminiChatModel, ImageDetailLevel, LlmError, MessageRole, OllamaChatModel,
+    OpenAiCompatibleChatModel,
 };
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
@@ -33,6 +34,8 @@ pub const INITIAL_UPSTREAM_COMMIT: &str = "933e28c599ddd74c15a48568f159da95547e4
 pub struct AgentSettings {
     #[serde(default = "default_use_vision")]
     pub use_vision: bool,
+    #[serde(default = "default_vision_detail_level")]
+    pub vision_detail_level: ImageDetailLevel,
     #[serde(default = "default_max_failures")]
     pub max_failures: u32,
     #[serde(default = "default_max_actions_per_step")]
@@ -83,6 +86,7 @@ impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             use_vision: default_use_vision(),
+            vision_detail_level: default_vision_detail_level(),
             max_failures: default_max_failures(),
             max_actions_per_step: default_max_actions_per_step(),
             llm_timeout_seconds: default_llm_timeout_seconds(),
@@ -111,6 +115,10 @@ impl Default for AgentSettings {
 
 fn default_use_vision() -> bool {
     true
+}
+
+fn default_vision_detail_level() -> ImageDetailLevel {
+    ImageDetailLevel::Auto
 }
 
 fn default_max_failures() -> u32 {
@@ -4621,9 +4629,10 @@ pub fn build_step_request_with_file_system(
     {
         user_content.push(ContentPart::ImageUrl {
             image_url: screenshot_data_url(screenshot),
+            detail: Some(settings.vision_detail_level),
         });
     }
-    append_latest_action_result_images(&mut user_content, history);
+    append_latest_action_result_images(&mut user_content, history, settings.vision_detail_level);
     Ok(ChatRequest {
         messages: vec![
             ChatMessage::text(MessageRole::System, render_system_message(settings)),
@@ -4693,7 +4702,11 @@ fn screenshot_data_url(screenshot: &str) -> String {
     }
 }
 
-fn append_latest_action_result_images(content: &mut Vec<ContentPart>, history: &AgentHistory) {
+fn append_latest_action_result_images(
+    content: &mut Vec<ContentPart>,
+    history: &AgentHistory,
+    vision_detail_level: ImageDetailLevel,
+) {
     let Some(latest) = history.items.last() else {
         return;
     };
@@ -4715,6 +4728,7 @@ fn append_latest_action_result_images(content: &mut Vec<ContentPart>, history: &
         });
         content.push(ContentPart::ImageUrl {
             image_url: action_result_image_data_url(name, data),
+            detail: Some(vision_detail_level),
         });
     }
 }
@@ -5668,6 +5682,7 @@ mod tests {
     fn settings_defaults_match_browser_use_shape() {
         let settings = AgentSettings::default();
 
+        assert_eq!(settings.vision_detail_level, ImageDetailLevel::Auto);
         assert_eq!(settings.max_failures, 5);
         assert_eq!(settings.max_actions_per_step, 5);
         assert_eq!(settings.llm_timeout_seconds, 60);
@@ -11317,7 +11332,8 @@ mod tests {
 
         assert!(matches!(
             &user_message.content[1],
-            ContentPart::ImageUrl { image_url } if image_url == "data:image/png;base64,abc123"
+            ContentPart::ImageUrl { image_url, detail } if image_url == "data:image/png;base64,abc123"
+                && *detail == Some(ImageDetailLevel::Auto)
         ));
         let text = match &user_message.content[0] {
             ContentPart::Text { text } => text,
@@ -11377,6 +11393,7 @@ mod tests {
         };
         let settings = AgentSettings {
             use_vision: false,
+            vision_detail_level: ImageDetailLevel::High,
             ..AgentSettings::default()
         };
 
@@ -11394,7 +11411,8 @@ mod tests {
         ));
         assert!(matches!(
             &user_message.content[2],
-            ContentPart::ImageUrl { image_url } if image_url == "data:image/png;base64,abc123"
+            ContentPart::ImageUrl { image_url, detail } if image_url == "data:image/png;base64,abc123"
+                && *detail == Some(ImageDetailLevel::High)
         ));
         let request_text = serde_json::to_string(user_message).expect("message json");
         assert!(!request_text.contains("old-data"));

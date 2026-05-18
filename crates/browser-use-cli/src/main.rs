@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
-use browser_use_core::{AgentHistory, AgentSettings, BrowserActionExecutor, SensitiveDataValue};
+use browser_use_core::{
+    AgentHistory, AgentSettings, BrowserActionExecutor, ImageDetailLevel, SensitiveDataValue,
+};
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
     OpenAiStructuredOutputMode,
@@ -118,6 +120,8 @@ enum Command {
         max_steps: usize,
         #[arg(long, default_value_t = false)]
         no_vision: bool,
+        #[arg(long = "vision-detail-level", value_enum)]
+        vision_detail_level: Option<CliVisionDetailLevel>,
         #[arg(long)]
         max_failures: Option<u32>,
         #[arg(long)]
@@ -183,6 +187,23 @@ enum LlmProvider {
     Gemini,
     #[value(alias = "local")]
     Ollama,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum CliVisionDetailLevel {
+    Auto,
+    Low,
+    High,
+}
+
+impl From<CliVisionDetailLevel> for ImageDetailLevel {
+    fn from(value: CliVisionDetailLevel) -> Self {
+        match value {
+            CliVisionDetailLevel::Auto => Self::Auto,
+            CliVisionDetailLevel::Low => Self::Low,
+            CliVisionDetailLevel::High => Self::High,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -421,6 +442,7 @@ async fn main() -> anyhow::Result<()> {
             block_ip_addresses,
             max_steps,
             no_vision,
+            vision_detail_level,
             max_failures,
             max_actions_per_step,
             llm_timeout_seconds,
@@ -463,6 +485,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             let settings = cli_agent_settings(CliAgentSettingsArgs {
                 no_vision,
+                vision_detail_level,
                 max_failures,
                 max_actions_per_step,
                 llm_timeout_seconds,
@@ -527,6 +550,7 @@ fn read_agent_history(path: &PathBuf) -> anyhow::Result<AgentHistory> {
 #[derive(Debug, Default)]
 struct CliAgentSettingsArgs {
     no_vision: bool,
+    vision_detail_level: Option<CliVisionDetailLevel>,
     max_failures: Option<u32>,
     max_actions_per_step: Option<usize>,
     llm_timeout_seconds: Option<u64>,
@@ -556,6 +580,9 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
 
     if args.no_vision {
         settings.use_vision = false;
+    }
+    if let Some(value) = args.vision_detail_level {
+        settings.vision_detail_level = value.into();
     }
     if let Some(value) = args.max_failures {
         settings.max_failures = value;
@@ -1953,6 +1980,8 @@ mod tests {
             "--max-steps",
             "3",
             "--no-vision",
+            "--vision-detail-level",
+            "high",
             "--max-failures",
             "2",
             "--max-actions-per-step",
@@ -2012,6 +2041,7 @@ mod tests {
                 provider,
                 max_steps,
                 no_vision,
+                vision_detail_level,
                 max_failures,
                 max_actions_per_step,
                 llm_timeout_seconds,
@@ -2042,6 +2072,7 @@ mod tests {
                 assert_eq!(provider, LlmProvider::OpenAiCompatible);
                 assert_eq!(max_steps, 3);
                 assert!(no_vision);
+                assert_eq!(vision_detail_level, Some(CliVisionDetailLevel::High));
                 assert_eq!(max_failures, Some(2));
                 assert_eq!(max_actions_per_step, Some(1));
                 assert_eq!(llm_timeout_seconds, Some(11));
@@ -2283,6 +2314,7 @@ mod tests {
     fn builds_agent_settings_from_cli_flags() {
         let settings = cli_agent_settings(CliAgentSettingsArgs {
             no_vision: true,
+            vision_detail_level: Some(CliVisionDetailLevel::High),
             max_failures: Some(2),
             max_actions_per_step: Some(1),
             llm_timeout_seconds: Some(11),
@@ -2322,6 +2354,7 @@ mod tests {
         });
 
         assert!(!settings.use_vision);
+        assert_eq!(settings.vision_detail_level, ImageDetailLevel::High);
         assert_eq!(settings.max_failures, 2);
         assert_eq!(settings.max_actions_per_step, 1);
         assert_eq!(settings.llm_timeout_seconds, 11);

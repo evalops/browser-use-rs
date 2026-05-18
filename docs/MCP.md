@@ -74,12 +74,12 @@ input. Supported values are `json-schema`, `json-object`, `prompt-only`, and
 kebab-case enum values.
 
 `browser_use_agent` also accepts an optional typed `settings` object matching
-`browser-use-core`'s `AgentSettings`, including vision, action limits,
-timeouts, final `done` responses after repeated failures, prompt-history
-limits, planning controls, thinking/flash output modes, and prompt-visible DOM
-attributes plus initial actions, excluded action names, available file-path and
-sensitive-data prompt context, opt-in recent browser events, and system-message
-override/extension fields.
+`browser-use-core`'s `AgentSettings`, including vision, image detail level,
+action limits, timeouts, final `done` responses after repeated failures,
+prompt-history limits, planning controls, thinking/flash output modes, and
+prompt-visible DOM attributes plus initial actions, excluded action names,
+available file-path and sensitive-data prompt context, opt-in recent browser
+events, and system-message override/extension fields.
 Excluded action names are removed from the model output schema and rejected
 before execution if a loose provider still returns one, while `done` remains
 available for completion. Sensitive data values

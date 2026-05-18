@@ -465,6 +465,7 @@ mod tests {
         assert!(schema_text.contains("tool-call"));
         assert!(schema_text.contains("settings"));
         assert!(schema_text.contains("max_actions_per_step"));
+        assert!(schema_text.contains("vision_detail_level"));
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("include_recent_events"));
@@ -497,12 +498,17 @@ mod tests {
             "url": "https://example.com",
             "task": "extract",
             "settings": {
+                "vision_detail_level": "high",
                 "excluded_actions": ["search", "scroll"],
                 "include_recent_events": true
             }
         }))
         .expect("agent input");
 
+        assert_eq!(
+            input.settings.vision_detail_level,
+            browser_use_core::ImageDetailLevel::High
+        );
         assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
         assert!(input.settings.include_recent_events);
     }
