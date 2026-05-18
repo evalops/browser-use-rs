@@ -450,6 +450,59 @@ pub struct ActionReplayRematch {
     pub changed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayPlan {
+    pub actions: Vec<AgentHistoryReplayPlanItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayPlanItem {
+    pub step_index: usize,
+    pub action_index: usize,
+    pub original_action: BrowserAction,
+    pub rematch: ActionReplayRematch,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayPlanError {
+    pub step_index: usize,
+    pub action_index: usize,
+    pub failure: DomInteractedElementMatchFailure,
+}
+
+pub fn build_history_replay_plan(
+    history: &AgentHistory,
+    current_dom: &SerializedDomState,
+) -> Result<AgentHistoryReplayPlan, AgentHistoryReplayPlanError> {
+    let mut actions = Vec::new();
+    for (step_index, item) in history.items.iter().enumerate() {
+        let Some(output) = item.model_output.as_ref() else {
+            continue;
+        };
+        for (action_index, action) in output.action.iter().enumerate() {
+            let interacted_element = action
+                .interacted_element_index()
+                .and_then(|index| item.state.dom_state.selector_map.get(&index))
+                .map(DomInteractedElement::from_element);
+            let rematch =
+                rematch_action_for_replay(action, interacted_element.as_ref(), current_dom)
+                    .map_err(|failure| AgentHistoryReplayPlanError {
+                        step_index,
+                        action_index,
+                        failure,
+                    })?;
+            actions.push(AgentHistoryReplayPlanItem {
+                step_index,
+                action_index,
+                original_action: action.clone(),
+                rematch,
+            });
+        }
+    }
+
+    Ok(AgentHistoryReplayPlan { actions })
+}
+
 pub fn rematch_action_for_replay(
     action: &BrowserAction,
     interacted_element: Option<&DomInteractedElement>,
@@ -5906,6 +5959,137 @@ mod tests {
     }
 
     #[test]
+    fn history_replay_plan_remaps_actions_across_steps() {
+        let mut first_state = blank_state();
+        first_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        )]);
+        let mut second_state = blank_state();
+        second_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            2,
+            "input",
+            BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+        )]);
+        let history = AgentHistory {
+            items: vec![
+                history_item_with_state_actions(
+                    first_state,
+                    vec![BrowserAction::Click(ClickElementAction {
+                        index: Some(1),
+                        coordinate_x: None,
+                        coordinate_y: None,
+                    })],
+                ),
+                history_item_with_state_actions(
+                    second_state,
+                    vec![
+                        BrowserAction::Input(InputTextAction {
+                            index: 2,
+                            text: "ada@example.test".to_owned(),
+                            clear: true,
+                        }),
+                        BrowserAction::Wait(WaitAction { seconds: 0 }),
+                    ],
+                ),
+            ],
+        };
+        let current_dom = SerializedDomState::from_elements(vec![
+            replay_dom_element(
+                7,
+                "button",
+                BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+            ),
+            replay_dom_element(
+                8,
+                "input",
+                BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+            ),
+        ]);
+
+        let plan = build_history_replay_plan(&history, &current_dom).expect("replay plan");
+
+        assert_eq!(plan.actions.len(), 3);
+        assert_eq!(plan.actions[0].step_index, 0);
+        assert_eq!(plan.actions[0].action_index, 0);
+        assert_eq!(
+            plan.actions[0].rematch.action.interacted_element_index(),
+            Some(7)
+        );
+        assert!(plan.actions[0].rematch.changed);
+        assert_eq!(plan.actions[1].step_index, 1);
+        assert_eq!(plan.actions[1].action_index, 0);
+        assert_eq!(
+            plan.actions[1].rematch.action.interacted_element_index(),
+            Some(8)
+        );
+        assert!(plan.actions[1].rematch.changed);
+        assert_eq!(plan.actions[2].step_index, 1);
+        assert_eq!(plan.actions[2].action_index, 1);
+        assert_eq!(plan.actions[2].rematch.original_index, None);
+        assert!(!plan.actions[2].rematch.changed);
+    }
+
+    #[test]
+    fn history_replay_plan_preserves_missing_historical_selector_entries() {
+        let history = AgentHistory {
+            items: vec![history_item_with_state_actions(
+                blank_state(),
+                vec![BrowserAction::Input(InputTextAction {
+                    index: 99,
+                    text: "missing".to_owned(),
+                    clear: true,
+                })],
+            )],
+        };
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "input",
+            BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+        )]);
+
+        let plan = build_history_replay_plan(&history, &current_dom).expect("replay plan");
+
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(plan.actions[0].rematch.original_index, Some(99));
+        assert_eq!(plan.actions[0].rematch.rematched_index, None);
+        assert!(!plan.actions[0].rematch.changed);
+    }
+
+    #[test]
+    fn history_replay_plan_attaches_step_coordinates_to_rematch_failures() {
+        let mut old = replay_dom_element(1, "button", BTreeMap::new());
+        old.name = Some("Duplicate".to_owned());
+        let mut state = blank_state();
+        state.dom_state = SerializedDomState::from_elements(vec![old]);
+        let history = AgentHistory {
+            items: vec![history_item_with_state_actions(
+                state,
+                vec![BrowserAction::Click(ClickElementAction {
+                    index: Some(1),
+                    coordinate_x: None,
+                    coordinate_y: None,
+                })],
+            )],
+        };
+        let mut first = replay_dom_element(2, "button", BTreeMap::new());
+        first.name = Some("Duplicate".to_owned());
+        let mut second = replay_dom_element(3, "button", BTreeMap::new());
+        second.name = Some("Duplicate".to_owned());
+        let current_dom = SerializedDomState::from_elements(vec![first, second]);
+
+        let error = build_history_replay_plan(&history, &current_dom).expect_err("ambiguous");
+
+        assert_eq!(error.step_index, 0);
+        assert_eq!(error.action_index, 0);
+        assert_eq!(
+            error.failure.reason,
+            DomInteractedElementMatchFailureReason::Ambiguous
+        );
+    }
+
+    #[test]
     fn history_screenshots_match_browser_use_accessor() {
         let mut first_state = blank_state();
         first_state.screenshot = Some("first-shot".to_owned());
@@ -6033,6 +6217,13 @@ mod tests {
     }
 
     fn history_item_with_actions(actions: Vec<BrowserAction>) -> AgentHistoryItem {
+        history_item_with_state_actions(blank_state(), actions)
+    }
+
+    fn history_item_with_state_actions(
+        state: BrowserStateSummary,
+        actions: Vec<BrowserAction>,
+    ) -> AgentHistoryItem {
         AgentHistoryItem {
             model_output: Some(AgentOutput {
                 current_state: AgentCurrentState::default(),
@@ -6045,7 +6236,7 @@ mod tests {
                 action: actions,
             }),
             result: vec![ActionResult::extracted("ok")],
-            state: blank_state(),
+            state,
             metadata: None,
         }
     }
