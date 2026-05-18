@@ -30,6 +30,8 @@ includes:
   element metadata, plus common ARIA widget roles, search affordance signals,
   small icon controls, pagination affordances, and configurable prompt-visible
   attributes.
+- DOM indexing recognizes controls backed only by JavaScript click/pointer
+  listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file

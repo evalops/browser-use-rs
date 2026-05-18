@@ -90,6 +90,16 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (rect.width < 10 || rect.width > 50 || rect.height < 10 || rect.height > 50) return false;
     return ['class', 'role', 'onclick', 'data-action', 'aria-label'].some((name) => el.hasAttribute(name));
   };
+  const canInspectJsListeners = typeof getEventListeners === 'function' && document.querySelectorAll('*').length <= 10000;
+  const hasJsClickListener = (el) => {
+    if (!canInspectJsListeners) return false;
+    try {
+      const listeners = getEventListeners(el) || {};
+      return ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].some((type) => Array.isArray(listeners[type]) && listeners[type].length > 0);
+    } catch (_) {
+      return false;
+    }
+  };
   const isDisabledOrHidden = (el) => {
     return el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
@@ -105,6 +115,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       const rect = el.getBoundingClientRect();
       return rect.width > 100 && rect.height > 100;
     }
+    if (hasJsClickListener(el)) return true;
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
     if (hasSearchIndicator(el)) return true;
@@ -1089,16 +1100,27 @@ impl CdpBrowserSession {
     }
 
     async fn evaluate_json(&self, expression: &str) -> Result<Value, BrowserError> {
+        self.evaluate_json_with_options(expression, false).await
+    }
+
+    async fn evaluate_json_with_command_line_api(
+        &self,
+        expression: &str,
+    ) -> Result<Value, BrowserError> {
+        self.evaluate_json_with_options(expression, true).await
+    }
+
+    async fn evaluate_json_with_options(
+        &self,
+        expression: &str,
+        include_command_line_api: bool,
+    ) -> Result<Value, BrowserError> {
         let page = self.current_page().await;
         let result = self
             .connection
             .command(
                 "Runtime.evaluate",
-                json!({
-                    "expression": expression,
-                    "returnByValue": true,
-                    "awaitPromise": true,
-                }),
+                runtime_evaluate_params(expression, include_command_line_api),
                 Some(&page.session_id),
             )
             .await?;
@@ -1219,7 +1241,9 @@ impl CdpBrowserSession {
 
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let page = self.current_page().await;
-        let value = self.evaluate_json(INTERACTIVE_ELEMENTS_JS).await?;
+        let value = self
+            .evaluate_json_with_command_line_api(INTERACTIVE_ELEMENTS_JS)
+            .await?;
         let accessibility = self
             .accessibility_enrichment(&page)
             .await
@@ -1847,6 +1871,17 @@ fn key_event_params(event_type: &str, key: &str, modifiers: i64) -> Value {
     }
     if let Some(vk_code) = vk_code {
         params.insert("windowsVirtualKeyCode".to_owned(), json!(vk_code));
+    }
+    Value::Object(params)
+}
+
+fn runtime_evaluate_params(expression: &str, include_command_line_api: bool) -> Value {
+    let mut params = serde_json::Map::new();
+    params.insert("expression".to_owned(), json!(expression));
+    params.insert("returnByValue".to_owned(), json!(true));
+    params.insert("awaitPromise".to_owned(), json!(true));
+    if include_command_line_api {
+        params.insert("includeCommandLineAPI".to_owned(), json!(true));
     }
     Value::Object(params)
 }
@@ -3319,6 +3354,20 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_detects_javascript_click_listeners() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'pointerdown'"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("document.querySelectorAll('*').length <= 10000"));
+
+        let params = runtime_evaluate_params(INTERACTIVE_ELEMENTS_JS, true);
+        assert_eq!(params["includeCommandLineAPI"], true);
+
+        let params = runtime_evaluate_params("document.title", false);
+        assert!(params.get("includeCommandLineAPI").is_none());
+    }
+
+    #[test]
     fn renders_runtime_evaluate_values() {
         assert_eq!(
             render_runtime_evaluate_result(&json!({
@@ -3445,6 +3494,48 @@ mod tests {
             "DOM state did not include shadow input value: {}",
             state.dom_state.llm_representation()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_javascript_listener_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>listener smoke</title></head><body><div id='plain-listener' style='display:inline-block;width:80px;height:30px'>Plain listener</div><script>document.getElementById('plain-listener').addEventListener('click',()=>{document.title='listener clicked'});</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let initial_state = session.state(false).await.expect("initial state");
+        let listener = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element.attributes.get("id").map(String::as_str) == Some("plain-listener")
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing JS listener element: {}",
+                    initial_state.dom_state.llm_representation()
+                )
+            });
+
+        session
+            .click(listener.index)
+            .await
+            .expect("listener-backed click");
+        sleep(Duration::from_millis(100)).await;
+        let state = session.state(false).await.expect("post-click state");
+
+        assert_eq!(state.title, "listener clicked");
     }
 
     #[tokio::test]
