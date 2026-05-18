@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is currently in flight.
+- [#68 Add upstream-style upload_file availability validation](https://github.com/evalops/browser-use-rs/issues/68)
 
 ## Completed Tracks
 
