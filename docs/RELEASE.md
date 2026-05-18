@@ -160,8 +160,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   output-mode override payload/parser modes, plus OpenRouter app attribution
   headers.
 - CLI one-shot commands plus `actions`, `replay`, and `agent` with typed
-  settings flags including conversation transcript saving, available-file-path
-  and sensitive-data placeholder context,
+  settings flags including conversation transcript saving, judge trace
+  validation, available-file-path and sensitive-data placeholder context,
   OpenAI-wire structured-output mode overrides, system-message control,
   `mcp-tools`, `mcp-stdio`, and local persistent `session` commands including
   `session replay`.

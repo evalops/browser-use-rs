@@ -80,8 +80,9 @@ action limits, timeouts, final `done` responses after repeated failures,
 optional `done.files_to_display` text expansion, prompt-history limits,
 planning controls, thinking/flash output modes, and prompt-visible DOM
 attributes plus initial actions, excluded action names, conversation transcript
-saving, available file-path and sensitive-data prompt context, opt-in recent
-browser events, and system-message override/extension fields.
+saving, non-fatal judge trace validation with optional `ground_truth`,
+available file-path and sensitive-data prompt context, opt-in recent browser
+events, and system-message override/extension fields.
 Excluded action names are removed from the model output schema and rejected
 before execution if a loose provider still returns one, while `done` remains
 available for completion. The `screenshot` action is exposed only when

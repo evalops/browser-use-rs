@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#70 Add upstream-style judge trace validation settings](https://github.com/evalops/browser-use-rs/issues/70)
+No active tracked slice is open right now; the next parity slice should be
+filed from the upstream gap scan before implementation starts.
 
 ## Completed Tracks
 
+- [#70 Add upstream-style judge trace validation settings](https://github.com/evalops/browser-use-rs/issues/70)
 - [#69 Add upstream-style conversation transcript saving](https://github.com/evalops/browser-use-rs/issues/69)
 - [#68 Add upstream-style upload_file availability validation](https://github.com/evalops/browser-use-rs/issues/68)
 - [#67 Add upstream-style auto vision mode and screenshot action gating](https://github.com/evalops/browser-use-rs/issues/67)
@@ -183,8 +185,9 @@ Implemented:
   available-file-path and sensitive-data placeholder context with `bu_2fa_code`
   TOTP generation, system-message override/extension controls, upstream-style
   last-result completion helpers, upstream-style prompt context/error
-  truncation, upstream-compatible action-result success validation, judgement
-  results, per-step error slots, model-output/action/thought accessors,
+  truncation, upstream-compatible action-result success validation,
+  upstream-style judge trace validation and judgement results, per-step error
+  slots, model-output/action/thought accessors,
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,
