@@ -1761,7 +1761,7 @@ where
                 available_file_paths,
             ) {
                 Ok(upload_path) => upload_path,
-                Err(result) => return Ok(result),
+                Err(error) => return Ok(ActionResult::error(error)),
             };
             session.upload_file(params.index, &upload_path).await?;
             Ok(ActionResult::extracted(format!(
@@ -1840,7 +1840,7 @@ fn upload_file_action_path(
     file_system: &ManagedFileSystem,
     enforce_upload_file_availability: bool,
     available_file_paths: &BTreeSet<String>,
-) -> Result<std::path::PathBuf, ActionResult> {
+) -> Result<std::path::PathBuf, String> {
     if !enforce_upload_file_availability {
         return Ok(std::path::PathBuf::from(&params.path));
     }
@@ -1850,23 +1850,20 @@ fn upload_file_action_path(
     } else if let Some(path) = file_system.upload_file_path(&params.path) {
         path
     } else {
-        return Err(ActionResult::error(format!(
+        return Err(format!(
             "File path {} is not available. Add it to AgentSettings.available_file_paths before using upload_file.",
             params.path
-        )));
+        ));
     };
 
     if !path.exists() {
-        return Err(ActionResult::error(format!(
-            "File {} does not exist",
-            path.display()
-        )));
+        return Err(format!("File {} does not exist", path.display()));
     }
     if path.metadata().map(|metadata| metadata.len()).unwrap_or(0) == 0 {
-        return Err(ActionResult::error(format!(
+        return Err(format!(
             "File {} is empty (0 bytes). The file may not have been saved correctly.",
             path.display()
-        )));
+        ));
     }
 
     Ok(path)
