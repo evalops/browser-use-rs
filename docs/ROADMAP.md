@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #104 lands and CI is green.
+- [#105 Add BrowserProfile disable_security and deterministic_rendering launch parity](https://github.com/evalops/browser-use-rs/issues/105)
 
 ## Completed Tracks
 
