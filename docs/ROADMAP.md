@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None.
+- [#62 Add upstream-style excluded action schema controls](https://github.com/evalops/browser-use-rs/issues/62)
 
 ## Completed Tracks
 
