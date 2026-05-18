@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#8 Cut first public conformance release](https://github.com/evalops/browser-use-rs/issues/8)
+- [#9 Add event-driven browser security watchdog](https://github.com/evalops/browser-use-rs/issues/9)
 
 ## Completed Tracks
 
@@ -13,13 +13,15 @@ small pushed checkpoints as each surface becomes real.
 - [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)
 - [#3 Implement DOM and accessibility serializer parity](https://github.com/evalops/browser-use-rs/issues/3)
 - [#4 Implement agent loop and LLM provider contracts](https://github.com/evalops/browser-use-rs/issues/4)
+- [#8 Cut first public conformance release](https://github.com/evalops/browser-use-rs/issues/8)
 
 ## Current Checkpoint
 
 Implemented:
 
 - Public repository, MIT license, upstream attribution, CI, and Rust workspace.
-- Tag-triggered GitHub release workflow and release support matrix.
+- Published `v0.1.0` public conformance release with tag-triggered GitHub
+  release workflow, release support matrix, and packaged Linux artifact smoke.
 - Frozen upstream target: `browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
@@ -138,9 +140,8 @@ Implemented:
 
 Next:
 
-1. Cut and verify the first public conformance release from `main`.
-2. Continue browser-profile security parity toward an event-driven watchdog
+1. Continue browser-profile security parity toward an event-driven watchdog
    when the CDP layer grows background event dispatch.
-3. Expand agent planning depth, replay coverage, and deeper provider-specific
+2. Expand agent planning depth, replay coverage, and deeper provider-specific
    structured-output fallbacks for model families that need tool-calling or
    provider-routing hints.
