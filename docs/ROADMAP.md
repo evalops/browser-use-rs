@@ -53,6 +53,7 @@ No active track is open at this checkpoint.
 - [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
 - [#50 Expose AgentHistory replay through MCP and daemon](https://github.com/evalops/browser-use-rs/issues/50)
 - [#51 Expose AgentHistoryReplayRun JSON Schema](https://github.com/evalops/browser-use-rs/issues/51)
+- [#52 Replay AgentHistory against persistent CLI sessions](https://github.com/evalops/browser-use-rs/issues/52)
 - [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
 
 ## Current Checkpoint
@@ -133,8 +134,8 @@ Implemented:
 - One-shot CLI commands, including `AgentHistory` replay against current browser
   state, and a stdio MCP server backed by the CDP session, including
   `browser_use_replay` and in-process MCP session reuse by `session_id`.
-- Local persistent CLI session records for start/state/actions/stop/list/cleanup
-  across CLI invocations.
+- Local persistent CLI session records for start, state, actions, replay, stop,
+  list, and cleanup across CLI invocations.
 - MCP stdio reconnection to persistent CLI session records by `session_id`, and
   persistent record creation for new `session_id` state/action/agent calls with
   a supplied URL.

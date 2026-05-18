@@ -48,6 +48,7 @@ browser-use-rs agent <url> <task> \
 browser-use-rs session start <id> <url> [--screenshot]
 browser-use-rs session state <id> [--screenshot]
 browser-use-rs session actions <id> <actions.json> [--screenshot]
+browser-use-rs session replay <id> <history.json>
 browser-use-rs session stop <id>
 browser-use-rs session list
 ```
@@ -154,6 +155,11 @@ By default cleanup skips running sessions and records with unknown liveness. Use
 to force a specific running session through normal stop semantics, or remove a
 record whose liveness cannot be established.
 
+`browser-use-rs session replay <id> <history.json>` reconnects to an existing
+persistent session record, loads serialized `AgentHistory`, replays it against
+the current browser state, and prints the annotated `session` plus `replay`
+result JSON. It does not restart stale sessions automatically.
+
 `mcp-stdio` runs a newline-delimited JSON-RPC MCP server over stdin/stdout. It
 supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 `browser_use_state`, `browser_use_actions`, `browser_use_replay`,
@@ -206,9 +212,9 @@ templates live under `packaging/`; see
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
-- History replay is exposed through the one-shot CLI and the MCP/daemon tool
-  surface. DOM recapture and rematching between replayed actions remain tracked
-  separately.
+- History replay is exposed through the one-shot CLI, persistent CLI sessions,
+  and the MCP/daemon tool surface. DOM recapture and rematching between
+  replayed actions remain tracked separately.
 - Persistent session `status` is a registry liveness hint, not a supervisor;
   stale records can be removed with `session cleanup`, but stale browser
   processes are not automatically restarted.

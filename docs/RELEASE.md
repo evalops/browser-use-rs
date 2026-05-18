@@ -152,7 +152,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   settings flags including available-file-path and sensitive-data placeholder
   context,
   OpenAI-wire structured-output mode overrides, system-message control,
-  `mcp-tools`, `mcp-stdio`, and local persistent `session` commands.
+  `mcp-tools`, `mcp-stdio`, and local persistent `session` commands including
+  `session replay`.
 - MCP stdio tools for state, actions, `AgentHistory` replay, and agent runs,
   including typed input/output schemas for structured content, typed
   `AgentSettings`, OpenAI-wire structured-output mode overrides, in-process
@@ -202,7 +203,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   replay run with the captured state, plan, and guarded execution result. DOM
   recapture and rematching between replayed actions remain outside this release
   slice; the public replay-run JSON shape is pinned by conformance fixture.
-  Replay is exposed through the one-shot CLI and the MCP/daemon tool surface.
+  Replay is exposed through the one-shot CLI, persistent CLI sessions, and the
+  MCP/daemon tool surface.
 - CLI sessions are local registry records. Session `status` reports registry
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does
