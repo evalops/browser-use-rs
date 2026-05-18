@@ -21,26 +21,27 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   element metadata, Chrome OOPIF cross-origin iframe target content indexing
   and cached-node actions, automation-friendly data/ARIA/value attributes,
   native boolean/read-only state, validation patterns, `data-state`, static
-  history-matching attributes,
-  accessibility-tree role/name/state/value enrichment with backend/frontend node
-  ids, hidden-element and `data-browser-use-exclude` subtree filtering, and
-  topmost/occlusion filtering, while keeping hidden file-input upload targets,
-  plain scroll-container indexing, non-content tag pruning, and prompt-visible
-  pages-above/below context for indexed scroll containers, plus href-less anchor
-  tags, accessible names from labels, ARIA references, and image alt text,
-  selected dropdown values, compound control metadata, compact select option
-  summaries, common ARIA widget roles, search affordance signals, small icon
-  controls, ARIA required/autocomplete/keyshortcut interactivity signals with
-  prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
-  human-readable value text, contenteditable editor variants, media control
-  compounds,
-  duplicate long-attribute pruning, input mask/autocomplete/date-format
-  datepicker hints, live-region, hierarchy, and multiselect state aliases,
-  JavaScript click/pointer listener-backed controls, cursor-pointer controls,
-  decorative SVG child pruning, static mouse/keyboard handler attributes,
-  contained duplicate-descendant pruning for action containers, pagination
-  affordance detection, configurable prompt-visible attributes, and the upstream
-  empty-DOM load hint.
+  history-matching attributes, accessibility-tree role/name/state/value
+  enrichment with backend/frontend node ids, hidden-element and
+  `data-browser-use-exclude` subtree filtering, topmost/occlusion filtering,
+  hidden file-input upload targets, plain scroll-container indexing,
+  non-content tag pruning, prompt-visible pages-above/below context for indexed
+  scroll containers, href-less anchor tags, accessible names from labels, ARIA
+  references, image alt text, selected dropdown values, compound control
+  metadata, compact select option summaries, common ARIA widget roles, search
+  affordance signals, small icon controls, ARIA required/autocomplete/keyshortcut
+  interactivity signals with prompt-visible `keyshortcuts`, AX-shaped numeric
+  value aliases, human-readable value text, contenteditable editor variants,
+  media control compounds, duplicate long-attribute pruning,
+  input mask/autocomplete/date-format datepicker hints, live-region, hierarchy,
+  and multiselect state aliases, JavaScript click/pointer listener-backed
+  controls, cursor-pointer controls, decorative SVG child pruning, static
+  mouse/keyboard handler attributes, contained duplicate-descendant pruning for
+  action containers, pagination affordance detection, configurable
+  prompt-visible attributes, the upstream empty-DOM load hint, and a
+  CDP-populated tree-shaped eval/judge DOM representation with backend-node
+  interactive markers, shadow-root markers, iframe-content markers, compact key
+  attributes, scroll context, and collapsed SVG contents.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and

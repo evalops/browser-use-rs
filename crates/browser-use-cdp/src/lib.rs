@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use browser_use_dom::{
-    BrowserStateSummary, DomElementRef, DomPageStats, ElementBounds, PageInfo, PaginationButton,
-    PaginationButtonType, SerializedDomState, TabInfo, render_element_text,
+    BrowserStateSummary, DomElementRef, DomEvalNode, DomEvalNodeType, DomPageStats, ElementBounds,
+    PageInfo, PaginationButton, PaginationButtonType, SerializedDomState, TabInfo,
+    render_element_text,
 };
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
@@ -443,19 +444,23 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     for (const child of Array.from(root.children || [])) visitNode(child, offset);
   };
   visitChildren(document, { x: 0, y: 0 });
-  return {
-    stats,
-    elements: elements.slice(0, 400).map(({ el, offset }, index) => {
-    const rect = el.getBoundingClientRect();
-    const axRef = `browser-use-rs-${index + 1}`;
-    try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
+  const booleanAttributeNames = new Set(['checked', 'disabled', 'multiple', 'readonly', 'required', 'selected']);
+  const snapshotAttributeNames = ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-level', 'aria-live', 'aria-multiselectable', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo'];
+  const evalAttributeNames = ['id', 'class', 'name', 'type', 'placeholder', 'aria-label', 'role', 'value', 'data-testid', 'alt', 'title', 'checked', 'selected', 'disabled', 'required', 'readonly', 'aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-invalid', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow'];
+  const collectAttributes = (el, names) => {
     const attrs = {};
-    const booleanAttributeNames = new Set(['checked', 'disabled', 'multiple', 'readonly', 'required', 'selected']);
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-level', 'aria-live', 'aria-multiselectable', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
+    for (const name of names) {
       const value = el.getAttribute(name);
       if (value !== null && value !== '') attrs[name] = value;
       else if (value === '' && booleanAttributeNames.has(name)) attrs[name] = 'true';
     }
+    return attrs;
+  };
+  const indexedElements = elements.slice(0, 400).map(({ el, offset }, index) => {
+    const rect = el.getBoundingClientRect();
+    const axRef = `browser-use-rs-${index + 1}`;
+    try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
+    const attrs = collectAttributes(el, snapshotAttributeNames);
     const altText = descendantAltText(el);
     const controlText = controlValueText(el);
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -487,7 +492,57 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       is_scrollable: isScrollable(el),
       ax_ref: axRef
     };
-  })};
+  });
+  const evalTreeForNode = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return {
+        node_type: 'text',
+        node_value: node.nodeValue || ''
+      };
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+    return evalTreeForElement(node);
+  };
+  const evalTreeForElement = (el) => {
+    if (isBrowserUseExcluded(el) || isNonContentTag(el)) return null;
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const attrs = collectAttributes(el, evalAttributeNames);
+    const controlText = controlValueText(el);
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (controlText && type !== 'password') attrs.value = controlText;
+    const axRef = el.getAttribute(axRefAttribute) || null;
+    const children = Array.from(el.childNodes || []).map(evalTreeForNode).filter(Boolean);
+    if (el.shadowRoot) {
+      children.push({
+        node_type: 'document_fragment',
+        children: Array.from(el.shadowRoot.childNodes || []).map(evalTreeForNode).filter(Boolean)
+      });
+    }
+    if (tag === 'iframe' || tag === 'frame') {
+      try {
+        const frameDocument = el.contentDocument;
+        const frameRoot = frameDocument?.body || frameDocument?.documentElement;
+        if (frameRoot) children.push(...Array.from(frameRoot.childNodes || []).map(evalTreeForNode).filter(Boolean));
+      } catch (_) {}
+    }
+    const scroll = scrollInfoText(el);
+    return {
+      node_type: 'element',
+      tag_name: tag,
+      attributes: attrs,
+      children,
+      is_visible: isVisible(el),
+      is_interactive: Boolean(axRef),
+      is_scrollable: isScrollable(el),
+      scroll_info: scroll || null,
+      ax_ref: axRef
+    };
+  };
+  return {
+    stats,
+    elements: indexedElements,
+    eval_tree: evalTreeForElement(document.documentElement)
+  };
 })()
 "#;
 
@@ -2221,8 +2276,109 @@ fn dom_state_from_interactive_value(
         .iter()
         .map(|element| dom_element_from_value(target_id, element, accessibility))
         .collect::<Result<Vec<_>, _>>()?;
+    let eval_root = value
+        .get("eval_tree")
+        .filter(|value| !value.is_null())
+        .map(|value| dom_eval_node_from_value(value, accessibility))
+        .transpose()?;
 
-    Ok(SerializedDomState::from_elements(elements).with_page_stats(stats))
+    let state = SerializedDomState::from_elements(elements).with_page_stats(stats);
+    Ok(match eval_root {
+        Some(eval_root) => state.with_eval_root(eval_root),
+        None => state,
+    })
+}
+
+fn dom_eval_node_from_value(
+    value: &Value,
+    accessibility: &BTreeMap<String, AccessibilityNodeInfo>,
+) -> Result<DomEvalNode, BrowserError> {
+    let node_type = match value.get("node_type").and_then(Value::as_str) {
+        Some("document_fragment") => DomEvalNodeType::DocumentFragment,
+        Some("element") => DomEvalNodeType::Element,
+        Some("text") => DomEvalNodeType::Text,
+        Some(other) => {
+            return Err(BrowserError::MissingResponseData(format!(
+                "unsupported eval node type {other}"
+            )));
+        }
+        None => {
+            return Err(BrowserError::MissingResponseData(
+                "eval node type".to_owned(),
+            ));
+        }
+    };
+    let attributes = value
+        .get("attributes")
+        .and_then(Value::as_object)
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let children = value
+        .get("children")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|child| dom_eval_node_from_value(child, accessibility))
+        .collect::<Result<Vec<_>, _>>()?;
+    let backend_node_id = value
+        .get("backend_node_id")
+        .and_then(Value::as_u64)
+        .filter(|backend_node_id| *backend_node_id != 0)
+        .or_else(|| {
+            value
+                .get("ax_ref")
+                .and_then(Value::as_str)
+                .and_then(|ax_ref| accessibility.get(ax_ref))
+                .map(|info| info.backend_node_id)
+        });
+
+    Ok(DomEvalNode {
+        node_type,
+        tag_name: value
+            .get("tag_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        node_value: value
+            .get("node_value")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        attributes,
+        children,
+        backend_node_id,
+        should_display: value
+            .get("should_display")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        excluded_by_parent: value
+            .get("excluded_by_parent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        is_visible: value
+            .get("is_visible")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        is_interactive: value
+            .get("is_interactive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        is_scrollable: value
+            .get("is_scrollable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        scroll_info: value
+            .get("scroll_info")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 fn dom_page_stats_from_value(value: &Value) -> Option<DomPageStats> {
@@ -4910,6 +5066,59 @@ mod tests {
     }
 
     #[test]
+    fn dom_state_parser_carries_eval_tree() {
+        let accessibility = BTreeMap::from([(
+            "browser-use-rs-1".to_owned(),
+            AccessibilityNodeInfo {
+                backend_node_id: 55,
+                node_id: Some(77),
+                role: Some("button".to_owned()),
+                name: Some("Save settings".to_owned()),
+                properties: BTreeMap::new(),
+            },
+        )]);
+        let state = dom_state_from_interactive_value(
+            "target-1",
+            &json!({
+                "elements": [{
+                    "index": 1,
+                    "tag_name": "button",
+                    "name": "Save",
+                    "text": "Save",
+                    "attributes": { "data-testid": "save-settings" },
+                    "is_visible": true,
+                    "is_interactive": true,
+                    "ax_ref": "browser-use-rs-1"
+                }],
+                "eval_tree": {
+                    "node_type": "element",
+                    "tag_name": "body",
+                    "is_visible": true,
+                    "children": [{
+                        "node_type": "element",
+                        "tag_name": "button",
+                        "attributes": { "data-testid": "save-settings" },
+                        "is_visible": true,
+                        "is_interactive": true,
+                        "ax_ref": "browser-use-rs-1",
+                        "children": [{
+                            "node_type": "text",
+                            "node_value": "Save"
+                        }]
+                    }]
+                }
+            }),
+            &accessibility,
+        )
+        .expect("dom state");
+
+        assert_eq!(
+            state.eval_representation(),
+            "<body />\n\t[i_55] <button data-testid=\"save-settings\">Save"
+        );
+    }
+
+    #[test]
     fn interactive_snapshot_detects_search_affordances() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasSearchIndicator"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("search-icon"));
@@ -5067,7 +5276,9 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("total_elements"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("text_chars"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("return {"));
-        assert!(INTERACTIVE_ELEMENTS_JS.contains("elements: elements.slice"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("elements: indexedElements"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("eval_tree: evalTreeForElement"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("node_type: 'document_fragment'"));
     }
 
     #[test]
@@ -5195,6 +5406,15 @@ mod tests {
                 .dom_state
                 .llm_representation()
                 .contains("Shadow click")
+        );
+        let eval = initial_state.dom_state.eval_representation();
+        assert!(
+            eval.contains("#shadow"),
+            "eval tree missed shadow root: {eval}"
+        );
+        assert!(
+            eval.contains("[i_") && eval.contains("Shadow click"),
+            "eval tree missed backend-indexed shadow control: {eval}"
         );
 
         session.click(1).await.expect("shadow click");
@@ -7054,6 +7274,15 @@ mod tests {
                 .dom_state
                 .llm_representation()
                 .contains("Click me")
+        );
+        let eval = initial_state.dom_state.eval_representation();
+        assert!(
+            eval.contains("<html"),
+            "eval tree missed document root: {eval}"
+        );
+        assert!(
+            eval.contains("[i_") && eval.contains("Click me"),
+            "eval tree missed backend-indexed button: {eval}"
         );
 
         session.click(1).await.expect("click by index");
