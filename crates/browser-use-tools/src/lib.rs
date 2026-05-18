@@ -315,6 +315,19 @@ impl BrowserAction {
                 | Self::Done(_)
         )
     }
+
+    #[must_use]
+    pub fn interacted_element_index(&self) -> Option<u32> {
+        match self {
+            Self::Click(params) => params.index,
+            Self::Input(params) => Some(params.index),
+            Self::Scroll(params) => params.index,
+            Self::UploadFile(params) => Some(params.index),
+            Self::GetDropdownOptions(params) => Some(params.index),
+            Self::SelectDropdownOption(params) => Some(params.index),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -338,6 +351,41 @@ mod tests {
                     "new_tab": false
                 }
             })
+        );
+    }
+
+    #[test]
+    fn action_reports_interacted_element_index_for_indexed_actions() {
+        assert_eq!(
+            BrowserAction::Click(ClickElementAction {
+                index: Some(3),
+                coordinate_x: None,
+                coordinate_y: None,
+            })
+            .interacted_element_index(),
+            Some(3)
+        );
+        assert_eq!(
+            BrowserAction::Click(ClickElementAction {
+                index: None,
+                coordinate_x: Some(10),
+                coordinate_y: Some(20),
+            })
+            .interacted_element_index(),
+            None
+        );
+        assert_eq!(
+            BrowserAction::Input(InputTextAction {
+                index: 4,
+                text: "hello".to_owned(),
+                clear: true,
+            })
+            .interacted_element_index(),
+            Some(4)
+        );
+        assert_eq!(
+            BrowserAction::Wait(WaitAction { seconds: 1 }).interacted_element_index(),
+            None
         );
     }
 

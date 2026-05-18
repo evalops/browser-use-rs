@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use url::Url;
 
 /// Browser target identifier. In Chrome this is a CDP `TargetID`.
@@ -137,6 +138,239 @@ pub struct DomElementRef {
     pub is_interactive: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_scrollable: bool,
+}
+
+/// Upstream-style compact record for an element targeted by an action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DomInteractedElement {
+    pub target_id: TargetId,
+    pub node_id: NodeId,
+    pub backend_node_id: BackendNodeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<String>,
+    pub node_type: u8,
+    pub node_value: String,
+    pub node_name: String,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<ElementBounds>,
+    pub x_path: String,
+    pub element_hash: u64,
+    pub stable_hash: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ax_name: Option<String>,
+}
+
+impl DomInteractedElement {
+    #[must_use]
+    pub fn from_element(element: &DomElementRef) -> Self {
+        let x_path = synthetic_x_path(element);
+        Self {
+            target_id: element.target_id.clone(),
+            node_id: element.node_id.unwrap_or_default(),
+            backend_node_id: element.backend_node_id,
+            frame_id: None,
+            node_type: 1,
+            node_value: element.text.clone().unwrap_or_default(),
+            node_name: element.tag_name.clone(),
+            attributes: element.attributes.clone(),
+            bounds: element.bounds,
+            element_hash: interacted_element_hash(element, &x_path, HashClassMode::Exact),
+            stable_hash: Some(interacted_element_hash(
+                element,
+                &x_path,
+                HashClassMode::Stable,
+            )),
+            x_path,
+            ax_name: element.attributes.get("ax_name").cloned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HashClassMode {
+    Exact,
+    Stable,
+}
+
+const STATIC_HASH_ATTRIBUTES: &[&str] = &[
+    "class",
+    "id",
+    "name",
+    "type",
+    "placeholder",
+    "aria-label",
+    "title",
+    "role",
+    "data-testid",
+    "data-test",
+    "data-cy",
+    "data-selenium",
+    "for",
+    "required",
+    "disabled",
+    "readonly",
+    "checked",
+    "selected",
+    "multiple",
+    "accept",
+    "href",
+    "target",
+    "rel",
+    "aria-describedby",
+    "aria-labelledby",
+    "aria-controls",
+    "aria-owns",
+    "aria-live",
+    "aria-atomic",
+    "aria-busy",
+    "aria-disabled",
+    "aria-hidden",
+    "aria-pressed",
+    "aria-autocomplete",
+    "aria-checked",
+    "aria-selected",
+    "list",
+    "tabindex",
+    "alt",
+    "src",
+    "lang",
+    "itemscope",
+    "itemtype",
+    "itemprop",
+    "pseudo",
+    "aria-valuemin",
+    "aria-valuemax",
+    "aria-valuenow",
+    "aria-placeholder",
+];
+
+const DYNAMIC_CLASS_PATTERNS: &[&str] = &[
+    "focus",
+    "hover",
+    "active",
+    "selected",
+    "disabled",
+    "animation",
+    "transition",
+    "loading",
+    "open",
+    "closed",
+    "expanded",
+    "collapsed",
+    "visible",
+    "hidden",
+    "pressed",
+    "checked",
+    "highlighted",
+    "current",
+    "entering",
+    "leaving",
+];
+
+fn interacted_element_hash(
+    element: &DomElementRef,
+    x_path: &str,
+    class_mode: HashClassMode,
+) -> u64 {
+    let attributes = hash_attributes(element, class_mode);
+    let attributes_string = attributes
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("");
+    let ax_name = element
+        .attributes
+        .get("ax_name")
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("|ax_name={value}"))
+        .unwrap_or_default();
+    let source = format!(
+        "{}/{}|{}{}",
+        element.target_id,
+        element.tag_name.to_ascii_lowercase(),
+        attributes_string,
+        ax_name
+    );
+    sha256_u64(&format!("{source}|x_path={x_path}"))
+}
+
+fn hash_attributes(element: &DomElementRef, class_mode: HashClassMode) -> BTreeMap<String, String> {
+    element
+        .attributes
+        .iter()
+        .filter(|(key, _)| STATIC_HASH_ATTRIBUTES.contains(&key.as_str()))
+        .filter_map(|(key, value)| {
+            let value = if key == "class" && class_mode == HashClassMode::Stable {
+                filter_dynamic_classes(value)
+            } else {
+                value.clone()
+            };
+            if value.is_empty() {
+                None
+            } else {
+                Some((key.clone(), value))
+            }
+        })
+        .collect()
+}
+
+fn filter_dynamic_classes(class_value: &str) -> String {
+    let mut classes = class_value
+        .split_whitespace()
+        .filter(|class_name| {
+            let class_name = class_name.to_ascii_lowercase();
+            !DYNAMIC_CLASS_PATTERNS
+                .iter()
+                .any(|pattern| class_name.contains(pattern))
+        })
+        .collect::<Vec<_>>();
+    classes.sort_unstable();
+    classes.join(" ")
+}
+
+fn sha256_u64(value: &str) -> u64 {
+    let digest = Sha256::digest(value.as_bytes());
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(bytes)
+}
+
+fn synthetic_x_path(element: &DomElementRef) -> String {
+    let tag = element.tag_name.to_ascii_lowercase();
+    for attribute in [
+        "id",
+        "data-testid",
+        "data-test",
+        "data-cy",
+        "name",
+        "aria-label",
+        "title",
+    ] {
+        if let Some(value) = element
+            .attributes
+            .get(attribute)
+            .filter(|value| !value.is_empty())
+        {
+            return format!("//{tag}[@{attribute}={}]", xpath_literal(value));
+        }
+    }
+    format!("//{tag}[@browser-use-index='{}']", element.index)
+}
+
+fn xpath_literal(value: &str) -> String {
+    if !value.contains('\'') {
+        return format!("'{value}'");
+    }
+    if !value.contains('"') {
+        return format!("\"{value}\"");
+    }
+    let parts = value
+        .split('\'')
+        .map(|part| format!("'{part}'"))
+        .collect::<Vec<_>>();
+    format!("concat({})", parts.join(", \"'\", "))
 }
 
 /// Compact page-shape statistics rendered into the agent prompt.
@@ -1268,6 +1502,86 @@ mod tests {
         assert_eq!(state.llm_representation(), "[1] <input> Name EvalOps");
         assert_eq!(state.element_count(), 1);
         assert_eq!(state.selector_map[&1].bounds.expect("bounds").width, 120);
+    }
+
+    #[test]
+    fn interacted_element_records_upstream_style_metadata() {
+        let element = DomElementRef {
+            index: 7,
+            target_id: "target-abc123".to_owned(),
+            backend_node_id: 42,
+            node_id: Some(11),
+            tag_name: "button".to_owned(),
+            role: Some("button".to_owned()),
+            name: Some("Save".to_owned()),
+            text: Some("Save changes".to_owned()),
+            attributes: BTreeMap::from([
+                ("id".to_owned(), "save-button".to_owned()),
+                ("class".to_owned(), "btn primary hover".to_owned()),
+                ("ax_name".to_owned(), "Save".to_owned()),
+            ]),
+            bounds: Some(ElementBounds {
+                x: 10,
+                y: 20,
+                width: 120,
+                height: 32,
+            }),
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let interacted = DomInteractedElement::from_element(&element);
+
+        assert_eq!(interacted.target_id, "target-abc123");
+        assert_eq!(interacted.node_id, 11);
+        assert_eq!(interacted.backend_node_id, 42);
+        assert_eq!(interacted.node_type, 1);
+        assert_eq!(interacted.node_name, "button");
+        assert_eq!(interacted.node_value, "Save changes");
+        assert_eq!(interacted.x_path, "//button[@id='save-button']");
+        assert_eq!(interacted.ax_name.as_deref(), Some("Save"));
+        assert_eq!(interacted.bounds.expect("bounds").width, 120);
+        assert_ne!(interacted.element_hash, 0);
+        assert!(interacted.stable_hash.is_some());
+    }
+
+    #[test]
+    fn interacted_element_stable_hash_filters_dynamic_classes() {
+        let first = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 1,
+            node_id: Some(1),
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Save".to_owned()),
+            text: Some("Save".to_owned()),
+            attributes: BTreeMap::from([
+                ("class".to_owned(), "btn primary hover selected".to_owned()),
+                ("data-testid".to_owned(), "save".to_owned()),
+                ("ax_name".to_owned(), "Save".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+        let second = DomElementRef {
+            attributes: BTreeMap::from([
+                ("class".to_owned(), "active primary btn loading".to_owned()),
+                ("data-testid".to_owned(), "save".to_owned()),
+                ("ax_name".to_owned(), "Save".to_owned()),
+            ]),
+            ..first.clone()
+        };
+
+        let first = DomInteractedElement::from_element(&first);
+        let second = DomInteractedElement::from_element(&second);
+
+        assert_ne!(first.element_hash, second.element_hash);
+        assert_eq!(first.stable_hash, second.stable_hash);
+        assert_eq!(first.x_path, second.x_path);
     }
 
     #[test]
