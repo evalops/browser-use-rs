@@ -60,6 +60,10 @@ pub fn mixed_interactive_state() -> SerializedDomState {
                 ("aria-labelledby".to_owned(), "submit-name".to_owned()),
                 ("aria-live".to_owned(), "polite".to_owned()),
                 ("data-testid".to_owned(), "submit-request".to_owned()),
+                (
+                    "description".to_owned(),
+                    "Sends the completed form".to_owned(),
+                ),
                 ("id".to_owned(), "submit".to_owned()),
                 ("role".to_owned(), "button".to_owned()),
             ]),
@@ -88,6 +92,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
                 ("id".to_owned(), "email".to_owned()),
                 ("placeholder".to_owned(), "name@example.com".to_owned()),
                 ("type".to_owned(), "email".to_owned()),
+                ("value".to_owned(), "user@example.com".to_owned()),
             ]),
             bounds: Some(ElementBounds {
                 x: 12,
@@ -430,6 +435,19 @@ mod tests {
         let actual = serde_json::to_value(mixed_interactive_state()).expect("serialize state");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn mixed_interactive_state_can_render_opt_in_ax_description() {
+        let rendered = mixed_interactive_state()
+            .llm_representation_with_attributes(&["description".to_owned()]);
+
+        assert_eq!(
+            rendered.lines().next(),
+            Some(
+                "[1] <button description=Sends the completed form> Submit request Ignored visual label"
+            )
+        );
     }
 
     #[test]
