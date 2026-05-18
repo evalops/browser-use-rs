@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -50,6 +50,7 @@ small pushed checkpoints as each surface becomes real.
 - [#44 Honor browser page-change guards during replay execution](https://github.com/evalops/browser-use-rs/issues/44)
 - [#45 Replay AgentHistory against current browser state](https://github.com/evalops/browser-use-rs/issues/45)
 - [#46 Freeze AgentHistoryReplayRun conformance fixture](https://github.com/evalops/browser-use-rs/issues/46)
+- [#47 Expose AgentHistory replay through the CLI](https://github.com/evalops/browser-use-rs/issues/47)
 
 ## Current Checkpoint
 
@@ -126,8 +127,9 @@ Implemented:
   click/input/scroll/dropdown/upload resolution, target-aware stale-node
   fallback for cached iframe actions, plus page text and element lookup across
   Chrome OOPIF iframe targets.
-- One-shot CLI commands and a stdio MCP server backed by the CDP session,
-  including in-process MCP session reuse by `session_id`.
+- One-shot CLI commands, including `AgentHistory` replay against current browser
+  state, and a stdio MCP server backed by the CDP session, including in-process
+  MCP session reuse by `session_id`.
 - Local persistent CLI session records for start/state/actions/stop/list/cleanup
   across CLI invocations.
 - MCP stdio reconnection to persistent CLI session records by `session_id`, and

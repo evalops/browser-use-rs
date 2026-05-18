@@ -22,6 +22,7 @@ browser-use-rs click <url> <index>
 browser-use-rs type <url> <index> <text>
 browser-use-rs scroll <url> [--pages 1.0] [--down]
 browser-use-rs actions <url> <actions.json> [--screenshot]
+browser-use-rs replay <url> <history.json>
 browser-use-rs agent <url> <task> --provider openai-compatible \
   [--api-key <key>] [--model <model>] [--base-url https://api.openai.com/v1] \
   [--allowed-domain example.com] [--prohibited-domain tracker.example.com] \
@@ -73,6 +74,13 @@ single launched browser session, and prints:
   "state": {}
 }
 ```
+
+`replay` accepts serialized `AgentHistory` JSON, launches a fresh browser at
+the supplied URL, captures current state, builds a rematched replay plan,
+executes the guarded actions, and prints an `AgentHistoryReplayRun` containing
+`current_state`, `plan`, and `execution`. Malformed history, state capture, and
+rematch failures fail the command; action-level failures remain in the
+serialized execution diagnostics.
 
 Agent runs use the same one-shot browser lifecycle and print typed
 `AgentHistory` JSON after the bounded run completes. The default provider is
@@ -194,6 +202,8 @@ templates live under `packaging/`; see
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
+- History replay is currently exposed as a one-shot CLI command. Persistent
+  session replay and MCP/daemon replay tools are tracked as follow-up surfaces.
 - Persistent session `status` is a registry liveness hint, not a supervisor;
   stale records can be removed with `session cleanup`, but stale browser
   processes are not automatically restarted.
