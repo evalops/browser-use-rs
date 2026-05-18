@@ -20,8 +20,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
   element metadata, automation-friendly data/ARIA/value attributes,
   validation patterns, `data-state`, static history-matching attributes,
-  accessibility-tree role/name enrichment with backend/frontend node ids,
-  hidden-element filtering, and basic accessible names from labels, ARIA
+  accessibility-tree role/name/state/value enrichment with backend/frontend node
+  ids, hidden-element filtering, and basic accessible names from labels, ARIA
   references, and image alt text, plus selected dropdown values, common ARIA
   widget roles, search affordance signals, small icon controls, input
   mask/autocomplete/date-format hints, JavaScript
@@ -98,8 +98,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser profile URL access policies use CDP observation rather than
   upstream's event-bus watchdog, so very short-lived disallowed targets may only
   be caught at the next navigation, action, or state boundary.
-- Accessibility-tree parity is partial; the DOM serializer currently uses a
-  pragmatic compact representation rather than full browser-use AX snapshots.
+- Accessibility-tree parity is partial; the DOM serializer now carries common
+  AX role/name/state/value properties but still uses a pragmatic compact
+  representation rather than full browser-use AX snapshots.
 - Browser/action calls that implicitly create MCP sessions are still in-process
   only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised

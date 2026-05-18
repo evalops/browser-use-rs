@@ -1654,6 +1654,7 @@ struct AccessibilityNodeInfo {
     node_id: Option<u64>,
     role: Option<String>,
     name: Option<String>,
+    properties: BTreeMap<String, String>,
 }
 
 fn dom_state_from_interactive_value(
@@ -1701,7 +1702,7 @@ fn dom_element_from_value(
         .and_then(Value::as_u64)
         .and_then(|index| u32::try_from(index).ok())
         .ok_or_else(|| BrowserError::MissingResponseData("element index".to_owned()))?;
-    let attributes = value
+    let mut attributes: BTreeMap<String, String> = value
         .get("attributes")
         .and_then(Value::as_object)
         .map(|attrs| {
@@ -1717,6 +1718,9 @@ fn dom_element_from_value(
         .get("ax_ref")
         .and_then(Value::as_str)
         .and_then(|ax_ref| accessibility.get(ax_ref));
+    if let Some(ax_info) = ax_info {
+        attributes.extend(ax_info.properties.clone());
+    }
     let ax_role = ax_info.and_then(|info| info.role.as_deref());
     let dom_role = value.get("role").and_then(Value::as_str).map(str::to_owned);
     let role = dom_role.or_else(|| {
@@ -1840,14 +1844,37 @@ fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, Accessibilit
                     node_id: None,
                     role: ax_property_value(node, "role").map(str::to_owned),
                     name: ax_property_value(node, "name").map(str::to_owned),
+                    properties: ax_node_properties(node),
                 },
             ))
         })
         .collect()
 }
 
+fn ax_node_properties(node: &Value) -> BTreeMap<String, String> {
+    node.get("properties")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|property| {
+            let name = property.get("name")?.as_str()?.to_owned();
+            let value = ax_property_to_string(property)?;
+            Some((name, value))
+        })
+        .collect()
+}
+
 fn ax_property_value<'a>(node: &'a Value, property: &str) -> Option<&'a str> {
     nonempty_value(node.get(property)?.get("value")?.as_str())
+}
+
+fn ax_property_to_string(property: &Value) -> Option<String> {
+    match property.get("value")?.get("value")? {
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::String(value) => nonempty_value(Some(value)).map(str::to_owned),
+        _ => None,
+    }
 }
 
 fn nonempty_value(value: Option<&str>) -> Option<&str> {
@@ -3806,7 +3833,12 @@ mod tests {
                 {
                     "backendDOMNodeId": 42,
                     "role": { "type": "role", "value": "button" },
-                    "name": { "type": "computedString", "value": "Save settings" }
+                    "name": { "type": "computedString", "value": "Save settings" },
+                    "properties": [
+                        { "name": "expanded", "value": { "type": "boolean", "value": true } },
+                        { "name": "valuenow", "value": { "type": "number", "value": 7 } },
+                        { "name": "valuetext", "value": { "type": "string", "value": "Seven" } }
+                    ]
                 },
                 {
                     "backendDOMNodeId": 43,
@@ -3822,6 +3854,18 @@ mod tests {
 
         assert_eq!(button.role.as_deref(), Some("button"));
         assert_eq!(button.name.as_deref(), Some("Save settings"));
+        assert_eq!(
+            button.properties.get("expanded").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            button.properties.get("valuenow").map(String::as_str),
+            Some("7")
+        );
+        assert_eq!(
+            button.properties.get("valuetext").map(String::as_str),
+            Some("Seven")
+        );
         assert!(!nodes.contains_key(&43));
     }
 
@@ -3834,6 +3878,7 @@ mod tests {
                 node_id: Some(84),
                 role: Some("button".to_owned()),
                 name: Some("Save settings".to_owned()),
+                properties: BTreeMap::from([("expanded".to_owned(), "true".to_owned())]),
             },
         )]);
         let element = dom_element_from_value(
@@ -3856,6 +3901,10 @@ mod tests {
         assert_eq!(element.node_id, Some(84));
         assert_eq!(element.role.as_deref(), Some("button"));
         assert_eq!(element.name.as_deref(), Some("Save settings"));
+        assert_eq!(
+            element.attributes.get("expanded").map(String::as_str),
+            Some("true")
+        );
     }
 
     #[test]
@@ -4623,6 +4672,35 @@ mod tests {
             !state.dom_state.llm_representation().contains("Starter"),
             "DOM state included unselected option text: {}",
             state.dom_state.llm_representation()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_uses_accessibility_state_properties() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>ax props smoke</title></head><body><button id='toggle' aria-expanded='true'>Details</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(150)).await;
+
+        let state = session.state(false).await.expect("state");
+        let llm = state.dom_state.llm_representation();
+        assert!(
+            llm.contains("expanded=true"),
+            "DOM state did not include AX expanded property: {llm}"
+        );
+        assert!(
+            !llm.contains("aria-expanded=true"),
+            "DOM state did not prefer AX expanded over aria-expanded: {llm}"
         );
     }
 

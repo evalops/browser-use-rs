@@ -149,7 +149,7 @@ templates live under `packaging/`; see
   start` or the `browser_use_session` tool; browser/action calls that create a
   session implicitly are still in-process only.
 - DOM indexing is compact and accessibility-aware, including same-origin iframe
-  traversal, open shadow-root traversal, AX role/name enrichment,
+  traversal, open shadow-root traversal, AX role/name/state/value enrichment,
   backend/frontend node ids, and cached observed-node resolution for
   click/type/scroll/dropdown/upload actions, input
   mask/autocomplete/date-format hints, plus JavaScript click/pointer

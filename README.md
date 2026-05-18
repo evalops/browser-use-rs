@@ -25,12 +25,12 @@ includes:
   when available.
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
-  tags and contents, accessibility-tree role/name enrichment, backend and
-  frontend node ids, accessible labels, image-alt control names, selected
-  dropdown values, bounds, automation-friendly data/ARIA/value attributes,
-  validation patterns, `data-state`, input mask/autocomplete/date-format hints,
-  static history-matching attributes, hidden-element filtering, and scrollable
-  element metadata, plus
+  tags and contents, accessibility-tree role/name/state/value enrichment,
+  backend and frontend node ids, accessible labels, image-alt control names,
+  selected dropdown values, bounds, automation-friendly data/ARIA/value
+  attributes, validation patterns, `data-state`,
+  input mask/autocomplete/date-format hints, static history-matching
+  attributes, hidden-element filtering, and scrollable element metadata, plus
   common ARIA widget roles, search affordance signals, small icon controls,
   cursor-pointer controls, static mouse/keyboard handler attributes, pagination
   affordances, and configurable prompt-visible attributes.

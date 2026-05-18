@@ -387,6 +387,11 @@ fn render_element_attributes_with_attribute_names(
             if *attribute == "invalid" && value.eq_ignore_ascii_case("false") {
                 return None;
             }
+            if *attribute == "aria-expanded"
+                && render_attribute_value(element, "expanded").is_some()
+            {
+                return None;
+            }
             if matches!(
                 *attribute,
                 "required" | "checked" | "selected" | "expanded" | "pressed" | "disabled"
@@ -741,6 +746,32 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "aria-expanded=true aria-checked=true");
+    }
+
+    #[test]
+    fn rendered_attributes_prefer_ax_expanded_over_aria_expanded() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Toggle details".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("aria-expanded".to_owned(), "false".to_owned()),
+                ("expanded".to_owned(), "true".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(attributes, "expanded=true");
     }
 
     #[test]
