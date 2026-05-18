@@ -111,8 +111,9 @@ Implemented:
   live-region and hierarchy metadata, and static
   history-matching attributes, renders native and text datepicker input format
   hints, indexes ARIA required/autocomplete/keyshortcut interactivity signals,
-  renders keyboard shortcuts as `keyshortcuts`, detects search affordance
-  signals and small icon controls, detects
+  renders keyboard shortcuts as `keyshortcuts`, renders numeric ARIA value
+  metadata in AX-shaped fields, detects search affordance signals and small icon
+  controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
   controls, prunes duplicate long attribute values, prunes decorative SVG child
   elements, detects static mouse/keyboard

@@ -400,8 +400,9 @@ fn render_element_attributes_with_attribute_names(
             if *attribute == "invalid" && value.eq_ignore_ascii_case("false") {
                 return None;
             }
-            if *attribute == "aria-expanded"
-                && render_attribute_value(element, "expanded").is_some()
+            if let Some(alias_target) = aliased_suppression_target(attribute)
+                && include_attributes.contains(&alias_target)
+                && render_attribute_value(element, alias_target).is_some()
             {
                 return None;
             }
@@ -475,10 +476,24 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
         "readonly" => "aria-readonly",
         "required" => "aria-required",
         "selected" => "aria-selected",
+        "valuemax" => "aria-valuemax",
+        "valuemin" => "aria-valuemin",
+        "valuenow" => "aria-valuenow",
         "valuetext" => "aria-valuetext",
         _ => return None,
     };
     element.attributes.get(alias)
+}
+
+fn aliased_suppression_target(attribute: &str) -> Option<&'static str> {
+    match attribute {
+        "aria-expanded" => Some("expanded"),
+        "aria-valuemax" => Some("valuemax"),
+        "aria-valuemin" => Some("valuemin"),
+        "aria-valuenow" => Some("valuenow"),
+        "aria-valuetext" => Some("valuetext"),
+        _ => None,
+    }
 }
 
 fn synthetic_render_attribute(element: &DomElementRef, attribute: &str) -> Option<String> {
@@ -1054,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn rendered_attributes_alias_aria_value_text() {
+    fn rendered_attributes_alias_aria_value_metadata() {
         let element = DomElementRef {
             index: 1,
             target_id: "target".to_owned(),
@@ -1065,6 +1080,8 @@ mod tests {
             name: Some("Volume".to_owned()),
             text: None,
             attributes: BTreeMap::from([
+                ("aria-valuemax".to_owned(), "10".to_owned()),
+                ("aria-valuemin".to_owned(), "0".to_owned()),
                 ("aria-valuenow".to_owned(), "7".to_owned()),
                 ("aria-valuetext".to_owned(), "Seven".to_owned()),
             ]),
@@ -1076,7 +1093,10 @@ mod tests {
 
         let attributes = render_element_attributes(&element);
 
-        assert_eq!(attributes, "aria-valuenow=7 valuetext=Seven");
+        assert_eq!(
+            attributes,
+            "valuemin=0 valuemax=10 valuenow=7 valuetext=Seven"
+        );
     }
 
     #[test]

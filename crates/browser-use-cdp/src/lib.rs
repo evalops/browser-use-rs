@@ -6072,6 +6072,14 @@ mod tests {
             "DOM state did not include human-readable value text: {llm}"
         );
         assert!(
+            llm.contains("valuemin=0") && llm.contains("valuemax=10") && llm.contains("valuenow=7"),
+            "DOM state did not include AX-shaped numeric value metadata: {llm}"
+        );
+        assert!(
+            !llm.contains("aria-valuenow=7"),
+            "DOM state did not prefer AX-shaped value aliases over aria value attributes: {llm}"
+        );
+        assert!(
             llm.contains("busy=true") || llm.contains("busy=1"),
             "DOM state did not include busy live-region state: {llm}"
         );
