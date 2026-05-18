@@ -175,7 +175,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   templates alongside the binary and license files. Tagged releases publish a
   Linux x86_64 tarball, a macOS host-triple tarball, one `SHA256SUMS` manifest
   covering all tarballs, and a generated Homebrew formula artifact pinned to
-  the Linux and macOS tarball checksums.
+  the Linux and macOS tarball checksums. When `HOMEBREW_TAP_TOKEN` is
+  configured, tagged releases also publish `Formula/browser-use-rs.rb` to the
+  EvalOps Homebrew tap.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -217,8 +219,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   running sessions unless forced through normal stop semantics; the daemon does
   not automatically restart stale browser processes.
 - The packaged daemon service files are local user-service templates; distro
-  packages, maintained Homebrew tap publication, additional macOS
-  architectures, and installer-managed secret stores are not implemented.
+  packages, additional macOS architectures, and installer-managed secret stores
+  are not implemented. Homebrew tap publication is wired but requires the
+  `evalops/homebrew-tap` repository plus a `HOMEBREW_TAP_TOKEN` repository
+  secret before tagged releases publish there.
   Tagged releases now emit Linux and macOS tarballs, cross-tarball checksums,
   and a generated Homebrew formula artifact for the published triples.
 - Provider-specific structured-output fallbacks for non-chat-completions
@@ -227,5 +231,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   into a new agent, restored prompt context, restored `read_file`, todo
   context, extracted-content numbering, prior history, and initial-action
   execution state.
-- Package publishing is limited to GitHub release artifacts and the generated
-  Homebrew formula scaffold.
+- Package publishing is limited to GitHub release artifacts, the generated
+  Homebrew formula scaffold, and optional EvalOps tap publication when the tap
+  secret is configured.

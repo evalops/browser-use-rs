@@ -200,9 +200,11 @@ browser-use-rs version-target
 From a local checkout, use `cargo install --path crates/browser-use-cli`.
 
 Tagged GitHub releases publish Linux x86_64 and macOS host-triple tarballs,
-`SHA256SUMS`, and a platform-aware Homebrew formula artifact. The tarballs
-contain the `browser-use-rs` binary, license files, install guide, release
-support matrix, and daemon supervision templates.
+`SHA256SUMS`, and a platform-aware Homebrew formula artifact. When the EvalOps
+tap is configured, tagged releases also publish `Formula/browser-use-rs.rb` to
+`evalops/homebrew-tap` for `brew tap evalops/tap && brew install browser-use-rs`.
+The tarballs contain the `browser-use-rs` binary, license files, install guide,
+release support matrix, and daemon supervision templates.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for install commands and
 [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported

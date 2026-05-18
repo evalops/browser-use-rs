@@ -41,7 +41,16 @@ tar -xzf "${archive}"
 
 ## Homebrew
 
-Tagged releases generate a Homebrew formula artifact:
+When the EvalOps tap is configured, install from Homebrew:
+
+```sh
+brew tap evalops/tap
+brew install browser-use-rs
+browser-use-rs version-target
+```
+
+Tagged releases also attach the generated Homebrew formula artifact for manual
+or pre-tap installs:
 
 ```sh
 brew install ./browser-use-rs.rb
@@ -51,5 +60,5 @@ browser-use-rs version-target
 The formula points at the Linux and macOS release tarballs and pins their
 SHA-256 checksums. It supports the macOS host triple emitted by the release
 runner and refuses unsupported host architectures rather than installing the
-wrong binary. Maintained tap publication, distro packages, and
-installer-managed secret stores are still future packaging work.
+wrong binary. Distro packages and installer-managed secret stores are still
+future packaging work.

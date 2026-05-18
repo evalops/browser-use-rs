@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#60 Publish generated formula to EvalOps Homebrew tap](https://github.com/evalops/browser-use-rs/issues/60)
+- None.
 
 ## Completed Tracks
 
+- [#60 Publish generated formula to EvalOps Homebrew tap](https://github.com/evalops/browser-use-rs/issues/60)
 - [#59 Add OpenRouter app attribution headers](https://github.com/evalops/browser-use-rs/issues/59)
 - [#1 Implement CDP-backed local Chrome sessions](https://github.com/evalops/browser-use-rs/issues/1)
 - [#2 Build CLI, MCP, and conformance release surface](https://github.com/evalops/browser-use-rs/issues/2)

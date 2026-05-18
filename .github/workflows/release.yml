@@ -142,3 +142,10 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/homebrew/browser-use-rs.rb
+
+      - name: Publish Homebrew tap formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+          HOMEBREW_TAP_BRANCH: ${{ vars.HOMEBREW_TAP_BRANCH }}
+        run: packaging/homebrew/publish-tap.sh dist/homebrew/browser-use-rs.rb
