@@ -97,15 +97,18 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, and step-error,
   model-output, model-action, thought, duration, truncated action-history, and
-  screenshot/URL accessors.
+  screenshot/URL accessors. `AgentCheckpoint` export/resume preserves task
+  settings, history, initial-action execution state, and managed filesystem
+  state across a new model/session.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.
 - Scripted agent replay conformance fixtures for schema-guided model output,
   previous-result prompt context, action execution, `done`, serialized
-  history, and managed `FileSystemState` replay through restored prompts,
-  `read_file`, todo context, and extracted-content numbering, with semantic
-  checks for dynamic step timing metadata.
+  history, managed `FileSystemState` replay through restored prompts,
+  `read_file`, todo context, extracted-content numbering, and full
+  `AgentCheckpoint` resume with prior history and initial-action state, with
+  semantic checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
@@ -151,9 +154,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
-- Managed filesystem replay now covers serialized restore into a new agent,
-  restored prompt context, restored `read_file`, todo context, and
-  extracted-content numbering. Remaining filesystem gaps are narrower:
-  upstream's broader `AgentState` checkpoint/resume surface and external
-  lifecycle hooks are not yet exposed as a stable Rust API.
+- Managed filesystem and agent checkpoint replay now cover serialized restore
+  into a new agent, restored prompt context, restored `read_file`, todo
+  context, extracted-content numbering, prior history, and initial-action
+  execution state. Remaining lifecycle gaps are outside the checkpoint surface:
+  upstream's browser/profile event-bus hooks are still broader than the Rust
+  watchdog/session lifecycle.
 - Package publishing is limited to the GitHub release artifact.

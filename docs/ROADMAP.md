@@ -112,7 +112,9 @@ Implemented:
   truncation, upstream-compatible action-result success validation, judgement
   results, per-step error slots, model-output/action/thought accessors,
   truncated action-history helpers, duration helpers, and screenshot/URL
-  helpers.
+  helpers. `AgentCheckpoint` export/resume preserves task settings, history,
+  initial-action execution state, and managed filesystem state across a new
+  model/session.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
@@ -132,7 +134,8 @@ Implemented:
 - Conformance fixtures cover scripted agent replay with schema-guided model
   outputs, previous-result context, browser action execution, `done`,
   serialized history, and managed `FileSystemState` replay through restored
-  prompts, todo context, restored `read_file`, and extracted-content numbering,
+  prompts, todo context, restored `read_file`, extracted-content numbering, and
+  full `AgentCheckpoint` resume with prior history and initial-action state,
   plus semantic step timing metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
@@ -173,9 +176,6 @@ Implemented:
 
 Next:
 
-1. Implement the active full-agent checkpoint/resume API so callers can persist
-   task, settings, history, initial-action state, and managed filesystem state
-   together.
-2. Expand browser-profile security parity with more provider-style lifecycle
+1. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
-3. Expand agent planning depth and replay coverage for longer multi-step tasks.
+2. Expand agent planning depth and replay coverage for longer multi-step tasks.

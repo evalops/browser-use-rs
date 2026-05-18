@@ -96,7 +96,10 @@ includes:
   truncation, upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, step-error,
   model-output/action/thought, duration, action, truncated action-history, and
-  screenshot/URL history accessors.
+  screenshot/URL history accessors. Agents can export a serializable
+  `AgentCheckpoint` and resume it with a new model/session while preserving
+  task settings, history, initial-action execution state, and managed
+  filesystem state.
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output

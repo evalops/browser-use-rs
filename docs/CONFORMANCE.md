@@ -77,3 +77,8 @@ Upstream bumps must include:
   agent prompt context for `<file_system>` and `<todo_contents>`, restored
   `read_file` one-time read-state replay, and extracted-content numbering that
   continues after restore.
+- `agent_checkpoint_replay.json`: deterministic full-agent checkpoint fixture
+  covering normalized managed filesystem state inside the checkpoint,
+  serialized initial actions, prior history/action results, resumed
+  `<file_system>` and `<todo_contents>` prompt context, restored read-state
+  replay, and extracted-content numbering after checkpoint resume.
