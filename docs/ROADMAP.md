@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#63 Reject excluded model actions before execution](https://github.com/evalops/browser-use-rs/issues/63)
+- [#64 Add upstream-style include_recent_events prompt control](https://github.com/evalops/browser-use-rs/issues/64)
 
 ## Completed Tracks
 
+- [#63 Reject excluded model actions before execution](https://github.com/evalops/browser-use-rs/issues/63)
 - [#62 Add upstream-style excluded action schema controls](https://github.com/evalops/browser-use-rs/issues/62)
 - [#61 Harden release browser smoke against Chrome startup flakes](https://github.com/evalops/browser-use-rs/issues/61)
 - [#60 Publish generated formula to EvalOps Homebrew tap](https://github.com/evalops/browser-use-rs/issues/60)
