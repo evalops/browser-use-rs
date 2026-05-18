@@ -4945,6 +4945,12 @@ fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, Accessibilit
         .filter(|node| node.get("ignored").and_then(Value::as_bool) != Some(true))
         .filter_map(|node| {
             let backend_node_id = node.get("backendDOMNodeId").and_then(Value::as_u64)?;
+            let mut properties = ax_node_properties(node);
+            for field in ["value", "description"] {
+                if let Some(value) = ax_node_field_to_string(node, field) {
+                    properties.entry(field.to_owned()).or_insert(value);
+                }
+            }
             Some((
                 backend_node_id,
                 AccessibilityNodeInfo {
@@ -4952,7 +4958,7 @@ fn accessibility_nodes_by_backend_id(tree: &Value) -> BTreeMap<u64, Accessibilit
                     node_id: None,
                     role: ax_property_value(node, "role").map(str::to_owned),
                     name: ax_property_value(node, "name").map(str::to_owned),
-                    properties: ax_node_properties(node),
+                    properties,
                 },
             ))
         })
@@ -4977,7 +4983,15 @@ fn ax_property_value<'a>(node: &'a Value, property: &str) -> Option<&'a str> {
 }
 
 fn ax_property_to_string(property: &Value) -> Option<String> {
-    match property.get("value")?.get("value")? {
+    ax_value_to_string(property.get("value")?)
+}
+
+fn ax_node_field_to_string(node: &Value, field: &str) -> Option<String> {
+    ax_value_to_string(node.get(field)?)
+}
+
+fn ax_value_to_string(value: &Value) -> Option<String> {
+    match value.get("value")? {
         Value::Bool(value) => Some(value.to_string()),
         Value::Number(value) => Some(value.to_string()),
         Value::String(value) => nonempty_value(Some(value)).map(str::to_owned),
@@ -8790,6 +8804,8 @@ mod tests {
                     "backendDOMNodeId": 42,
                     "role": { "type": "role", "value": "button" },
                     "name": { "type": "computedString", "value": "Save settings" },
+                    "value": { "type": "string", "value": "Ready" },
+                    "description": { "type": "computedString", "value": "Primary action" },
                     "properties": [
                         { "name": "expanded", "value": { "type": "boolean", "value": true } },
                         { "name": "valuenow", "value": { "type": "number", "value": 7 } },
@@ -8821,6 +8837,14 @@ mod tests {
         assert_eq!(
             button.properties.get("valuetext").map(String::as_str),
             Some("Seven")
+        );
+        assert_eq!(
+            button.properties.get("value").map(String::as_str),
+            Some("Ready")
+        );
+        assert_eq!(
+            button.properties.get("description").map(String::as_str),
+            Some("Primary action")
         );
         assert!(!nodes.contains_key(&43));
     }

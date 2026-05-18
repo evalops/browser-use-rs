@@ -173,8 +173,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   outside the current page plus attached frame tree remains outside the safe CDP
   boundary documented in `docs/CONFORMANCE.md`.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
-  AX role/name/state/value properties but still uses a pragmatic compact
-  representation rather than full browser-use AX snapshots.
+  AX role/name/state/value properties, top-level AX values, and opt-in AX
+  descriptions, but still uses a pragmatic compact representation rather than
+  full browser-use AX snapshots.
 - Browser/action calls that implicitly create MCP sessions are still in-process
   only and are lost when the stdio server exits.
 - CLI sessions are local registry records; there is not yet a supervised

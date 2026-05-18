@@ -1803,6 +1803,34 @@ mod tests {
     }
 
     #[test]
+    fn ax_description_requires_explicit_include_attribute() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "button".to_owned(),
+            role: None,
+            name: Some("Submit".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([(
+                "description".to_owned(),
+                "Sends the completed form".to_owned(),
+            )]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        assert_eq!(render_element_attributes(&element), "");
+        assert_eq!(
+            render_element_attributes_with_attributes(&element, &["description".to_owned()]),
+            "description=Sends the completed form"
+        );
+    }
+
+    #[test]
     fn llm_representation_can_use_custom_include_attributes() {
         let element = DomElementRef {
             index: 1,
