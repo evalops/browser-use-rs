@@ -41,7 +41,8 @@ Implemented:
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
   resistance, optional IP-address blocking, post-navigation redirect reset to
-  `about:blank`, and newly observed disallowed tab closure.
+  `about:blank`, navigation-capable action-boundary checks, and newly observed
+  disallowed tab closure.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut

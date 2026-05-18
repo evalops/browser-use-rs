@@ -2569,7 +2569,7 @@ impl BrowserSession for CdpBrowserSession {
         }
         self.clear_cached_dom_state().await;
 
-        Ok(())
+        self.enforce_open_tab_url_policy().await
     }
 
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
@@ -2581,12 +2581,13 @@ impl BrowserSession for CdpBrowserSession {
                 )
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => return self.enforce_url_policy_after_settle().await,
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
         }
-        self.evaluate_effect(click_element_js(index)).await
+        self.evaluate_effect(click_element_js(index)).await?;
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
@@ -2606,7 +2607,7 @@ impl BrowserSession for CdpBrowserSession {
                 )
                 .await?;
         }
-        Ok(())
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError> {
@@ -2626,13 +2627,14 @@ impl BrowserSession for CdpBrowserSession {
                 .call_element_function(&element, element_action_function_js(&action))
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => return self.enforce_url_policy_after_settle().await,
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
         }
         self.evaluate_effect(element_action_js(index, &action))
-            .await
+            .await?;
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError> {
@@ -2647,27 +2649,31 @@ impl BrowserSession for CdpBrowserSession {
                     .call_element_function(&element, element_action_function_js(&action))
                     .await
                 {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => return self.enforce_url_policy_after_settle().await,
                     Err(error) if should_fallback_to_index_traversal(&error) => {}
                     Err(error) => return Err(error),
                 }
             }
-            return self
-                .evaluate_effect(element_action_js(index, &action))
-                .await;
+            self.evaluate_effect(element_action_js(index, &action))
+                .await?;
+            return self.enforce_url_policy_after_settle().await;
         }
         self.evaluate_effect(format!(
             "window.scrollBy(0, window.innerHeight * {}); true;",
             pages * direction
         ))
-        .await
+        .await?;
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn find_text(&self, text: &str) -> Result<bool, BrowserError> {
-        self.evaluate_json(&scroll_to_text_js(text)?)
+        let found = self
+            .evaluate_json(&scroll_to_text_js(text)?)
             .await?
             .as_bool()
-            .ok_or_else(|| BrowserError::MissingResponseData("scroll-to-text result".to_owned()))
+            .ok_or_else(|| BrowserError::MissingResponseData("scroll-to-text result".to_owned()))?;
+        self.enforce_url_policy_after_settle().await?;
+        Ok(found)
     }
 
     async fn evaluate(&self, code: &str) -> Result<String, BrowserError> {
@@ -2684,7 +2690,9 @@ impl BrowserSession for CdpBrowserSession {
                 Some(&page.session_id),
             )
             .await?;
-        render_runtime_evaluate_result(&result)
+        let rendered = render_runtime_evaluate_result(&result)?;
+        self.enforce_url_policy_after_settle().await?;
+        Ok(rendered)
     }
 
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
@@ -2712,13 +2720,14 @@ impl BrowserSession for CdpBrowserSession {
                 .call_element_function(&element, element_function_js(&body))
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => return self.enforce_url_policy_after_settle().await,
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
         }
         self.evaluate_effect(select_dropdown_option_js(index, text)?)
-            .await
+            .await?;
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn page_text(&self) -> Result<String, BrowserError> {
@@ -2823,7 +2832,7 @@ JSON.stringify((() => {{
                         .await?;
                 }
             }
-            return Ok(());
+            return self.enforce_url_policy_after_settle().await;
         }
 
         if is_special_key(&normalized_keys) {
@@ -2854,7 +2863,7 @@ JSON.stringify((() => {{
                     Some(&page.session_id),
                 )
                 .await?;
-            return Ok(());
+            return self.enforce_url_policy_after_settle().await;
         }
 
         self.connection
@@ -2866,7 +2875,7 @@ JSON.stringify((() => {{
                 Some(&page.session_id),
             )
             .await?;
-        Ok(())
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError> {
@@ -2977,14 +2986,15 @@ JSON.stringify((() => {{
                     .call_element_function(element, element_function_js(finish_upload_body))
                     .await
                 {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => return self.enforce_url_policy_after_settle().await,
                     Err(error) if should_fallback_to_index_traversal(&error) => {}
                     Err(error) => return Err(error),
                 }
             }
         }
         self.evaluate_effect(element_eval_js(index, finish_upload_body))
-            .await
+            .await?;
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
@@ -4969,6 +4979,53 @@ mod tests {
             tabs.iter().all(|tab| tab.target_id != blocked_target_id),
             "blocked tab still open: {tabs:?}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_rejects_disallowed_new_tab_from_click_action() {
+        let profile = BrowserProfile {
+            block_ip_addresses: true,
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>blocked click</title></head><body><a id='blocked' target='_blank' href='http://127.0.0.1:1/popup'>Blocked popup</a></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate allowed data page");
+        sleep(Duration::from_millis(100)).await;
+        let state = session.state(false).await.expect("initial state");
+        let index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|id| id == "blocked")
+            })
+            .expect("blocked link")
+            .index;
+
+        let error = session
+            .click(index)
+            .await
+            .expect_err("click should enforce blocked popup policy");
+
+        assert!(matches!(
+            error,
+            BrowserError::NavigationBlocked { ref url, ref reason }
+                if url.starts_with("http://127.0.0.1:1/popup")
+                    && reason == "ip_address_blocked"
+        ));
     }
 
     #[tokio::test]

@@ -18,8 +18,9 @@ browser-use where compatibility is claimed.
    prompt attributes, selector maps, iframes, hidden elements, dropdowns, ARIA
    widget roles, and accessibility names.
 3. Browser actions: navigation, URL access policy guards for explicit
-   navigation, redirects, and new tabs, search, click, input, scroll, keyboard,
-   tab switching, downloads, screenshots, and PDF output.
+   navigation, action boundaries, redirects, and new tabs, search, click,
+   input, scroll, keyboard, tab switching, downloads, screenshots, and PDF
+   output.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, prompt attribute settings, extraction
    metadata, per-step timing metadata, done semantics, and final history.
