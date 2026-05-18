@@ -118,7 +118,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   override/extension controls, upstream-style prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, and step-error,
-  model-output, model-action, thought, duration, truncated action-history, and
+  model-output, model-action, thought, duration, truncated action-history,
+  interacted-element action-history metadata for indexed actions, and
   screenshot/URL accessors. `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.
@@ -181,6 +182,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   state surfaces by default; the compact DOM carries the browser-use AX fields
   needed for action selection, evaluator context, hidden/disabled suppression,
   and conformance fixtures.
+- Agent history now captures compact interacted-element metadata for indexed
+  actions; full rerun execution and current-page rematching from that history
+  remain outside this release slice.
 - CLI sessions are local registry records; there is not yet a supervised
   background service that owns their lifecycle. Session `status` reports
   registry liveness, but it does not restart stale browser processes.

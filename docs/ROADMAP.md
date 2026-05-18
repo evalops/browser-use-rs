@@ -5,7 +5,6 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#38 Capture interacted element metadata in agent history](https://github.com/evalops/browser-use-rs/issues/38)
 - [#39 Add daemon-owned session supervision and stale cleanup](https://github.com/evalops/browser-use-rs/issues/39)
 
 ## Completed Tracks
@@ -42,6 +41,7 @@ small pushed checkpoints as each surface becomes real.
 - [#35 Expand accessibility snapshot parity](https://github.com/evalops/browser-use-rs/issues/35)
 - [#36 Persist implicit MCP session_id launches](https://github.com/evalops/browser-use-rs/issues/36)
 - [#37 Report persistent session liveness in registry outputs](https://github.com/evalops/browser-use-rs/issues/37)
+- [#38 Capture interacted element metadata in agent history](https://github.com/evalops/browser-use-rs/issues/38)
 
 ## Current Checkpoint
 
@@ -148,8 +148,9 @@ Implemented:
   last-result completion helpers, upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation, judgement
   results, per-step error slots, model-output/action/thought accessors,
-  truncated action-history helpers, duration helpers, and screenshot/URL
-  helpers. `AgentCheckpoint` export/resume preserves task settings, history,
+  truncated action-history helpers, interacted-element action-history metadata
+  for indexed actions, duration helpers, and screenshot/URL helpers.
+  `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
@@ -218,9 +219,6 @@ Implemented:
 
 Next:
 
-1. Continue [#38](https://github.com/evalops/browser-use-rs/issues/38) by
-   carrying upstream-style interacted-element metadata into agent history
-   artifacts for indexed actions.
-2. Continue [#39](https://github.com/evalops/browser-use-rs/issues/39) by
+1. Continue [#39](https://github.com/evalops/browser-use-rs/issues/39) by
    adding daemon-owned session supervision and stale record cleanup beyond
    read-time liveness annotation.
