@@ -213,8 +213,9 @@ templates live under `packaging/`; see
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.
 - History replay is exposed through the one-shot CLI, persistent CLI sessions,
-  and the MCP/daemon tool surface. DOM recapture and rematching between
-  replayed actions remain tracked separately.
+  and the MCP/daemon tool surface. Browser-backed replay runs recapture state
+  between non-terminating actions and rematch later indexed actions against the
+  latest DOM.
 - Persistent session `status` is a registry liveness hint, not a supervisor;
   stale records can be removed with `session cleanup`, but stale browser
   processes are not automatically restarted.

@@ -134,8 +134,9 @@ includes:
   limits, stagnant-page loop-awareness, interacted-element rematching,
   action-level replay remapping diagnostics, rematched replay-plan construction,
   generic and browser-guarded replay execution diagnostics, current-state
-  `AgentHistoryReplayRun` orchestration, a replay-run JSON conformance fixture,
-  replay-run JSON Schema snapshot, file artifacts, and final `done`.
+  `AgentHistoryReplayRun` orchestration with DOM recapture between replay
+  actions, a replay-run JSON conformance fixture, replay-run JSON Schema
+  snapshot, file artifacts, and final `done`.
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output

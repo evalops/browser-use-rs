@@ -199,10 +199,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   actions and exposes current-page rematching plus action-level replay
   remapping diagnostics, replay-plan construction, generic replay-plan
   execution, and browser-backed replay-plan execution that honors the live
-  URL-change guard. Browser executors can capture the current DOM and return a
-  replay run with the captured state, plan, and guarded execution result. DOM
-  recapture and rematching between replayed actions remain outside this release
-  slice; the public replay-run JSON shape is pinned by conformance fixture.
+  URL-change guard. Browser executors can capture the current DOM, recapture
+  state between non-terminating replay actions, rematch later indexed actions
+  against the latest DOM, and return a replay run with the captured state, plan,
+  and guarded execution result. The public replay-run JSON shape is pinned by
+  conformance fixture.
   Replay is exposed through the one-shot CLI, persistent CLI sessions, and the
   MCP/daemon tool surface.
 - CLI sessions are local registry records. Session `status` reports registry

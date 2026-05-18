@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#54 Recapture and rematch DOM state between replay actions](https://github.com/evalops/browser-use-rs/issues/54)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -55,6 +55,7 @@ small pushed checkpoints as each surface becomes real.
 - [#51 Expose AgentHistoryReplayRun JSON Schema](https://github.com/evalops/browser-use-rs/issues/51)
 - [#52 Replay AgentHistory against persistent CLI sessions](https://github.com/evalops/browser-use-rs/issues/52)
 - [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
+- [#54 Recapture and rematch DOM state between replay actions](https://github.com/evalops/browser-use-rs/issues/54)
 
 ## Current Checkpoint
 
@@ -167,9 +168,11 @@ Implemented:
   actions, rematched replay-plan construction from saved `AgentHistory`,
   replay-plan execution through generic and browser-backed action executors
   with per-action, error, and page-change diagnostics, and current-state
-  `AgentHistoryReplayRun` orchestration that returns captured state, plan, and
-  execution diagnostics covered by a serialized conformance fixture, plus
-  duration and screenshot/URL helpers.
+  `AgentHistoryReplayRun` orchestration that recaptures DOM state between
+  browser-backed replay actions, rematches later indexed actions against the
+  latest DOM, and returns captured state, plan, and execution diagnostics
+  covered by a serialized conformance fixture, plus duration and screenshot/URL
+  helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -242,9 +245,10 @@ Implemented:
   helpers can remap saved history and execute the resulting action plan through
   generic or browser-backed action-executor boundaries while preserving
   step/action diagnostics and the live executor's URL-change guard. Browser
-  executors can also capture the current DOM and return a replay run containing
-  the captured state, plan, and guarded execution result, with the public JSON
-  shape pinned by `agent_history_replay_run.json`.
+  executors can also capture the current DOM, recapture state between replay
+  actions, rematch later indexed actions against the latest DOM, and return a
+  replay run containing the captured state, plan, and guarded execution result,
+  with the public JSON shape pinned by `agent_history_replay_run.json`.
 
 Next:
 
