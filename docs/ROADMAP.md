@@ -6,11 +6,11 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - None at the moment. The next parity slice should be selected from upstream
-  drift after #77 lands and CI is green.
+  drift after #78 lands and CI is green.
 
 ## Completed Tracks
 
-- [#77 Add Browser Use Cloud stop lifecycle](https://github.com/evalops/browser-use-rs/issues/77)
+- [#78 Add Browser Use Cloud stop session contract](https://github.com/evalops/browser-use-rs/issues/78)
 - [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
 - [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
 - [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
@@ -123,9 +123,11 @@ Implemented:
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
 - Browser Use Cloud creation and stop request/response contracts, including
-  `BROWSER_USE_API_KEY`/explicit-key client support, current-session tracking,
-  `cdpUrl` to CDP endpoint conversion, and upstream-compatible omitted/null/
-  country proxy-country serialization.
+  `BROWSER_USE_API_KEY`/explicit-key client support, current-session tracking
+  after create, explicit or current-session stop requests, auth errors,
+  missing-session errors, current-session cleanup on successful stop or 404,
+  `cdpUrl` to CDP endpoint conversion, and upstream-compatible
+  omitted/null/country proxy-country serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
