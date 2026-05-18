@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#98 Add upstream add_new_task follow-up control](https://github.com/evalops/browser-use-rs/issues/98)
+- Next upstream parity slice after #98 lands and CI is green.
 
 ## Completed Tracks
 
+- [#98 Add upstream add_new_task follow-up control](https://github.com/evalops/browser-use-rs/issues/98)
 - [#96 Add upstream pause/resume agent state](https://github.com/evalops/browser-use-rs/issues/96)
 - [#97 Add upstream judge_llm routing](https://github.com/evalops/browser-use-rs/issues/97)
 - [#94 Add upstream page_extraction_llm routing](https://github.com/evalops/browser-use-rs/issues/94)
@@ -205,7 +206,8 @@ Implemented:
   step-zero navigation, sync and async new-step/done callbacks,
   callback-driven stop checks, explicit programmatic stop with reasoned stop
   errors, upstream-style pause/resume control state with checkpoint
-  preservation, max-step, max-failure handling,
+  preservation, upstream-style continuous follow-up task updates via
+  `add_new_task`, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
   per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
   `action_timeout_seconds`, validated `llm_screenshot_size` prompt-only PNG

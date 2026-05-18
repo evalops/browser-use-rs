@@ -130,7 +130,8 @@ includes:
   upstream-style initial actions, upstream-style max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,
   reasoned programmatic stop errors, pause/resume control state with checkpoint
-  preservation, page-change guards, normalized
+  preservation, continuous follow-up task updates via `add_new_task`,
+  page-change guards, normalized
   repeated-action loop detection,
   loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
