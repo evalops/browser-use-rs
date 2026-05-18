@@ -63,6 +63,10 @@ pub struct AgentSettings {
     pub available_file_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sensitive_data: BTreeMap<String, SensitiveDataValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_system_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extend_system_message: Option<String>,
 }
 
 impl Default for AgentSettings {
@@ -86,6 +90,8 @@ impl Default for AgentSettings {
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
             sensitive_data: BTreeMap::new(),
+            override_system_message: None,
+            extend_system_message: None,
         }
     }
 }
@@ -2368,16 +2374,7 @@ pub fn build_step_request(
     append_latest_action_result_images(&mut user_content, history);
     Ok(ChatRequest {
         messages: vec![
-            ChatMessage::text(
-                MessageRole::System,
-                format!(
-                    "You are controlling a browser. Return a JSON object matching AgentOutput. \
-	                     Use at most {} actions in this step. Avoid repeating the same action \
-	                     sequence; if the browser is not changing, choose a different strategy \
-	                     or finish with done.",
-                    settings.max_actions_per_step
-                ),
-            ),
+            ChatMessage::text(MessageRole::System, render_system_message(settings)),
             ChatMessage {
                 role: MessageRole::User,
                 content: user_content,
@@ -2385,6 +2382,28 @@ pub fn build_step_request(
         ],
         output_schema: Some(schema_for_agent_output_with_settings(settings)),
     })
+}
+
+fn render_system_message(settings: &AgentSettings) -> String {
+    let mut message = settings.override_system_message.clone().unwrap_or_else(|| {
+        format!(
+            "You are controlling a browser. Return a JSON object matching AgentOutput. \
+	         Use at most {} actions in this step. Avoid repeating the same action \
+	         sequence; if the browser is not changing, choose a different strategy \
+	         or finish with done.",
+            settings.max_actions_per_step
+        )
+    });
+    if let Some(extension) = settings
+        .extend_system_message
+        .as_deref()
+        .filter(|extension| !extension.is_empty())
+    {
+        message.push('\n');
+        message.push_str(extension);
+    }
+
+    message
 }
 
 fn build_final_response_after_failure_request(
@@ -3229,6 +3248,8 @@ mod tests {
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
         assert!(settings.sensitive_data.is_empty());
+        assert_eq!(settings.override_system_message, None);
+        assert_eq!(settings.extend_system_message, None);
     }
 
     #[test]
@@ -5818,6 +5839,61 @@ mod tests {
         ));
         assert!(user_text.contains("<agent_state>"));
         assert!(user_text.contains("</agent_state>"));
+    }
+
+    #[test]
+    fn step_request_honors_system_message_override_and_extension() {
+        let extended_settings = AgentSettings {
+            max_actions_per_step: 2,
+            extend_system_message: Some("Prefer stable selectors when possible.".to_owned()),
+            ..AgentSettings::default()
+        };
+        let request = build_step_request(
+            "inspect",
+            &blank_state(),
+            &AgentHistory::default(),
+            &extended_settings,
+        )
+        .expect("step request");
+        let system_text = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::System)
+            .and_then(|message| match &message.content[0] {
+                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::ImageUrl { .. } => None,
+            })
+            .expect("system message");
+
+        assert!(system_text.contains("Use at most 2 actions"));
+        assert!(system_text.contains("Prefer stable selectors when possible."));
+
+        let override_settings = AgentSettings {
+            override_system_message: Some("Return only the agreed JSON contract.".to_owned()),
+            extend_system_message: Some("Prefer compact actions.".to_owned()),
+            ..AgentSettings::default()
+        };
+        let request = build_step_request(
+            "inspect",
+            &blank_state(),
+            &AgentHistory::default(),
+            &override_settings,
+        )
+        .expect("step request");
+        let system_text = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::System)
+            .and_then(|message| match &message.content[0] {
+                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::ImageUrl { .. } => None,
+            })
+            .expect("system message");
+
+        assert_eq!(
+            system_text,
+            "Return only the agreed JSON contract.\nPrefer compact actions."
+        );
     }
 
     #[test]

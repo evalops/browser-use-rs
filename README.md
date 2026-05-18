@@ -54,16 +54,17 @@ includes:
   and limits, clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
   prompt sections, upstream-style available-file-path and sensitive-data
-  placeholder context, upstream-style prompt context and error truncation,
-  upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results, step-error,
-  model-output/action/thought, duration, action, and URL history accessors, and
-  history.
+  placeholder context, system-message override/extension controls,
+  upstream-style prompt context and error truncation, upstream-style last-result
+  completion helpers, upstream-compatible action-result success validation,
+  judgement results, step-error, model-output/action/thought, duration, action,
+  and URL history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
-  bearer/header auth, persistent session registry, typed MCP agent settings,
-  and conformance fixtures.
+  bearer/header auth, persistent session registry, typed MCP/CLI agent settings
+  including available-file-path and sensitive-data placeholder context plus
+  system-message control, and conformance fixtures.
 
 ## Design Rules
 

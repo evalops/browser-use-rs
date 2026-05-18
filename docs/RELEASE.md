@@ -52,10 +52,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   limits, clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
   prompt sections, upstream-style available-file-path and sensitive-data
-  placeholder context, upstream-style prompt context/error truncation, typed
-  upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results, and step-error,
-  model-output, model-action, thought, duration, and URL accessors.
+  placeholder context, system-message override/extension controls,
+  upstream-style prompt context/error truncation, typed upstream-style
+  last-result completion helpers, upstream-compatible action-result success
+  validation, judgement results, and step-error, model-output, model-action,
+  thought, duration, and URL accessors.
 - Schema-guided extraction results include structured metadata with schema,
   partial status, content statistics, link/image counts, and de-duplication
   counts.
@@ -64,8 +65,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   history, with semantic checks for dynamic step timing metadata.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests.
-- CLI one-shot commands plus `actions`, `agent` with typed settings flags,
-  `mcp-tools`, `mcp-stdio`, and local persistent `session` commands.
+- CLI one-shot commands plus `actions`, `agent` with typed settings flags
+  including available-file-path and sensitive-data placeholder context plus
+  system-message control, `mcp-tools`, `mcp-stdio`, and local persistent
+  `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including typed
   `AgentSettings`, in-process session reuse by `session_id`, and reconnection
   to persistent CLI session records.

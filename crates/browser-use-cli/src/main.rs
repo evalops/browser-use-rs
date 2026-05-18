@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
-use browser_use_core::{AgentSettings, BrowserActionExecutor};
+use browser_use_core::{AgentSettings, BrowserActionExecutor, SensitiveDataValue};
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
 };
@@ -135,6 +135,14 @@ enum Command {
         include_attributes: Vec<String>,
         #[arg(long = "available-file-path")]
         available_file_paths: Vec<String>,
+        #[arg(long = "sensitive-data", value_parser = parse_sensitive_data_entry)]
+        sensitive_data: Vec<SensitiveDataEntry>,
+        #[arg(long = "sensitive-data-domain", value_parser = parse_domain_sensitive_data_entry)]
+        sensitive_data_domains: Vec<DomainSensitiveDataEntry>,
+        #[arg(long)]
+        override_system_message: Option<String>,
+        #[arg(long)]
+        extend_system_message: Option<String>,
     },
 }
 
@@ -318,6 +326,10 @@ async fn main() -> anyhow::Result<()> {
             max_clickable_elements_length,
             include_attributes,
             available_file_paths,
+            sensitive_data,
+            sensitive_data_domains,
+            override_system_message,
+            extend_system_message,
         }) => {
             let llm = configured_chat_model(provider, api_key, model, base_url)?;
             let session = launch_and_navigate(&url).await?;
@@ -339,6 +351,10 @@ async fn main() -> anyhow::Result<()> {
                 max_clickable_elements_length,
                 include_attributes,
                 available_file_paths,
+                sensitive_data,
+                sensitive_data_domains,
+                override_system_message,
+                extend_system_message,
             });
             let mut agent = browser_use_core::Agent::with_settings(task, settings, llm, session);
             let history = agent.run(max_steps).await?;
@@ -385,6 +401,10 @@ struct CliAgentSettingsArgs {
     max_clickable_elements_length: Option<usize>,
     include_attributes: Vec<String>,
     available_file_paths: Vec<String>,
+    sensitive_data: Vec<SensitiveDataEntry>,
+    sensitive_data_domains: Vec<DomainSensitiveDataEntry>,
+    override_system_message: Option<String>,
+    extend_system_message: Option<String>,
 }
 
 fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
@@ -435,8 +455,88 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     settings.include_attributes = args.include_attributes;
     settings.available_file_paths = args.available_file_paths;
+    settings.sensitive_data = cli_sensitive_data(args.sensitive_data, args.sensitive_data_domains);
+    settings.override_system_message = args.override_system_message;
+    settings.extend_system_message = args.extend_system_message;
 
     settings
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SensitiveDataEntry {
+    placeholder: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DomainSensitiveDataEntry {
+    domain_pattern: String,
+    placeholder: String,
+    value: String,
+}
+
+fn parse_sensitive_data_entry(value: &str) -> Result<SensitiveDataEntry, String> {
+    let (placeholder, secret) = value
+        .split_once('=')
+        .ok_or_else(|| "expected placeholder=value".to_owned())?;
+    let placeholder = placeholder.trim();
+    if placeholder.is_empty() {
+        return Err("placeholder cannot be empty".to_owned());
+    }
+
+    Ok(SensitiveDataEntry {
+        placeholder: placeholder.to_owned(),
+        value: secret.to_owned(),
+    })
+}
+
+fn parse_domain_sensitive_data_entry(value: &str) -> Result<DomainSensitiveDataEntry, String> {
+    let (domain_pattern, rest) = value
+        .split_once('=')
+        .ok_or_else(|| "expected domain-pattern=placeholder=value".to_owned())?;
+    let domain_pattern = domain_pattern.trim();
+    if domain_pattern.is_empty() {
+        return Err("domain pattern cannot be empty".to_owned());
+    }
+    let (placeholder, secret) = rest
+        .split_once('=')
+        .ok_or_else(|| "expected domain-pattern=placeholder=value".to_owned())?;
+    let placeholder = placeholder.trim();
+    if placeholder.is_empty() {
+        return Err("placeholder cannot be empty".to_owned());
+    }
+
+    Ok(DomainSensitiveDataEntry {
+        domain_pattern: domain_pattern.to_owned(),
+        placeholder: placeholder.to_owned(),
+        value: secret.to_owned(),
+    })
+}
+
+fn cli_sensitive_data(
+    entries: Vec<SensitiveDataEntry>,
+    domain_entries: Vec<DomainSensitiveDataEntry>,
+) -> BTreeMap<String, SensitiveDataValue> {
+    let mut sensitive_data = BTreeMap::new();
+    for entry in entries {
+        sensitive_data.insert(entry.placeholder, SensitiveDataValue::Value(entry.value));
+    }
+    for entry in domain_entries {
+        let value = sensitive_data
+            .entry(entry.domain_pattern)
+            .or_insert_with(|| SensitiveDataValue::Domain(BTreeMap::new()));
+        let SensitiveDataValue::Domain(values) = value else {
+            *value = SensitiveDataValue::Domain(BTreeMap::new());
+            let SensitiveDataValue::Domain(values) = value else {
+                unreachable!("domain value was just inserted");
+            };
+            values.insert(entry.placeholder, entry.value);
+            continue;
+        };
+        values.insert(entry.placeholder, entry.value);
+    }
+
+    sensitive_data
 }
 
 async fn start_persistent_session(
@@ -1264,6 +1364,16 @@ mod tests {
             "/tmp/report.pdf",
             "--available-file-path",
             "/tmp/chart.png",
+            "--sensitive-data",
+            "username=evalops@example.test",
+            "--sensitive-data",
+            "api_key=sk=value",
+            "--sensitive-data-domain",
+            "*.example.test=password=super-secret",
+            "--override-system-message",
+            "Custom system prompt.",
+            "--extend-system-message",
+            "Add selector guidance.",
         ])
         .expect("agent settings flags should parse");
 
@@ -1288,6 +1398,10 @@ mod tests {
                 max_clickable_elements_length,
                 include_attributes,
                 available_file_paths,
+                sensitive_data,
+                sensitive_data_domains,
+                override_system_message,
+                extend_system_message,
                 ..
             } => {
                 assert_eq!(provider, LlmProvider::OpenAiCompatible);
@@ -1309,9 +1423,64 @@ mod tests {
                 assert_eq!(max_clickable_elements_length, Some(8000));
                 assert_eq!(include_attributes, ["data-testid", "aria-label"]);
                 assert_eq!(available_file_paths, ["/tmp/report.pdf", "/tmp/chart.png"]);
+                assert_eq!(
+                    sensitive_data,
+                    [
+                        SensitiveDataEntry {
+                            placeholder: "username".to_owned(),
+                            value: "evalops@example.test".to_owned()
+                        },
+                        SensitiveDataEntry {
+                            placeholder: "api_key".to_owned(),
+                            value: "sk=value".to_owned()
+                        }
+                    ]
+                );
+                assert_eq!(
+                    sensitive_data_domains,
+                    [DomainSensitiveDataEntry {
+                        domain_pattern: "*.example.test".to_owned(),
+                        placeholder: "password".to_owned(),
+                        value: "super-secret".to_owned()
+                    }]
+                );
+                assert_eq!(
+                    override_system_message.as_deref(),
+                    Some("Custom system prompt.")
+                );
+                assert_eq!(
+                    extend_system_message.as_deref(),
+                    Some("Add selector guidance.")
+                );
             }
             _ => panic!("expected agent command"),
         }
+    }
+
+    #[test]
+    fn rejects_malformed_sensitive_data_flags() {
+        assert!(
+            Cli::try_parse_from([
+                "browser-use-rs",
+                "agent",
+                "https://example.com",
+                "test task",
+                "--sensitive-data",
+                "username",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "browser-use-rs",
+                "agent",
+                "https://example.com",
+                "test task",
+                "--sensitive-data-domain",
+                "*.example.test=password",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1334,6 +1503,24 @@ mod tests {
             max_clickable_elements_length: Some(8000),
             include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
             available_file_paths: vec!["/tmp/report.pdf".to_owned(), "/tmp/chart.png".to_owned()],
+            sensitive_data: vec![SensitiveDataEntry {
+                placeholder: "username".to_owned(),
+                value: "evalops@example.test".to_owned(),
+            }],
+            sensitive_data_domains: vec![
+                DomainSensitiveDataEntry {
+                    domain_pattern: "*.example.test".to_owned(),
+                    placeholder: "password".to_owned(),
+                    value: "super-secret".to_owned(),
+                },
+                DomainSensitiveDataEntry {
+                    domain_pattern: "*.example.test".to_owned(),
+                    placeholder: "otp".to_owned(),
+                    value: "123456".to_owned(),
+                },
+            ],
+            override_system_message: Some("Custom system prompt.".to_owned()),
+            extend_system_message: Some("Add selector guidance.".to_owned()),
         });
 
         assert!(!settings.use_vision);
@@ -1355,6 +1542,27 @@ mod tests {
         assert_eq!(
             settings.available_file_paths,
             ["/tmp/report.pdf", "/tmp/chart.png"]
+        );
+        assert_eq!(
+            settings.sensitive_data.get("username"),
+            Some(&SensitiveDataValue::Value(
+                "evalops@example.test".to_owned()
+            ))
+        );
+        assert_eq!(
+            settings.sensitive_data.get("*.example.test"),
+            Some(&SensitiveDataValue::Domain(BTreeMap::from([
+                ("otp".to_owned(), "123456".to_owned()),
+                ("password".to_owned(), "super-secret".to_owned())
+            ])))
+        );
+        assert_eq!(
+            settings.override_system_message.as_deref(),
+            Some("Custom system prompt.")
+        );
+        assert_eq!(
+            settings.extend_system_message.as_deref(),
+            Some("Add selector guidance.")
         );
     }
 

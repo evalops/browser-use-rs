@@ -62,11 +62,11 @@ Implemented:
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
   agent-history/agent-state/browser-state prompt sections, upstream-style
-  available-file-path and sensitive-data placeholder context, upstream-style
-  last-result completion helpers, upstream-style prompt context/error truncation,
-  upstream-compatible action-result success validation, judgement results,
-  per-step error slots, model-output/action/thought accessors, duration helpers,
-  and URL helpers.
+  available-file-path and sensitive-data placeholder context, system-message
+  override/extension controls, upstream-style last-result completion helpers,
+  upstream-style prompt context/error truncation, upstream-compatible
+  action-result success validation, judgement results, per-step error slots,
+  model-output/action/thought accessors, duration helpers, and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
@@ -74,6 +74,8 @@ Implemented:
   agent settings flags.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs with typed agent settings.
+- CLI agent settings expose available-file-path and sensitive-data placeholder
+  context plus system-message override/extension.
 - Local TCP newline-delimited JSON-RPC daemon and HTTP JSON-RPC daemon exposing
   the same MCP tools as stdio, including health checks and optional HTTP auth.
 - Conformance fixtures cover a scripted agent replay with schema-guided model

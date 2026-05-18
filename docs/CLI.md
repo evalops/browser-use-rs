@@ -87,8 +87,14 @@ tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
 `--planning-exploration-limit`, `--max-history-items`,
 `--max-clickable-elements-length`, repeated `--include-attribute <name>` for
 prompt-visible DOM attributes, and repeated `--available-file-path <path>` for
-upstream-style file-path context in the agent prompt. By default, when repeated
-model/provider failures hit `--max-failures`, the agent makes one last
+upstream-style file-path context in the agent prompt. Use repeated
+`--sensitive-data <placeholder=value>` for global sensitive placeholders, and
+repeated `--sensitive-data-domain <domain-pattern=placeholder=value>` for
+domain-scoped placeholders. Sensitive values are replaced during action
+execution while prompt context shows only placeholder names. Use
+`--override-system-message` to replace the default system prompt or
+`--extend-system-message` to append extra instructions to it. By default, when
+repeated model/provider failures hit `--max-failures`, the agent makes one last
 side-effect-free `done`-only model call so it can return any partial findings
 with `success=false`.
 
