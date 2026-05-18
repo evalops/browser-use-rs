@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None.
+- [#61 Harden release browser smoke against Chrome startup flakes](https://github.com/evalops/browser-use-rs/issues/61)
 
 ## Completed Tracks
 
