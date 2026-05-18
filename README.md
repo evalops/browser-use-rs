@@ -128,9 +128,9 @@ includes:
   placeholder context with `bu_2fa_code` TOTP generation, system-message
   override/extension controls, upstream-style prompt context and error
   truncation, upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results,
-  contract-preserved `generate_gif`, `calculate_cost`, and
-  `include_tool_call_examples` settings, step-error,
+  action-result success validation, judgement results, runtime `generate_gif`
+  GIF artifact output from recorded screenshots, contract-preserved
+  `calculate_cost` and `include_tool_call_examples` settings, step-error,
   model-output/action/thought, duration, action, model-action and truncated
   action-history interacted-element metadata, and screenshot/URL history
   accessors. Agents can export a serializable

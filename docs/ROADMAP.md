@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #72 lands and CI is green.
+- [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
 
 ## Completed Tracks
 
@@ -189,8 +188,9 @@ Implemented:
   last-result completion helpers, upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation,
   upstream-style judge trace validation and judgement results, per-step error
-  slots, contract-preserved `generate_gif`, `calculate_cost`, and
-  `include_tool_call_examples` settings, upstream-style message compaction
+  slots, runtime `generate_gif` GIF artifact output from recorded screenshots,
+  contract-preserved `calculate_cost` and `include_tool_call_examples` settings,
+  upstream-style message compaction
   settings with non-fatal summary requests, compacted-memory prompt blocks, and
   checkpoint preservation, model-output/action/thought accessors,
   model-action and truncated action-history interacted-element metadata for

@@ -86,9 +86,11 @@ contract-preserved `generate_gif`, `calculate_cost`, and
 `include_tool_call_examples` flags,
 available file-path and sensitive-data prompt context, opt-in recent browser
 events, and system-message override/extension fields.
-GIF rendering and token-cost accounting side effects remain explicit later
-runtime parity slices; the MCP schema accepts and round-trips the upstream
-settings shape now.
+When `generate_gif` is enabled, successful agent runs write an agent-history
+GIF from recorded screenshots to `agent_history.gif` or the provided path.
+Token-cost accounting and tool-call example prompt side effects remain explicit
+later runtime parity slices; the MCP schema accepts and round-trips the
+upstream settings shape now.
 Message compaction accepts `true`, `false`, `null`, or a settings object with
 `compact_every_n_steps`, `trigger_char_count` or `trigger_token_count`,
 `chars_per_token`, `keep_last_items`, `summary_max_chars`, and

@@ -168,10 +168,12 @@ history exceeds the character floor, keeps the first item plus recent tail, and
 continues without failing the run if the summary request fails. The compacted
 memory block is explicitly marked as unverified context so the model does not
 claim prior work as completed unless it confirms that work in the active run.
-`--generate-gif`, `--calculate-cost`, and `--include-tool-call-examples`
-preserve upstream `AgentSettings` contract flags for migrating callers; GIF
-rendering and token-cost side effects are tracked as separate runtime parity
-slices.
+`--generate-gif[=<path>]` writes an agent-history GIF after successful runs
+when recorded screenshots are available; without a path it uses
+`agent_history.gif`. `--calculate-cost` and `--include-tool-call-examples`
+preserve upstream `AgentSettings` contract flags for migrating callers; token
+cost accounting and tool-call example prompt side effects are tracked as
+separate runtime parity slices.
 Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns

@@ -4579,6 +4579,8 @@ pub enum AgentRunError {
     ConversationEncoding { encoding: String },
     #[error("conversation transcript encoding {encoding:?} cannot represent the transcript text")]
     ConversationEncodingLossy { encoding: String },
+    #[error("failed to save agent GIF at {path}: {message}")]
+    GifSave { path: String, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -4709,8 +4711,7 @@ where
             .last()
             .is_some_and(|item| item.result.iter().any(|result| result.is_done))
         {
-            self.maybe_judge_done_result().await;
-            return Ok(&self.history);
+            return self.finish_successful_run().await;
         }
 
         for _ in 0..max_steps {
@@ -4729,8 +4730,7 @@ where
             };
 
             if is_done {
-                self.maybe_judge_done_result().await;
-                return Ok(&self.history);
+                return self.finish_successful_run().await;
             }
 
             if self.settings.loop_detection_enabled
@@ -4750,8 +4750,7 @@ where
                             .await?;
                         let final_is_done = final_item.result.iter().any(|result| result.is_done);
                         if final_is_done {
-                            self.maybe_judge_done_result().await;
-                            return Ok(&self.history);
+                            return self.finish_successful_run().await;
                         }
                     }
                     return Err(AgentRunError::MaxFailuresExceeded {
@@ -5033,6 +5032,16 @@ where
         })
     }
 
+    fn save_history_gif(&self) -> Result<(), AgentRunError> {
+        let Some(path) = generate_gif_output_path(&self.settings.generate_gif) else {
+            return Ok(());
+        };
+        write_history_gif(&self.history, &path).map_err(|message| AgentRunError::GifSave {
+            path: path.display().to_string(),
+            message,
+        })
+    }
+
     async fn maybe_judge_done_result(&mut self) {
         if !self.settings.use_judge || !self.history.is_done() {
             return;
@@ -5063,6 +5072,12 @@ where
         {
             result.judgement = Some(judgement);
         }
+    }
+
+    async fn finish_successful_run(&mut self) -> Result<&AgentHistory, AgentRunError> {
+        self.maybe_judge_done_result().await;
+        self.save_history_gif()?;
+        Ok(&self.history)
     }
 
     async fn maybe_compact_history(&mut self) -> bool {
@@ -5178,6 +5193,68 @@ fn encode_conversation_snapshot(
         });
     }
     Ok(bytes.into_owned())
+}
+
+fn generate_gif_output_path(generate_gif: &GenerateGif) -> Option<std::path::PathBuf> {
+    match generate_gif {
+        GenerateGif::Disabled => None,
+        GenerateGif::Enabled => Some(std::path::PathBuf::from("agent_history.gif")),
+        GenerateGif::Path(path) => Some(expand_user_path(path)),
+    }
+}
+
+fn write_history_gif(history: &AgentHistory, path: &std::path::Path) -> Result<(), String> {
+    let mut frames = Vec::new();
+    for screenshot in history.screenshots(None, false).into_iter().flatten() {
+        if let Some(frame) = decode_gif_frame(&screenshot)? {
+            frames.push(frame);
+        }
+    }
+    if frames.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    let mut encoder = image::codecs::gif::GifEncoder::new(file);
+    encoder
+        .set_repeat(image::codecs::gif::Repeat::Infinite)
+        .map_err(|error| error.to_string())?;
+    let (target_width, target_height) = frames[0].dimensions();
+    for frame in frames {
+        if frame.width() != target_width || frame.height() != target_height {
+            continue;
+        }
+        let delay = image::Delay::from_numer_denom_ms(3000, 1);
+        encoder
+            .encode_frame(image::Frame::from_parts(frame, 0, 0, delay))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn decode_gif_frame(screenshot: &str) -> Result<Option<image::RgbaImage>, String> {
+    let screenshot = screenshot.trim();
+    let screenshot = screenshot
+        .strip_prefix("data:image/png;base64,")
+        .unwrap_or(screenshot);
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(screenshot) {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(error.to_string()),
+    };
+    let image = match image::load_from_memory(&bytes) {
+        Ok(image) => image.to_rgba8(),
+        Err(error) => return Err(error.to_string()),
+    };
+    if image.width() <= 4 && image.height() <= 4 {
+        return Ok(None);
+    }
+    Ok(Some(image))
 }
 
 fn result_requests_screenshot(result: &ActionResult) -> bool {
@@ -8007,6 +8084,15 @@ mod tests {
             pagination_buttons: vec![],
             closed_popup_messages: vec![],
         }
+    }
+
+    fn test_png_base64(width: u32, height: u32) -> String {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([12, 34, 56, 255]));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut cursor, image::ImageFormat::Png)
+            .expect("encode png");
+        base64::engine::general_purpose::STANDARD.encode(cursor.into_inner())
     }
 
     fn replay_dom_element(
@@ -12170,6 +12256,89 @@ mod tests {
         assert_eq!(history.compacted_memory, None);
         assert_eq!(history.compaction_count, 0);
         assert_eq!(agent.llm.requests.lock().expect("requests lock").len(), 2);
+    }
+
+    #[test]
+    fn generate_gif_output_path_preserves_upstream_default_and_custom_shapes() {
+        assert_eq!(
+            generate_gif_output_path(&GenerateGif::Enabled),
+            Some(std::path::PathBuf::from("agent_history.gif"))
+        );
+        assert_eq!(
+            generate_gif_output_path(&GenerateGif::Path("~/trace.gif".to_owned())),
+            Some(expand_user_path("~/trace.gif"))
+        );
+        assert_eq!(generate_gif_output_path(&GenerateGif::Disabled), None);
+    }
+
+    #[tokio::test]
+    async fn agent_run_writes_generate_gif_custom_path_from_screenshots() {
+        let mut state = blank_state();
+        state.screenshot = Some(test_png_base64(8, 8));
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let gif_path = temp_dir.path().join("history.gif");
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "with gif",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            generate_gif: GenerateGif::Path(gif_path.display().to_string()),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "write gif",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::with_states(vec![state]),
+        );
+
+        agent.run(1).await.expect("agent run");
+
+        let gif_bytes = std::fs::read(&gif_path).expect("gif bytes");
+        assert!(gif_bytes.starts_with(b"GIF8"));
+        assert!(gif_bytes.len() > 20);
+    }
+
+    #[tokio::test]
+    async fn agent_run_does_not_write_generate_gif_without_screenshots() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let gif_path = temp_dir.path().join("empty.gif");
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "no gif",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            generate_gif: GenerateGif::Path(gif_path.display().to_string()),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "skip empty gif",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        agent.run(1).await.expect("agent run");
+
+        assert!(!gif_path.exists());
     }
 
     #[tokio::test]
