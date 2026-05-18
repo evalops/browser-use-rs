@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #73 lands and CI is green.
 
 ## Completed Tracks
 
+- [#73 Add runtime GIF generation for generate_gif](https://github.com/evalops/browser-use-rs/issues/73)
 - [#72 Add upstream-style message compaction support](https://github.com/evalops/browser-use-rs/issues/72)
 - [#71 Preserve upstream non-judge auxiliary AgentSettings flags](https://github.com/evalops/browser-use-rs/issues/71)
 - [#70 Add upstream-style judge trace validation settings](https://github.com/evalops/browser-use-rs/issues/70)
