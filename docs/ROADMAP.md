@@ -5,8 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #73 lands and CI is green.
+- [#74 Add Browser Use Cloud session creation contract](https://github.com/evalops/browser-use-rs/issues/74)
+- [#75 Add LLM-backed extract action results](https://github.com/evalops/browser-use-rs/issues/75)
 
 ## Completed Tracks
 
