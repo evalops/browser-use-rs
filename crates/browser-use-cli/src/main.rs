@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::{
-    AgentHistory, AgentSettings, BrowserActionExecutor, ImageDetailLevel, SensitiveDataValue,
-    VisionMode,
+    AgentHistory, AgentSettings, BrowserActionExecutor, GenerateGif, ImageDetailLevel,
+    SensitiveDataValue, VisionMode,
 };
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
@@ -127,6 +127,8 @@ enum Command {
         vision_detail_level: Option<CliVisionDetailLevel>,
         #[arg(long)]
         max_failures: Option<u32>,
+        #[arg(long = "generate-gif", num_args = 0..=1, default_missing_value = "true", value_name = "PATH")]
+        generate_gif: Option<String>,
         #[arg(long)]
         max_actions_per_step: Option<usize>,
         #[arg(long)]
@@ -149,6 +151,10 @@ enum Command {
         no_judge: bool,
         #[arg(long = "ground-truth")]
         ground_truth: Option<String>,
+        #[arg(long, default_value_t = false)]
+        calculate_cost: bool,
+        #[arg(long, default_value_t = false)]
+        include_tool_call_examples: bool,
         #[arg(long = "save-conversation-path")]
         save_conversation_path: Option<String>,
         #[arg(long = "save-conversation-path-encoding")]
@@ -477,6 +483,7 @@ async fn main() -> anyhow::Result<()> {
             vision_mode,
             vision_detail_level,
             max_failures,
+            generate_gif,
             max_actions_per_step,
             llm_timeout_seconds,
             step_timeout_seconds,
@@ -488,6 +495,8 @@ async fn main() -> anyhow::Result<()> {
             flash_mode,
             no_judge,
             ground_truth,
+            calculate_cost,
+            include_tool_call_examples,
             save_conversation_path,
             save_conversation_path_encoding,
             no_planning,
@@ -526,6 +535,7 @@ async fn main() -> anyhow::Result<()> {
                 vision_mode,
                 vision_detail_level,
                 max_failures,
+                generate_gif,
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
@@ -537,6 +547,8 @@ async fn main() -> anyhow::Result<()> {
                 flash_mode,
                 no_judge,
                 ground_truth,
+                calculate_cost,
+                include_tool_call_examples,
                 save_conversation_path,
                 save_conversation_path_encoding,
                 no_planning,
@@ -597,6 +609,7 @@ struct CliAgentSettingsArgs {
     vision_mode: Option<CliVisionMode>,
     vision_detail_level: Option<CliVisionDetailLevel>,
     max_failures: Option<u32>,
+    generate_gif: Option<String>,
     max_actions_per_step: Option<usize>,
     llm_timeout_seconds: Option<u64>,
     step_timeout_seconds: Option<u64>,
@@ -608,6 +621,8 @@ struct CliAgentSettingsArgs {
     flash_mode: bool,
     no_judge: bool,
     ground_truth: Option<String>,
+    calculate_cost: bool,
+    include_tool_call_examples: bool,
     save_conversation_path: Option<String>,
     save_conversation_path_encoding: Option<String>,
     no_planning: bool,
@@ -640,6 +655,9 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     if let Some(value) = args.max_failures {
         settings.max_failures = value;
     }
+    if let Some(value) = args.generate_gif {
+        settings.generate_gif = cli_generate_gif(value);
+    }
     if let Some(value) = args.max_actions_per_step {
         settings.max_actions_per_step = value;
     }
@@ -671,6 +689,8 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
         settings.use_judge = false;
     }
     settings.ground_truth = args.ground_truth;
+    settings.calculate_cost = args.calculate_cost;
+    settings.include_tool_call_examples = args.include_tool_call_examples;
     settings.save_conversation_path = args.save_conversation_path;
     if let Some(value) = args.save_conversation_path_encoding {
         settings.save_conversation_path_encoding = Some(value);
@@ -697,6 +717,14 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     settings.extend_system_message = args.extend_system_message;
 
     settings
+}
+
+fn cli_generate_gif(value: String) -> GenerateGif {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" => GenerateGif::Enabled,
+        "false" => GenerateGif::Disabled,
+        _ => GenerateGif::Path(value),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2048,6 +2076,8 @@ mod tests {
             "high",
             "--max-failures",
             "2",
+            "--generate-gif",
+            "/tmp/trace.gif",
             "--max-actions-per-step",
             "1",
             "--llm-timeout-seconds",
@@ -2064,6 +2094,8 @@ mod tests {
             "--no-judge",
             "--ground-truth",
             "Must include a receipt.",
+            "--calculate-cost",
+            "--include-tool-call-examples",
             "--save-conversation-path",
             "/tmp/browser-use-conversations",
             "--save-conversation-path-encoding",
@@ -2115,6 +2147,7 @@ mod tests {
                 no_vision,
                 vision_detail_level,
                 max_failures,
+                generate_gif,
                 max_actions_per_step,
                 llm_timeout_seconds,
                 step_timeout_seconds,
@@ -2126,6 +2159,8 @@ mod tests {
                 flash_mode,
                 no_judge,
                 ground_truth,
+                calculate_cost,
+                include_tool_call_examples,
                 save_conversation_path,
                 save_conversation_path_encoding,
                 no_planning,
@@ -2151,6 +2186,7 @@ mod tests {
                 assert!(no_vision);
                 assert_eq!(vision_detail_level, Some(CliVisionDetailLevel::High));
                 assert_eq!(max_failures, Some(2));
+                assert_eq!(generate_gif.as_deref(), Some("/tmp/trace.gif"));
                 assert_eq!(max_actions_per_step, Some(1));
                 assert_eq!(llm_timeout_seconds, Some(11));
                 assert_eq!(step_timeout_seconds, Some(22));
@@ -2162,6 +2198,8 @@ mod tests {
                 assert!(flash_mode);
                 assert!(no_judge);
                 assert_eq!(ground_truth.as_deref(), Some("Must include a receipt."));
+                assert!(calculate_cost);
+                assert!(include_tool_call_examples);
                 assert_eq!(
                     save_conversation_path.as_deref(),
                     Some("/tmp/browser-use-conversations")
@@ -2429,12 +2467,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_generate_gif_optional_path_flag() {
+        let enabled = Cli::try_parse_from([
+            "browser-use-rs",
+            "agent",
+            "https://example.com",
+            "test task",
+            "--generate-gif",
+        ])
+        .expect("bare generate-gif should parse");
+
+        match enabled.command.expect("agent command") {
+            Command::Agent { generate_gif, .. } => {
+                assert_eq!(generate_gif.as_deref(), Some("true"));
+            }
+            _ => panic!("expected agent command"),
+        }
+
+        let with_path = Cli::try_parse_from([
+            "browser-use-rs",
+            "agent",
+            "https://example.com",
+            "test task",
+            "--generate-gif",
+            "/tmp/trace.gif",
+        ])
+        .expect("path generate-gif should parse");
+
+        match with_path.command.expect("agent command") {
+            Command::Agent { generate_gif, .. } => {
+                assert_eq!(generate_gif.as_deref(), Some("/tmp/trace.gif"));
+            }
+            _ => panic!("expected agent command"),
+        }
+    }
+
+    #[test]
     fn builds_agent_settings_from_cli_flags() {
         let settings = cli_agent_settings(CliAgentSettingsArgs {
             no_vision: true,
             vision_mode: None,
             vision_detail_level: Some(CliVisionDetailLevel::High),
             max_failures: Some(2),
+            generate_gif: Some("/tmp/trace.gif".to_owned()),
             max_actions_per_step: Some(1),
             llm_timeout_seconds: Some(11),
             step_timeout_seconds: Some(22),
@@ -2446,6 +2521,8 @@ mod tests {
             flash_mode: true,
             no_judge: true,
             ground_truth: Some("Must include a receipt.".to_owned()),
+            calculate_cost: true,
+            include_tool_call_examples: true,
             save_conversation_path: Some("/tmp/browser-use-conversations".to_owned()),
             save_conversation_path_encoding: Some("utf-8".to_owned()),
             no_planning: true,
@@ -2480,6 +2557,10 @@ mod tests {
         assert_eq!(settings.use_vision, VisionMode::Never);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::High);
         assert_eq!(settings.max_failures, 2);
+        assert_eq!(
+            settings.generate_gif,
+            GenerateGif::Path("/tmp/trace.gif".to_owned())
+        );
         assert_eq!(settings.max_actions_per_step, 1);
         assert_eq!(settings.llm_timeout_seconds, 11);
         assert_eq!(settings.step_timeout_seconds, 22);
@@ -2494,6 +2575,8 @@ mod tests {
             settings.ground_truth.as_deref(),
             Some("Must include a receipt.")
         );
+        assert!(settings.calculate_cost);
+        assert!(settings.include_tool_call_examples);
         assert_eq!(
             settings.save_conversation_path.as_deref(),
             Some("/tmp/browser-use-conversations")
