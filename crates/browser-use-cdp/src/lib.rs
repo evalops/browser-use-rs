@@ -450,7 +450,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
     const booleanAttributeNames = new Set(['checked', 'disabled', 'multiple', 'readonly', 'required', 'selected']);
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-level', 'aria-live', 'aria-multiselectable', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
       if (value !== null && value !== '') attrs[name] = value;
       else if (value === '' && booleanAttributeNames.has(name)) attrs[name] = 'true';
@@ -4567,7 +4567,9 @@ mod tests {
             "aria-disabled",
             "aria-haspopup",
             "aria-keyshortcuts",
+            "aria-level",
             "aria-live",
+            "aria-multiselectable",
             "aria-owns",
             "aria-placeholder",
             "aria-readonly",
@@ -5900,7 +5902,7 @@ mod tests {
 
         session
             .navigate(
-                "data:text/html,<html><head><title>ax props smoke</title></head><body><button id='toggle' aria-expanded='true'>Details</button><div id='slider' role='slider' aria-valuemin='0' aria-valuemax='10' aria-valuenow='7' aria-valuetext='Seven'>Volume</div></body></html>",
+                "data:text/html,<html><head><title>ax props smoke</title></head><body><button id='toggle' aria-expanded='true'>Details</button><div id='slider' role='slider' aria-valuemin='0' aria-valuemax='10' aria-valuenow='7' aria-valuetext='Seven'>Volume</div><div id='results' role='listbox' aria-busy='true' aria-live='polite' aria-level='2' aria-multiselectable='true'>Results</div></body></html>",
                 false,
             )
             .await
@@ -5920,6 +5922,22 @@ mod tests {
         assert!(
             llm.contains("valuetext=Seven"),
             "DOM state did not include human-readable value text: {llm}"
+        );
+        assert!(
+            llm.contains("busy=true") || llm.contains("busy=1"),
+            "DOM state did not include busy live-region state: {llm}"
+        );
+        assert!(
+            llm.contains("live=polite"),
+            "DOM state did not include live-region politeness: {llm}"
+        );
+        assert!(
+            llm.contains("level=2"),
+            "DOM state did not include hierarchy level: {llm}"
+        );
+        assert!(
+            llm.contains("multiselectable=true"),
+            "DOM state did not include multiselectable state: {llm}"
         );
     }
 

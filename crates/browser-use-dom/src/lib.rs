@@ -468,10 +468,14 @@ fn render_attribute_value(element: &DomElementRef, attribute: &str) -> Option<St
 
 fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> Option<&'a String> {
     let alias = match attribute {
+        "busy" => "aria-busy",
         "disabled" => "aria-disabled",
         "haspopup" => "aria-haspopup",
         "invalid" => "aria-invalid",
         "keyshortcuts" => "aria-keyshortcuts",
+        "level" => "aria-level",
+        "live" => "aria-live",
+        "multiselectable" => "aria-multiselectable",
         "pressed" => "aria-pressed",
         "readonly" => "aria-readonly",
         "required" => "aria-required",
@@ -880,6 +884,37 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "keyshortcuts=Control+Enter");
+    }
+
+    #[test]
+    fn rendered_attributes_alias_aria_live_region_metadata() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "section".to_owned(),
+            role: Some("listbox".to_owned()),
+            name: Some("Results".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("aria-busy".to_owned(), "true".to_owned()),
+                ("aria-level".to_owned(), "2".to_owned()),
+                ("aria-live".to_owned(), "polite".to_owned()),
+                ("aria-multiselectable".to_owned(), "true".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(
+            attributes,
+            "multiselectable=true level=2 busy=true live=polite"
+        );
     }
 
     #[test]

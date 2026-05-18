@@ -33,6 +33,7 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   controls, ARIA required/autocomplete/keyshortcut interactivity signals with
   prompt-visible `keyshortcuts`, human-readable value text,
   duplicate long-attribute pruning, input mask/autocomplete/date-format hints,
+  live-region, hierarchy, and multiselect state aliases,
   JavaScript click/pointer listener-backed controls, cursor-pointer controls,
   decorative SVG child pruning, static mouse/keyboard handler attributes,
   contained duplicate-descendant pruning for action containers, pagination
