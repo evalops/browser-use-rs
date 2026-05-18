@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #100 lands and CI is green.
+- [#102 Add upstream external agent status interruption callback](https://github.com/evalops/browser-use-rs/issues/102)
 
 ## Completed Tracks
 
