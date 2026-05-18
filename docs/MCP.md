@@ -89,7 +89,9 @@ events, and system-message override/extension fields.
 On the final allowed `max_steps` step, `browser_use_agent` uses the same
 done-only finalization contract as upstream browser-use so partial results are
 returned through `done` instead of spending the last step on another browser
-action.
+action. Non-final steps at or beyond 75% of the step budget also receive the
+upstream budget-warning prompt so the model can consolidate before the final
+step.
 When `generate_gif` is enabled, successful agent runs write an agent-history
 GIF from recorded screenshots to `agent_history.gif` or the provided path.
 Token-cost accounting and tool-call example prompt side effects remain explicit

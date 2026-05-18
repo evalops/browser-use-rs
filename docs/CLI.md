@@ -163,7 +163,9 @@ When the final allowed `--max-steps` step is reached, the agent switches to an
 upstream-style done-only finalization contract. The model must call `done` with
 either a complete answer or useful partial results with `success=false`;
 non-`done` output on that final step is recorded as an error before any browser
-action is executed.
+action is executed. On non-final steps at or beyond 75% of the step budget, the
+agent adds the upstream budget warning so the model can consolidate work or
+return partial results before the final step.
 By default, completed agent runs make a non-fatal judge request and
 attach `JudgementResult` to the final `done` action without overriding the
 agent-reported `success`; `--no-judge` disables that, and `--ground-truth`

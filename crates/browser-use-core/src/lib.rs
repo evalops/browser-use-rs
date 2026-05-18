@@ -4840,6 +4840,7 @@ pub struct Agent<M, S> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StepRequestKind {
     Normal,
+    BudgetWarning { steps_used: usize, max_steps: usize },
     FinalStep { max_steps: usize },
 }
 
@@ -4960,8 +4961,14 @@ where
         for step_index in 0..max_steps {
             let (is_done, has_error) = {
                 let seconds = self.settings.step_timeout_seconds;
-                let step_kind = if step_index + 1 == max_steps {
+                let steps_used = step_index + 1;
+                let step_kind = if steps_used == max_steps {
                     StepRequestKind::FinalStep { max_steps }
+                } else if should_inject_step_budget_warning(steps_used, max_steps) {
+                    StepRequestKind::BudgetWarning {
+                        steps_used,
+                        max_steps,
+                    }
                 } else {
                     StepRequestKind::Normal
                 };
@@ -5063,6 +5070,18 @@ where
                 &self.history,
                 &self.settings,
                 Some(self.executor.file_system()),
+            )?,
+            StepRequestKind::BudgetWarning {
+                steps_used,
+                max_steps,
+            } => build_step_request_with_budget_warning(
+                &self.task,
+                &state,
+                &self.history,
+                &self.settings,
+                Some(self.executor.file_system()),
+                steps_used,
+                max_steps,
             )?,
             StepRequestKind::FinalStep { max_steps } => {
                 build_final_response_after_step_limit_request(
@@ -5967,6 +5986,47 @@ fn build_final_response_after_failure_request(
     let instruction = format!(
         "You failed {failures} times. We are terminating the agent. Your only available action is done. Return exactly one done action. \
          If the task is not fully finished, set success to false. Include everything useful you found for the original task in done.text."
+    );
+    if let Some(message) = request
+        .messages
+        .iter_mut()
+        .find(|message| message.role == MessageRole::User)
+    {
+        message
+            .content
+            .push(ContentPart::Text { text: instruction });
+    }
+    Ok(request)
+}
+
+fn should_inject_step_budget_warning(steps_used: usize, max_steps: usize) -> bool {
+    max_steps > 0
+        && steps_used < max_steps
+        && steps_used.saturating_mul(4) >= max_steps.saturating_mul(3)
+}
+
+fn build_step_request_with_budget_warning(
+    task: &str,
+    state: &BrowserStateSummary,
+    history: &AgentHistory,
+    settings: &AgentSettings,
+    file_system: Option<&ManagedFileSystem>,
+    steps_used: usize,
+    max_steps: usize,
+) -> Result<ChatRequest, AgentRunError> {
+    let mut request =
+        build_step_request_with_file_system(task, state, history, settings, file_system)?;
+    let steps_remaining = max_steps.saturating_sub(steps_used);
+    let pct = steps_used
+        .saturating_mul(100)
+        .checked_div(max_steps)
+        .unwrap_or(0);
+    let instruction = format!(
+        "BUDGET WARNING: You have used {steps_used}/{max_steps} steps ({pct}%). {steps_remaining} steps remaining. \
+         If the task cannot be completed in the remaining steps, prioritize: \
+         (1) consolidate your results (save to files if the file system is in use), \
+         (2) call done with what you have. \
+         Partial results are far more valuable than exhausting all steps with nothing saved."
     );
     if let Some(message) = request
         .messages
@@ -7631,6 +7691,32 @@ mod tests {
         assert!(text.contains("You reached max_steps (3)"));
         assert!(text.contains("only available action is done"));
         assert!(text.contains("set success to false"));
+    }
+
+    #[test]
+    fn step_budget_warning_request_matches_upstream_threshold_text() {
+        assert!(!should_inject_step_budget_warning(2, 4));
+        assert!(should_inject_step_budget_warning(3, 4));
+        assert!(!should_inject_step_budget_warning(4, 4));
+
+        let request = build_step_request_with_budget_warning(
+            "finish the task",
+            &blank_state(),
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+            None,
+            3,
+            4,
+        )
+        .expect("budget warning request");
+        let action_names =
+            schema_action_names(request.output_schema.as_ref().expect("output schema"));
+
+        assert!(action_names.contains("click"));
+        assert!(action_names.contains("done"));
+        let text = request_text(&request);
+        assert!(text.contains("BUDGET WARNING: You have used 3/4 steps (75%). 1 steps remaining."));
+        assert!(text.contains("Partial results are far more valuable"));
     }
 
     #[test]
@@ -13483,6 +13569,61 @@ mod tests {
             agent.history().errors()[0],
             Some("final response at step limit must return exactly one done action")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_run_injects_budget_warning_before_final_step_only() {
+        let click_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "finished after warning",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "warn before final step",
+            settings,
+            QueueModel::new(vec![
+                click_output.clone(),
+                click_output.clone(),
+                click_output,
+                done_output,
+            ]),
+            MockSession::new(),
+        );
+
+        agent.run(4).await.expect("final step done");
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 4);
+        assert!(!request_text(&requests[0]).contains("BUDGET WARNING"));
+        assert!(!request_text(&requests[1]).contains("BUDGET WARNING"));
+        assert!(
+            request_text(&requests[2])
+                .contains("BUDGET WARNING: You have used 3/4 steps (75%). 1 steps remaining.")
+        );
+        let final_request = request_text(&requests[3]);
+        assert!(final_request.contains("You reached max_steps (4)"));
+        assert!(!final_request.contains("BUDGET WARNING"));
     }
 
     #[tokio::test]

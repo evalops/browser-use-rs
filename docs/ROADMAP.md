@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #83 lands and CI is green.
+- [#84 Add upstream step-budget warning prompt](https://github.com/evalops/browser-use-rs/issues/84)
 
 ## Completed Tracks
 
@@ -187,8 +186,9 @@ Implemented:
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
   per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
   `action_timeout_seconds`, upstream-style final-step done-only guard for
-  `max_steps`, upstream-style page-stat prompt context with loading/skeleton
-  hints, upstream-compatible
+  `max_steps`, upstream-style 75% step-budget warning before finalization,
+  upstream-style page-stat prompt context with loading/skeleton hints,
+  upstream-compatible
   `true`/`false`/`auto` vision modes, auto-only screenshot action gating,
   screenshot action next-observation image overrides, action-result image
   prompt parts, one-time extraction replay handling, invalid model-output
