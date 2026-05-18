@@ -59,9 +59,10 @@ Implemented:
   prompt-visible DOM attributes, configurable planning prompt nudges,
   structured extraction metadata, per-step timing metadata, thinking/flash
   output-schema controls, upstream-style flattened required output fields,
-  configurable prompt-history and clickable-element text limits, upstream-style
-  one-time read-state prompt blocks, upstream-style last-result completion
-  helpers, upstream-style prompt context/error truncation,
+  upstream-style prompt-history inclusion and limits, clickable-element text
+  limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
+  agent-history/agent-state/browser-state prompt sections, upstream-style
+  last-result completion helpers, upstream-style prompt context/error truncation,
   upstream-compatible action-result success validation, judgement results,
   per-step error slots, model-output/action/thought accessors, duration helpers,
   and URL helpers.

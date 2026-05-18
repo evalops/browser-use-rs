@@ -2266,17 +2266,15 @@ pub fn build_step_request(
     );
     let state_json = serde_json::to_string_pretty(&state_for_text)
         .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
-    let previous_results = render_previous_results(history, settings.max_history_items);
+    let agent_history = render_previous_results(history, settings.max_history_items);
     let page_stats = render_page_stats(state);
-    let planning_context = render_planning_context(history, settings)
-        .map(|message| format!("\n\nPlanning:\n{message}"))
-        .unwrap_or_default();
-    let loop_awareness = render_loop_awareness(history, state, settings)
-        .map(|message| format!("\n\nLoop awareness:\n{message}"))
+    let agent_state = render_agent_state_description(task, &page_stats, history, state, settings);
+    let read_state = render_read_state_description(history)
+        .map(|description| format!("\n<read_state>\n{description}\n</read_state>\n"))
         .unwrap_or_default();
     let mut user_content = vec![ContentPart::Text {
         text: format!(
-            "Task:\n{task}\n\nPrevious action results:\n{previous_results}\n\nPage stats:\n{page_stats}{planning_context}{loop_awareness}\n\nBrowser state:\n{state_json}"
+            "<agent_history>\n{agent_history}\n</agent_history>\n\n<agent_state>\n{agent_state}\n</agent_state>\n<browser_state>\n{state_json}\n</browser_state>{read_state}"
         ),
     }];
     if settings.use_vision
@@ -2428,6 +2426,23 @@ fn render_page_stats(state: &BrowserStateSummary) -> String {
     stats
 }
 
+fn render_agent_state_description(
+    task: &str,
+    page_stats: &str,
+    history: &AgentHistory,
+    state: &BrowserStateSummary,
+    settings: &AgentSettings,
+) -> String {
+    let mut description = format!("Task:\n{task}\n\nPage stats:\n{page_stats}");
+    if let Some(message) = render_planning_context(history, settings) {
+        description.push_str(&format!("\n\nPlanning:\n{message}"));
+    }
+    if let Some(message) = render_loop_awareness(history, state, settings) {
+        description.push_str(&format!("\n\nLoop awareness:\n{message}"));
+    }
+    description
+}
+
 fn schema_for_agent_output() -> Value {
     serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
 }
@@ -2535,37 +2550,132 @@ fn require_non_empty_actions(schema: &mut Value) {
 }
 
 fn render_previous_results(history: &AgentHistory, max_history_items: Option<usize>) -> String {
-    let max_history_items = max_history_items.unwrap_or(5);
-    let recent_items: Vec<&AgentHistoryItem> = history
-        .items
-        .iter()
-        .rev()
-        .take(max_history_items)
-        .rev()
-        .collect();
-    let latest_recent_index = recent_items.len().saturating_sub(1);
-    let mut rendered = Vec::new();
-    for (step_index, item) in recent_items.into_iter().enumerate() {
-        let is_latest_step = step_index == latest_recent_index;
-        let mut read_state_index = 0;
-        for (result_index, result) in item.result.iter().enumerate() {
-            let text = render_result_for_prompt(result, is_latest_step, read_state_index);
-            if is_latest_step
-                && result.include_extracted_content_only_once
-                && result.extracted_content.is_some()
-            {
-                read_state_index += 1;
+    enum HistoryPromptEntry<'a> {
+        Item(&'a AgentHistoryItem),
+        Omitted(usize),
+    }
+
+    let total_items = history.items.len();
+    let entries: Vec<HistoryPromptEntry<'_>> = match max_history_items {
+        None => history.items.iter().map(HistoryPromptEntry::Item).collect(),
+        Some(max_history_items) if total_items <= max_history_items => {
+            history.items.iter().map(HistoryPromptEntry::Item).collect()
+        }
+        Some(0) => vec![HistoryPromptEntry::Omitted(total_items)],
+        Some(max_history_items) => {
+            let omitted_count = total_items - max_history_items;
+            let recent_items_count = max_history_items - 1;
+            let recent_start = total_items.saturating_sub(recent_items_count);
+            let mut entries = vec![
+                HistoryPromptEntry::Item(&history.items[0]),
+                HistoryPromptEntry::Omitted(omitted_count),
+            ];
+            entries.extend(
+                history
+                    .items
+                    .iter()
+                    .skip(recent_start)
+                    .map(HistoryPromptEntry::Item),
+            );
+            entries
+        }
+    };
+
+    let mut rendered = if history.items.is_empty() {
+        vec!["Agent initialized".to_owned()]
+    } else {
+        Vec::new()
+    };
+    for entry in entries {
+        match entry {
+            HistoryPromptEntry::Item(item) => {
+                if let Some(item_text) = render_history_item_for_prompt(item) {
+                    rendered.push(item_text);
+                }
             }
-            rendered.push(format!("{}.{} {}", step_index + 1, result_index + 1, text));
+            HistoryPromptEntry::Omitted(omitted_count) if omitted_count > 0 => {
+                rendered.push(format!(
+                    "<sys>[... {omitted_count} previous steps omitted...]</sys>"
+                ));
+            }
+            HistoryPromptEntry::Omitted(_) => {}
         }
     }
 
-    let previous_results = if rendered.is_empty() {
-        "None".to_owned()
+    truncate_prompt_content(rendered.join("\n"))
+}
+
+fn render_history_item_for_prompt(item: &AgentHistoryItem) -> Option<String> {
+    let mut content_parts = Vec::new();
+    if let Some(output) = item.model_output.as_ref() {
+        let brain = output.current_brain();
+        if let Some(evaluation) = non_empty_prompt_text(brain.evaluation_previous_goal.as_deref()) {
+            content_parts.push(evaluation.to_owned());
+        }
+        if let Some(memory) = non_empty_prompt_text(brain.memory.as_deref()) {
+            content_parts.push(memory.to_owned());
+        }
+        if let Some(next_goal) = non_empty_prompt_text(brain.next_goal.as_deref()) {
+            content_parts.push(next_goal.to_owned());
+        }
+    }
+    if let Some(action_results) = render_action_results_for_prompt(&item.result) {
+        content_parts.push(action_results);
+    }
+
+    (!content_parts.is_empty()).then(|| format!("<step>\n{}", content_parts.join("\n")))
+}
+
+fn render_action_results_for_prompt(results: &[ActionResult]) -> Option<String> {
+    let mut lines = Vec::new();
+    for result in results {
+        if let Some(memory) = non_empty_prompt_text(result.long_term_memory.as_deref()) {
+            lines.push(memory.to_owned());
+        } else if !result.include_extracted_content_only_once
+            && let Some(content) = non_empty_prompt_text(result.extracted_content.as_deref())
+        {
+            lines.push(content.to_owned());
+        }
+
+        if let Some(error) = non_empty_prompt_text(result.error.as_deref()) {
+            lines.push(truncate_error_for_prompt(error));
+        }
+    }
+
+    if lines.is_empty() {
+        None
     } else {
-        rendered.join("\n")
-    };
-    truncate_prompt_content(previous_results)
+        Some(truncate_prompt_content(format!(
+            "Result\n{}",
+            lines.join("\n")
+        )))
+    }
+}
+
+fn render_read_state_description(history: &AgentHistory) -> Option<String> {
+    let latest = history.items.last()?;
+    let mut blocks = Vec::new();
+    for result in &latest.result {
+        if result.include_extracted_content_only_once
+            && let Some(extracted_content) =
+                non_empty_prompt_text(result.extracted_content.as_deref())
+        {
+            let index = blocks.len();
+            blocks.push(format!(
+                "<read_state_{index}>\n{extracted_content}\n</read_state_{index}>"
+            ));
+        }
+    }
+
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(truncate_prompt_content(blocks.join("\n")))
+    }
+}
+
+fn non_empty_prompt_text(text: Option<&str>) -> Option<&str> {
+    text.filter(|value| !value.is_empty())
 }
 
 fn render_planning_context(history: &AgentHistory, settings: &AgentSettings) -> Option<String> {
@@ -2708,39 +2818,6 @@ fn consecutive_stagnant_pages(history: &AgentHistory, state: &BrowserStateSummar
         }
     }
     count
-}
-
-fn render_result_for_prompt(
-    result: &ActionResult,
-    is_latest_step: bool,
-    read_state_index: usize,
-) -> String {
-    if let Some(error) = result.error.as_deref() {
-        return truncate_error_for_prompt(error);
-    }
-
-    if result.include_extracted_content_only_once {
-        if is_latest_step {
-            if let Some(extracted_content) = result.extracted_content.as_deref() {
-                return format!(
-                    "<read_state_{read_state_index}>\n{extracted_content}\n</read_state_{read_state_index}>"
-                );
-            }
-        } else {
-            return result
-                .long_term_memory
-                .as_deref()
-                .unwrap_or("[extracted content omitted after first prompt]")
-                .to_owned();
-        }
-    }
-
-    result
-        .extracted_content
-        .as_deref()
-        .or(result.long_term_memory.as_deref())
-        .unwrap_or("no content")
-        .to_owned()
 }
 
 fn truncate_prompt_content(content: String) -> String {
@@ -5233,11 +5310,16 @@ mod tests {
             other => panic!("unexpected first content part: {other:?}"),
         };
 
-        assert!(request_text.contains("Previous action results"));
-        assert!(request_text.contains("Clicked element 1"));
-        assert!(request_text.contains("Page stats"));
-        assert!(request_text.contains("1 links, 2 interactive"));
-        assert!(request_text.contains("1 scroll containers"));
+        assert!(user_text.contains("<agent_history>"));
+        assert!(user_text.contains("<step>\nResult\nClicked element 1"));
+        assert!(user_text.contains("</agent_history>"));
+        assert!(user_text.contains("<agent_state>"));
+        assert!(user_text.contains("Page stats"));
+        assert!(user_text.contains("1 links, 2 interactive"));
+        assert!(user_text.contains("1 scroll containers"));
+        assert!(user_text.contains("</agent_state>"));
+        assert!(user_text.contains("<browser_state>"));
+        assert!(user_text.contains("</browser_state>"));
         assert!(user_text.contains(r#""tab_id": "abcd""#));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
     }
@@ -5361,7 +5443,7 @@ mod tests {
             ContentPart::Text { text } => text,
             other => panic!("unexpected first content part: {other:?}"),
         };
-        assert!(text.contains("Browser state"));
+        assert!(text.contains("<browser_state>"));
         assert!(!text.contains("abc123"));
     }
 
@@ -5568,7 +5650,7 @@ mod tests {
     }
 
     #[test]
-    fn previous_results_include_latest_one_time_extraction() {
+    fn latest_one_time_extraction_moves_to_read_state_section() {
         let history = AgentHistory {
             items: vec![AgentHistoryItem {
                 model_output: None,
@@ -5591,14 +5673,41 @@ mod tests {
         };
 
         let rendered = render_previous_results(&history, None);
+        let read_state = render_read_state_description(&history).expect("read state");
 
-        assert!(rendered.contains("fresh extracted payload"));
-        assert!(rendered.contains("<read_state_0>\nfresh extracted payload\n</read_state_0>"));
-        assert!(!rendered.contains("Extraction saved to file"));
+        assert!(!rendered.contains("fresh extracted payload"));
+        assert!(rendered.contains("Result\nExtraction saved to file"));
+        assert_eq!(
+            read_state,
+            "<read_state_0>\nfresh extracted payload\n</read_state_0>"
+        );
+
+        let request = build_step_request(
+            "inspect read state",
+            &blank_state(),
+            &history,
+            &AgentSettings::default(),
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let user_text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+        assert!(user_text.contains(
+            "<read_state>\n<read_state_0>\nfresh extracted payload\n</read_state_0>\n</read_state>"
+        ));
+        assert!(user_text.contains(
+            "<agent_history>\n<step>\nResult\nExtraction saved to file\n</agent_history>"
+        ));
     }
 
     #[test]
-    fn previous_results_number_latest_read_state_blocks_like_upstream() {
+    fn latest_read_state_blocks_are_numbered_like_upstream() {
         let history = AgentHistory {
             items: vec![AgentHistoryItem {
                 model_output: None,
@@ -5636,15 +5745,69 @@ mod tests {
         };
 
         let rendered = render_previous_results(&history, None);
+        let read_state = render_read_state_description(&history).expect("read state");
 
-        assert!(rendered.contains("<read_state_0>\nfirst payload\n</read_state_0>"));
-        assert!(rendered.contains("<read_state_1>\nsecond payload\n</read_state_1>"));
-        assert!(!rendered.contains("first summary"));
-        assert!(!rendered.contains("second summary"));
+        assert!(!rendered.contains("first payload"));
+        assert!(!rendered.contains("second payload"));
+        assert!(rendered.contains("first summary"));
+        assert!(rendered.contains("second summary"));
+        assert!(read_state.contains("<read_state_0>\nfirst payload\n</read_state_0>"));
+        assert!(read_state.contains("<read_state_1>\nsecond payload\n</read_state_1>"));
     }
 
     #[test]
-    fn previous_results_can_limit_history_items_from_settings() {
+    fn previous_results_include_all_history_when_limit_is_absent_like_upstream() {
+        let history = AgentHistory {
+            items: ["first", "second", "third", "fourth", "fifth", "sixth"]
+                .into_iter()
+                .map(|text| AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::extracted(text)],
+                    state: blank_state(),
+                    metadata: None,
+                })
+                .collect(),
+        };
+
+        let rendered = render_previous_results(&history, None);
+
+        assert!(rendered.contains("Result\nfirst"));
+        assert!(rendered.contains("Result\nsixth"));
+        assert!(!rendered.contains("previous steps omitted"));
+    }
+
+    #[test]
+    fn previous_results_include_model_brain_fields_like_upstream() {
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: Some(AgentOutput {
+                    current_state: AgentCurrentState::default(),
+                    thinking: None,
+                    evaluation_previous_goal: Some("Previous goal succeeded".to_owned()),
+                    memory: Some("Remembered page context".to_owned()),
+                    next_goal: Some("Click next result".to_owned()),
+                    current_plan_item: None,
+                    plan_update: None,
+                    action: vec![BrowserAction::Wait(browser_use_tools::WaitAction {
+                        seconds: 1,
+                    })],
+                }),
+                result: vec![ActionResult::extracted("Waited for 1 seconds")],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        let rendered = render_previous_results(&history, None);
+
+        assert!(rendered.starts_with("<step>\nPrevious goal succeeded"));
+        assert!(rendered.contains("Remembered page context"));
+        assert!(rendered.contains("Click next result"));
+        assert!(rendered.contains("Result\nWaited for 1 seconds"));
+    }
+
+    #[test]
+    fn previous_results_limit_preserves_initial_and_recent_tail_like_upstream() {
         let history = AgentHistory {
             items: ["first", "second", "third"]
                 .into_iter()
@@ -5659,9 +5822,10 @@ mod tests {
 
         let rendered = render_previous_results(&history, Some(2));
 
-        assert!(!rendered.contains("first"));
-        assert!(rendered.contains("second"));
-        assert!(rendered.contains("third"));
+        assert!(rendered.contains("Result\nfirst"));
+        assert!(rendered.contains("<sys>[... 1 previous steps omitted...]</sys>"));
+        assert!(!rendered.contains("Result\nsecond"));
+        assert!(rendered.contains("Result\nthird"));
     }
 
     #[test]

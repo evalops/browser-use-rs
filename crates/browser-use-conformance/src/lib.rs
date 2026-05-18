@@ -312,7 +312,9 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert!(requests[0].output_schema.is_some());
         let request_text = serde_json::to_string(&requests[1]).expect("request text");
-        assert!(request_text.contains("Previous action results"));
+        assert!(request_text.contains("<agent_history>"));
+        assert!(request_text.contains("<agent_state>"));
+        assert!(request_text.contains("<browser_state>"));
         assert!(request_text.contains("Clicked element 1"));
     }
 
