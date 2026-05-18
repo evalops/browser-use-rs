@@ -10,10 +10,12 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
 
 - Local Chrome/Chromium launch and CDP attach.
 - Browser Use Cloud creation and stop request/response contracts, including
-  current-session tracking after create, explicit or current-session stop
-  requests, auth errors, missing-session errors, current-session cleanup on
-  successful stop or 404, conversion of `cdpUrl` responses into CDP endpoints,
-  and upstream-compatible omitted/null/country proxy-country serialization.
+  `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
+  API-token fallback, current-session tracking after create, explicit or
+  current-session stop requests, auth errors, missing-session errors,
+  current-session cleanup on successful stop or 404, conversion of `cdpUrl`
+  responses into CDP endpoints, and upstream-compatible omitted/null/country
+  proxy-country serialization.
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass

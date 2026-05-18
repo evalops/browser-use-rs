@@ -1238,6 +1238,7 @@ impl CloudBrowserResponse {
 pub struct CloudBrowserClient {
     api_base_url: String,
     api_key: Option<String>,
+    auth_config_path: Option<PathBuf>,
     client: reqwest::Client,
     current_session_id: Arc<Mutex<Option<String>>>,
 }
@@ -1254,6 +1255,7 @@ impl CloudBrowserClient {
         Self {
             api_base_url: "https://api.browser-use.com".to_owned(),
             api_key: None,
+            auth_config_path: None,
             client: reqwest::Client::new(),
             current_session_id: Arc::new(Mutex::new(None)),
         }
@@ -1276,6 +1278,12 @@ impl CloudBrowserClient {
     #[must_use]
     pub fn with_base_url(self, api_base_url: impl Into<String>) -> Self {
         self.with_api_base_url(api_base_url)
+    }
+
+    #[must_use]
+    pub fn with_auth_config_path(mut self, auth_config_path: impl Into<PathBuf>) -> Self {
+        self.auth_config_path = Some(auth_config_path.into());
+        self
     }
 
     pub async fn current_session_id(&self) -> Option<String> {
@@ -1381,11 +1389,12 @@ impl CloudBrowserClient {
     }
 
     fn api_key(&self) -> Result<String, BrowserError> {
-        self.api_key
-            .clone()
-            .or_else(|| std::env::var("BROWSER_USE_API_KEY").ok())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
+        resolve_cloud_api_key(
+            self.api_key.as_deref(),
+            std::env::var("BROWSER_USE_API_KEY").ok(),
+            self.auth_config_path.as_deref(),
+        )
+        .ok_or_else(|| {
                 BrowserError::CloudAuth(
                     "BROWSER_USE_API_KEY is not set. To use cloud browsers, get a key at https://cloud.browser-use.com/new-api-key?utm_source=oss&utm_medium=use_cloud"
                         .to_owned(),
@@ -1399,6 +1408,78 @@ impl CloudBrowserClient {
             *current_session_id = None;
         }
     }
+}
+
+fn resolve_cloud_api_key(
+    explicit_api_key: Option<&str>,
+    env_api_key: Option<String>,
+    auth_config_path: Option<&Path>,
+) -> Option<String> {
+    explicit_api_key
+        .and_then(non_empty_string)
+        .or_else(|| env_api_key.as_deref().and_then(non_empty_string))
+        .or_else(|| load_cloud_auth_api_token(auth_config_path))
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn load_cloud_auth_api_token(auth_config_path: Option<&Path>) -> Option<String> {
+    let path = auth_config_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_cloud_auth_config_path);
+    let contents = std::fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&contents).ok()?;
+    value
+        .get("api_token")
+        .and_then(Value::as_str)
+        .and_then(|token| {
+            let token = token.trim();
+            (!token.is_empty()).then(|| token.to_owned())
+        })
+}
+
+fn default_cloud_auth_config_path() -> PathBuf {
+    cloud_auth_config_path(
+        std::env::var_os("BROWSER_USE_CONFIG_DIR").map(PathBuf::from),
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+}
+
+fn cloud_auth_config_path(
+    browser_use_config_dir: Option<PathBuf>,
+    xdg_config_home: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> PathBuf {
+    let config_dir = browser_use_config_dir
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| expand_home(path, home.as_deref()))
+        .unwrap_or_else(|| {
+            xdg_config_home
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(|path| expand_home(path, home.as_deref()))
+                .unwrap_or_else(|| expand_home(PathBuf::from("~/.config"), home.as_deref()))
+                .join("browseruse")
+        });
+    config_dir.join("cloud_auth.json")
+}
+
+fn expand_home(path: PathBuf, home: Option<&Path>) -> PathBuf {
+    let Some(path_text) = path.to_str() else {
+        return path;
+    };
+    if path_text == "~" {
+        return home.map(Path::to_path_buf).unwrap_or(path);
+    }
+    if let Some(rest) = path_text.strip_prefix("~/") {
+        return home
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path_text));
+    }
+    path
 }
 
 fn render_cloud_error_body(body: &str) -> String {
@@ -7761,6 +7842,102 @@ mod tests {
         let requests = server.await.expect("cloud server task");
         assert_eq!(requests.len(), 2);
         assert!(requests[1].starts_with("PATCH /api/v2/browsers/browser-missing "));
+    }
+
+    #[test]
+    fn cloud_api_key_resolution_prefers_explicit_then_env_then_auth_config() {
+        let temp_dir = TempDir::new().expect("temp cloud auth dir");
+        let auth_config_path = temp_dir.path().join("cloud_auth.json");
+        std::fs::write(&auth_config_path, r#"{ "api_token": "config-key" }"#)
+            .expect("write cloud auth config");
+
+        assert_eq!(
+            resolve_cloud_api_key(
+                Some("explicit-key"),
+                Some("env-key".to_owned()),
+                Some(&auth_config_path)
+            )
+            .as_deref(),
+            Some("explicit-key")
+        );
+        assert_eq!(
+            resolve_cloud_api_key(
+                Some("  "),
+                Some("env-key".to_owned()),
+                Some(&auth_config_path)
+            )
+            .as_deref(),
+            Some("env-key")
+        );
+        assert_eq!(
+            resolve_cloud_api_key(None, Some("  ".to_owned()), Some(&auth_config_path)).as_deref(),
+            Some("config-key")
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_client_uses_auth_config_api_token() {
+        let temp_dir = TempDir::new().expect("temp cloud auth dir");
+        let auth_config_path = temp_dir.path().join("cloud_auth.json");
+        std::fs::write(&auth_config_path, r#"{ "api_token": "config-key" }"#)
+            .expect("write cloud auth config");
+        let (base_url, server) = cloud_test_server(vec![(
+            200,
+            cloud_browser_response_json("browser-config-token", "running"),
+        )])
+        .await;
+        let client = CloudBrowserClient::new()
+            .with_auth_config_path(auth_config_path)
+            .with_base_url(base_url);
+
+        let created = client
+            .create_browser(&CloudBrowserCreateRequest::default())
+            .await
+            .expect("create cloud browser");
+        assert_eq!(created.id, "browser-config-token");
+
+        let requests = server.await.expect("cloud server task");
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .to_ascii_lowercase()
+                .contains("x-browser-use-api-key: config-key")
+        );
+    }
+
+    #[test]
+    fn cloud_auth_config_fallback_ignores_missing_empty_and_corrupt_files() {
+        let temp_dir = TempDir::new().expect("temp cloud auth dir");
+        let missing_path = temp_dir.path().join("missing.json");
+        assert_eq!(load_cloud_auth_api_token(Some(&missing_path)), None);
+
+        let corrupt_path = temp_dir.path().join("corrupt.json");
+        std::fs::write(&corrupt_path, "{").expect("write corrupt config");
+        assert_eq!(load_cloud_auth_api_token(Some(&corrupt_path)), None);
+
+        let empty_path = temp_dir.path().join("empty.json");
+        std::fs::write(&empty_path, r#"{ "api_token": "  " }"#).expect("write empty config");
+        assert_eq!(load_cloud_auth_api_token(Some(&empty_path)), None);
+    }
+
+    #[test]
+    fn cloud_auth_config_path_matches_upstream_env_layout() {
+        assert_eq!(
+            cloud_auth_config_path(
+                Some(PathBuf::from("~/browser-use")),
+                Some(PathBuf::from("/xdg")),
+                Some(PathBuf::from("/home/alice"))
+            ),
+            PathBuf::from("/home/alice/browser-use/cloud_auth.json")
+        );
+        assert_eq!(
+            cloud_auth_config_path(None, Some(PathBuf::from("/xdg")), None),
+            PathBuf::from("/xdg/browseruse/cloud_auth.json")
+        );
+        assert_eq!(
+            cloud_auth_config_path(None, None, Some(PathBuf::from("/home/alice"))),
+            PathBuf::from("/home/alice/.config/browseruse/cloud_auth.json")
+        );
     }
 
     #[test]
