@@ -145,6 +145,10 @@ enum Command {
         no_thinking: bool,
         #[arg(long, default_value_t = false)]
         flash_mode: bool,
+        #[arg(long = "save-conversation-path")]
+        save_conversation_path: Option<String>,
+        #[arg(long = "save-conversation-path-encoding")]
+        save_conversation_path_encoding: Option<String>,
         #[arg(long, default_value_t = false)]
         no_planning: bool,
         #[arg(long)]
@@ -478,6 +482,8 @@ async fn main() -> anyhow::Result<()> {
             loop_detection_window,
             no_thinking,
             flash_mode,
+            save_conversation_path,
+            save_conversation_path_encoding,
             no_planning,
             planning_replan_on_stall,
             planning_exploration_limit,
@@ -523,6 +529,8 @@ async fn main() -> anyhow::Result<()> {
                 loop_detection_window,
                 no_thinking,
                 flash_mode,
+                save_conversation_path,
+                save_conversation_path_encoding,
                 no_planning,
                 planning_replan_on_stall,
                 planning_exploration_limit,
@@ -590,6 +598,8 @@ struct CliAgentSettingsArgs {
     loop_detection_window: Option<usize>,
     no_thinking: bool,
     flash_mode: bool,
+    save_conversation_path: Option<String>,
+    save_conversation_path_encoding: Option<String>,
     no_planning: bool,
     planning_replan_on_stall: Option<usize>,
     planning_exploration_limit: Option<usize>,
@@ -646,6 +656,10 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     }
     if args.flash_mode {
         settings.flash_mode = true;
+    }
+    settings.save_conversation_path = args.save_conversation_path;
+    if let Some(value) = args.save_conversation_path_encoding {
+        settings.save_conversation_path_encoding = Some(value);
     }
     if args.no_planning {
         settings.enable_planning = false;
@@ -2033,6 +2047,10 @@ mod tests {
             "4",
             "--no-thinking",
             "--flash-mode",
+            "--save-conversation-path",
+            "/tmp/browser-use-conversations",
+            "--save-conversation-path-encoding",
+            "utf-8",
             "--no-planning",
             "--planning-replan-on-stall",
             "5",
@@ -2089,6 +2107,8 @@ mod tests {
                 loop_detection_window,
                 no_thinking,
                 flash_mode,
+                save_conversation_path,
+                save_conversation_path_encoding,
                 no_planning,
                 planning_replan_on_stall,
                 planning_exploration_limit,
@@ -2121,6 +2141,11 @@ mod tests {
                 assert_eq!(loop_detection_window, Some(4));
                 assert!(no_thinking);
                 assert!(flash_mode);
+                assert_eq!(
+                    save_conversation_path.as_deref(),
+                    Some("/tmp/browser-use-conversations")
+                );
+                assert_eq!(save_conversation_path_encoding.as_deref(), Some("utf-8"));
                 assert!(no_planning);
                 assert_eq!(planning_replan_on_stall, Some(5));
                 assert_eq!(planning_exploration_limit, Some(6));
@@ -2398,6 +2423,8 @@ mod tests {
             loop_detection_window: Some(4),
             no_thinking: true,
             flash_mode: true,
+            save_conversation_path: Some("/tmp/browser-use-conversations".to_owned()),
+            save_conversation_path_encoding: Some("utf-8".to_owned()),
             no_planning: true,
             planning_replan_on_stall: Some(5),
             planning_exploration_limit: Some(6),
@@ -2439,6 +2466,14 @@ mod tests {
         assert_eq!(settings.loop_detection_window, 4);
         assert!(!settings.use_thinking);
         assert!(settings.flash_mode);
+        assert_eq!(
+            settings.save_conversation_path.as_deref(),
+            Some("/tmp/browser-use-conversations")
+        );
+        assert_eq!(
+            settings.save_conversation_path_encoding.as_deref(),
+            Some("utf-8")
+        );
         assert!(!settings.enable_planning);
         assert_eq!(settings.planning_replan_on_stall, 5);
         assert_eq!(settings.planning_exploration_limit, 6);

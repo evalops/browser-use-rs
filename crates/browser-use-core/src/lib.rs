@@ -69,6 +69,13 @@ pub struct AgentSettings {
     pub use_thinking: bool,
     #[serde(default)]
     pub flash_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_conversation_path: Option<String>,
+    #[serde(
+        default = "default_save_conversation_path_encoding",
+        skip_serializing_if = "is_default_save_conversation_path_encoding"
+    )]
+    pub save_conversation_path_encoding: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,6 +233,8 @@ impl Default for AgentSettings {
             planning_exploration_limit: default_planning_exploration_limit(),
             use_thinking: default_use_thinking(),
             flash_mode: false,
+            save_conversation_path: None,
+            save_conversation_path_encoding: default_save_conversation_path_encoding(),
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
             initial_actions: Vec::new(),
@@ -295,6 +304,14 @@ fn default_planning_exploration_limit() -> usize {
 
 fn default_use_thinking() -> bool {
     true
+}
+
+fn default_save_conversation_path_encoding() -> Option<String> {
+    Some("utf-8".to_owned())
+}
+
+fn is_default_save_conversation_path_encoding(value: &Option<String>) -> bool {
+    value.as_deref() == Some("utf-8")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -4186,6 +4203,12 @@ pub enum AgentRunError {
     MaxFailuresExceeded { failures: u32 },
     #[error("agent repeated the same action sequence for {window} steps")]
     LoopDetected { window: usize },
+    #[error("failed to save conversation to {path}: {source}")]
+    ConversationSave {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -4198,6 +4221,7 @@ pub struct AgentCheckpoint {
 }
 
 pub struct Agent<M, S> {
+    id: Uuid,
     task: String,
     settings: AgentSettings,
     llm: M,
@@ -4244,6 +4268,7 @@ where
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
         executor.set_upload_file_availability(true, settings.available_file_paths.clone());
         Self {
+            id: Uuid::now_v7(),
             task: task.into(),
             settings,
             llm,
@@ -4264,6 +4289,7 @@ where
         executor
             .set_upload_file_availability(true, checkpoint.settings.available_file_paths.clone());
         Ok(Self {
+            id: Uuid::now_v7(),
             task: checkpoint.task,
             settings: checkpoint.settings,
             llm,
@@ -4275,6 +4301,10 @@ where
 
     pub fn history(&self) -> &AgentHistory {
         &self.history
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.id
     }
 
     pub fn checkpoint(&self) -> AgentCheckpoint {
@@ -4380,6 +4410,7 @@ where
             &self.settings,
             Some(self.executor.file_system()),
         )?;
+        let request_for_transcript = request.clone();
         let completion = timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -4390,6 +4421,7 @@ where
         })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+        self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
         self.record_model_output(state, model_output, Some(step_start_time))
             .await
     }
@@ -4405,6 +4437,7 @@ where
             &self.settings,
             Some(self.executor.file_system()),
         )?;
+        let request_for_transcript = request.clone();
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -4440,6 +4473,7 @@ where
                 );
             }
         };
+        self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
         self.record_model_output(state, model_output, Some(step_start_time))
             .await
     }
@@ -4523,6 +4557,7 @@ where
             Some(self.executor.file_system()),
             failures,
         )?;
+        let request_for_transcript = request.clone();
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -4559,6 +4594,7 @@ where
                 );
             }
         };
+        self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
 
         if !is_single_done_output(&model_output) {
             return self.record_model_error(
@@ -4592,6 +4628,32 @@ where
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
 
+    fn save_conversation_snapshot(
+        &self,
+        request: &ChatRequest,
+        model_output: &AgentOutput,
+    ) -> Result<(), AgentRunError> {
+        let Some(directory) = self.settings.save_conversation_path.as_deref() else {
+            return Ok(());
+        };
+        let directory = expand_user_path(directory);
+        std::fs::create_dir_all(&directory).map_err(|source| AgentRunError::ConversationSave {
+            path: directory.display().to_string(),
+            source,
+        })?;
+        let target = directory.join(format!(
+            "conversation_{}_{}.txt",
+            self.id,
+            self.next_step_number()
+        ));
+        std::fs::write(&target, format_conversation_snapshot(request, model_output)).map_err(
+            |source| AgentRunError::ConversationSave {
+                path: target.display().to_string(),
+                source,
+            },
+        )
+    }
+
     fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
         let step_interval = self
             .history
@@ -4599,21 +4661,23 @@ where
             .last()
             .and_then(|item| item.metadata.as_ref())
             .map(|metadata| metadata.duration_seconds().max(0.0));
-        let step_number = self
-            .history
+
+        StepMetadata {
+            step_start_time,
+            step_end_time,
+            step_number: self.next_step_number(),
+            step_interval,
+        }
+    }
+
+    fn next_step_number(&self) -> usize {
+        self.history
             .items
             .iter()
             .filter_map(|item| item.metadata.as_ref().map(|metadata| metadata.step_number))
             .max()
             .unwrap_or(0)
-            + 1;
-
-        StepMetadata {
-            step_start_time,
-            step_end_time,
-            step_number,
-            step_interval,
-        }
+            + 1
     }
 
     fn should_include_screenshot(&self) -> bool {
@@ -4635,6 +4699,54 @@ fn result_requests_screenshot(result: &ActionResult) -> bool {
         .and_then(|metadata| metadata.get("include_screenshot"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn format_conversation_snapshot(request: &ChatRequest, model_output: &AgentOutput) -> String {
+    let mut lines = Vec::new();
+    for message in &request.messages {
+        lines.push(format!(" {} ", message_role_name(&message.role)));
+        lines.push(render_message_content(&message.content));
+        lines.push(String::new());
+    }
+    lines.push(serde_json::to_string_pretty(model_output).unwrap_or_else(|_| "{}".to_owned()));
+    lines.join("\n")
+}
+
+fn message_role_name(role: &MessageRole) -> &'static str {
+    match role {
+        MessageRole::System => "system",
+        MessageRole::User => "user",
+        MessageRole::Assistant => "assistant",
+        MessageRole::Tool => "tool",
+    }
+}
+
+fn render_message_content(content: &[ContentPart]) -> String {
+    content
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => text.clone(),
+            ContentPart::ImageUrl { image_url, detail } => {
+                let detail = detail.map(ImageDetailLevel::as_str).unwrap_or("auto");
+                format!("<image_url detail=\"{detail}\">\n{image_url}\n</image_url>")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn expand_user_path(path: &str) -> std::path::PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(path));
+    }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return std::path::PathBuf::from(home).join(rest);
+    }
+    std::path::PathBuf::from(path)
 }
 
 fn now_seconds() -> f64 {
@@ -5955,6 +6067,11 @@ mod tests {
         assert_eq!(settings.planning_exploration_limit, 5);
         assert!(settings.use_thinking);
         assert!(!settings.flash_mode);
+        assert_eq!(settings.save_conversation_path, None);
+        assert_eq!(
+            settings.save_conversation_path_encoding.as_deref(),
+            Some("utf-8")
+        );
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
         assert!(settings.initial_actions.is_empty());
@@ -10549,6 +10666,49 @@ mod tests {
         let state_requests = agent.executor.session().state_screenshot_requests();
         assert_eq!(state_requests.first(), Some(&false));
         assert!(state_requests.iter().all(|include| !include));
+    }
+
+    #[tokio::test]
+    async fn agent_step_saves_conversation_transcript() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let transcript_dir = temp_dir.path().join("conversations");
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut state = blank_state();
+        state.screenshot = Some("abc123".to_owned());
+        let settings = AgentSettings {
+            save_conversation_path: Some(transcript_dir.display().to_string()),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "save transcript",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::with_states(vec![state]),
+        );
+        let agent_id = agent.id();
+
+        agent.step().await.expect("agent step");
+
+        let transcript_path = transcript_dir.join(format!("conversation_{agent_id}_1.txt"));
+        let transcript = std::fs::read_to_string(&transcript_path).expect("transcript file");
+        assert!(transcript.contains(" system "));
+        assert!(transcript.contains(" user "));
+        assert!(transcript.contains("save transcript"));
+        assert!(transcript.contains("<image_url detail=\"auto\">"));
+        assert!(transcript.contains("data:image/png;base64,abc123"));
+        assert!(transcript.contains("\"done\""));
+        assert!(transcript.contains("\"text\": \"complete\""));
     }
 
     #[tokio::test]

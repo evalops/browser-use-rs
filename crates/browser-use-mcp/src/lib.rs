@@ -468,6 +468,8 @@ mod tests {
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("vision_detail_level"));
         assert!(schema_text.contains("flash_mode"));
+        assert!(schema_text.contains("save_conversation_path"));
+        assert!(schema_text.contains("save_conversation_path_encoding"));
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("include_recent_events"));
         assert!(schema_text.contains("display_files_in_done_text"));
@@ -503,8 +505,11 @@ mod tests {
                 "use_vision": "auto",
                 "vision_detail_level": "high",
                 "excluded_actions": ["search", "scroll"],
+                "available_file_paths": ["/tmp/report.pdf"],
                 "include_recent_events": true,
-                "display_files_in_done_text": false
+                "display_files_in_done_text": false,
+                "save_conversation_path": "/tmp/conversations",
+                "save_conversation_path_encoding": "utf-8"
             }
         }))
         .expect("agent input");
@@ -518,8 +523,17 @@ mod tests {
             browser_use_core::VisionMode::Auto
         );
         assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
+        assert_eq!(input.settings.available_file_paths, ["/tmp/report.pdf"]);
         assert!(input.settings.include_recent_events);
         assert!(!input.settings.display_files_in_done_text);
+        assert_eq!(
+            input.settings.save_conversation_path.as_deref(),
+            Some("/tmp/conversations")
+        );
+        assert_eq!(
+            input.settings.save_conversation_path_encoding.as_deref(),
+            Some("utf-8")
+        );
     }
 
     #[test]
