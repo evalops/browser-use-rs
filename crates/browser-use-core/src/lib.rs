@@ -651,17 +651,38 @@ pub trait ActionExecutor {
 
 pub struct BrowserActionExecutor<S> {
     session: S,
+    file_system: ManagedFileSystem,
 }
 
 impl<S> BrowserActionExecutor<S> {
     #[must_use]
     pub fn new(session: S) -> Self {
-        Self { session }
+        Self::with_file_system(
+            session,
+            ManagedFileSystem::new_in_temp().expect("create managed file system"),
+        )
+    }
+
+    #[must_use]
+    pub fn with_file_system(session: S, file_system: ManagedFileSystem) -> Self {
+        Self {
+            session,
+            file_system,
+        }
     }
 
     #[must_use]
     pub fn session(&self) -> &S {
         &self.session
+    }
+
+    #[must_use]
+    pub fn file_system(&self) -> &ManagedFileSystem {
+        &self.file_system
+    }
+
+    pub fn file_system_mut(&mut self) -> &mut ManagedFileSystem {
+        &mut self.file_system
     }
 }
 
@@ -724,7 +745,7 @@ where
     S: BrowserSession + Send + Sync,
 {
     async fn execute(&mut self, action: &BrowserAction) -> ActionResult {
-        match execute_browser_action(&self.session, action).await {
+        match execute_browser_action(&self.session, &mut self.file_system, action).await {
             Ok(result) => result,
             Err(error) => ActionResult::error(error.to_string()),
         }
@@ -733,6 +754,7 @@ where
 
 async fn execute_browser_action<S>(
     session: &S,
+    file_system: &mut ManagedFileSystem,
     action: &BrowserAction,
 ) -> Result<ActionResult, BrowserError>
 where
@@ -930,7 +952,7 @@ where
                 })
             }
         }
-        BrowserAction::Done(params) => Ok(done_action_result(params)),
+        BrowserAction::Done(params) => Ok(done_action_result(params, Some(file_system))),
         BrowserAction::Extract(params) => {
             let text = session.page_text().await?;
             let source_url = session.state(false).await.ok().map(|state| state.url);
@@ -1092,10 +1114,10 @@ where
                 params.path, params.index
             )))
         }
-        BrowserAction::WriteFile(params) => write_file_action(params),
-        BrowserAction::ReadFile(params) => read_file_action(&params.file_name),
+        BrowserAction::WriteFile(params) => file_system.write_file(params),
+        BrowserAction::ReadFile(params) => file_system.read_file(&params.file_name),
         BrowserAction::ReplaceFile(params) => {
-            replace_file_action(&params.file_name, &params.old_str, &params.new_str)
+            file_system.replace_file(&params.file_name, &params.old_str, &params.new_str)
         }
     }
 }
@@ -1112,13 +1134,19 @@ fn is_file_input_click_validation_error(error: &BrowserError) -> bool {
         .contains("Cannot click on file input elements.")
 }
 
-fn done_action_result(params: &browser_use_tools::DoneAction) -> ActionResult {
+fn done_action_result(
+    params: &browser_use_tools::DoneAction,
+    file_system: Option<&ManagedFileSystem>,
+) -> ActionResult {
     let mut user_message = params.text.clone();
     let mut file_sections = Vec::new();
     let mut attachments = Vec::new();
 
     for file_name in &params.files_to_display {
-        if let Some((section, attachment)) = display_done_file(file_name) {
+        let displayed_file = file_system
+            .and_then(|file_system| file_system.display_done_file(file_name))
+            .or_else(|| display_done_file(file_name));
+        if let Some((section, attachment)) = displayed_file {
             file_sections.push(section);
             attachments.push(attachment);
         }
@@ -2445,6 +2473,11 @@ pub struct ManagedFileSystem {
 }
 
 impl ManagedFileSystem {
+    pub fn new_in_temp() -> Result<Self, BrowserError> {
+        let base_dir = std::env::temp_dir().join(format!("browser_use_agent_{}", Uuid::now_v7()));
+        Self::new(base_dir)
+    }
+
     pub fn new(base_dir: impl Into<std::path::PathBuf>) -> Result<Self, BrowserError> {
         let base_dir = base_dir.into();
         std::fs::create_dir_all(&base_dir)
@@ -2600,6 +2633,34 @@ impl ManagedFileSystem {
         self.files
             .get(&resolved_file.display_name)
             .map(|file| file.data.content.clone())
+    }
+
+    pub fn display_done_file(&self, file_name: &str) -> Option<(String, String)> {
+        if std::path::Path::new(file_name).is_absolute() {
+            return display_done_file(file_name);
+        }
+
+        let resolved_file = resolve_file_action_path_at(
+            file_name,
+            supported_text_extensions(),
+            Some(&self.data_dir),
+        );
+        if validate_text_file_name(&resolved_file.display_name).is_some() {
+            return None;
+        }
+
+        let content = self
+            .files
+            .get(&resolved_file.display_name)
+            .map(|file| file.data.content.clone())?;
+        let attachment = std::fs::canonicalize(&resolved_file.path)
+            .unwrap_or_else(|_| resolved_file.path.clone())
+            .display()
+            .to_string();
+        Some((
+            format!("{}:\n{content}", resolved_file.display_name),
+            attachment,
+        ))
     }
 
     pub fn write_file(
@@ -6416,6 +6477,146 @@ mod tests {
                 .data
                 .content,
             "# Report\nPDF body"
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_routes_relative_file_actions_through_managed_sandbox() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let unique = format!(
+            "executor-sandbox-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let original = format!("nested/{unique}@ report.MD");
+        let resolved = format!("{unique}-report.md");
+        let cwd_candidate = std::env::current_dir()
+            .expect("current dir")
+            .join(&resolved);
+        assert!(!cwd_candidate.exists());
+
+        let session = MockSession::new();
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: original.clone(),
+                content: "alpha".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let append_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: original.clone(),
+                content: "\nbeta".to_owned(),
+                append: true,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let replace_result = executor
+            .execute(&BrowserAction::ReplaceFile(ReplaceFileAction {
+                file_name: original.clone(),
+                old_str: "alpha".to_owned(),
+                new_str: "gamma".to_owned(),
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: original.clone(),
+            }))
+            .await;
+        let done_result = executor
+            .execute(&BrowserAction::Done(DoneAction {
+                text: "Done".to_owned(),
+                success: true,
+                files_to_display: vec![original.clone()],
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(append_result.error, None);
+        assert_eq!(replace_result.error, None);
+        assert_eq!(read_result.error, None);
+        assert_eq!(done_result.error, None);
+
+        let sandbox_file = executor.file_system().data_dir().join(&resolved);
+        assert_eq!(
+            std::fs::read_to_string(&sandbox_file).expect("sandbox file"),
+            "gamma\nbeta"
+        );
+        assert!(!cwd_candidate.exists());
+
+        let read_content = read_result.extracted_content.as_deref().expect("read");
+        assert!(read_content.contains(&format!(
+            "Note: filename was auto-corrected from '{original}' to '{resolved}'."
+        )));
+        assert!(read_content.contains("gamma\nbeta"));
+
+        let done_content = done_result.extracted_content.as_deref().expect("done");
+        assert!(done_content.contains("Done\n\nAttachments:"));
+        assert!(done_content.contains(&format!("{resolved}:\ngamma\nbeta")));
+        assert_eq!(
+            done_result.attachments,
+            vec![
+                std::fs::canonicalize(sandbox_file)
+                    .expect("canonical sandbox file")
+                    .display()
+                    .to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_preserves_absolute_file_action_paths() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system_dir = temp_dir.path().join("agent");
+        let external_file = temp_dir.path().join("external.md");
+        let external_file_name = external_file.display().to_string();
+        let session = MockSession::new();
+        let file_system = ManagedFileSystem::new(&file_system_dir).expect("managed file system");
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: external_file_name.clone(),
+                content: "external".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: external_file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(read_result.error, None);
+        assert_eq!(
+            std::fs::read_to_string(&external_file).expect("external file"),
+            "external"
+        );
+        assert!(
+            !executor
+                .file_system()
+                .data_dir()
+                .join("external.md")
+                .exists()
+        );
+        assert!(
+            read_result
+                .extracted_content
+                .as_deref()
+                .expect("absolute read")
+                .contains("external")
         );
     }
 

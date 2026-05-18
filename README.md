@@ -67,7 +67,9 @@ includes:
 - Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
-  artifacts. Executor and prompt wiring for that state is tracked separately.
+  artifacts. Executor-owned relative `write_file`/append/`read_file`/
+  `replace_file` and `done.files_to_display` flows route through the sandbox
+  while absolute external paths continue to bypass it.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, upstream-style page-stat prompt

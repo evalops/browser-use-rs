@@ -56,7 +56,8 @@ Implemented:
 - Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
-  artifacts.
+  artifacts. Executor-owned relative file actions and `done.files_to_display`
+  route through that sandbox while absolute external paths bypass it.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -162,8 +163,8 @@ Implemented:
 
 Next:
 
-1. Wire managed `FileSystem` state into the executor and agent prompt/state
-   lifecycle, including relative action routing through the sandbox.
+1. Expose managed `FileSystem` state in the agent prompt/state lifecycle,
+   including `<file_system>` and `<todo_contents>` context.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
 3. Expand agent planning depth and replay coverage for longer multi-step tasks.
