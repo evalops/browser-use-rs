@@ -22,8 +22,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   outcomes, reconnect, JavaScript dialog, download, and storage-state event
   shapes. `BrowserProfile.downloads_path` enables browser download behavior and
   CDP download lifecycle events for launched sessions; `storage_state_path`
-  loads and saves browser cookie plus current-origin local/session storage state
-  with storage lifecycle events.
+  loads and saves browser cookie plus attached frame-tree origin local/session
+  storage state with storage lifecycle events.
   CDP websocket closure records a browser-stopped lifecycle diagnostic, and
   unexpected websocket drops trigger bounded actor-level reconnect attempts
   with reconnecting/reconnected/failure lifecycle diagnostics.
@@ -157,11 +157,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   stable event shapes for reconnect, target-crash/network-timeout, JavaScript
   dialog, download, and storage-state lifecycle diagnostics. Live CDP wiring now
   records target crash, JavaScript dialog, navigation failure, configured
-  download events, cookie plus current-origin storage-state save/load events,
-  explicit CDP websocket closure diagnostics, bounded actor-level reconnect
-  attempts, direct navigation timeouts, and watchdog-style stuck HTTP(S)
-  request timeouts. #30 tracks the remaining session rehydration after
-  reconnect, multi-origin storage discovery, and full general-purpose
+  download events, cookie plus attached frame-tree origin storage-state
+  save/load events, explicit CDP websocket closure diagnostics, bounded
+  actor-level reconnect attempts, direct navigation timeouts, and
+  watchdog-style stuck HTTP(S) request timeouts. #30 tracks the remaining
+  session rehydration after reconnect, profile-wide storage discovery outside
+  the attached frame tree, and full general-purpose
   event-bus parity.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact

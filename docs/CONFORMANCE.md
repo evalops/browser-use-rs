@@ -54,15 +54,15 @@ replies; prompt state still only includes security-relevant recent events and
 closed-popup messages. The public JSON shape is locked by normal and
 exceptional lifecycle fixtures. Live CDP wiring records target crash,
 JavaScript dialog, navigation failure, configured download events, and cookie
-plus current-origin storage-state save/load events. CDP websocket closure
-records a browser-stopped lifecycle diagnostic, and direct `Page.navigate`
-timeouts plus stuck HTTP(S) requests record network-timeout lifecycle
-diagnostics. Unexpected websocket drops trigger bounded actor-level reconnect
-attempts with reconnecting/reconnected/failure lifecycle diagnostics.
+plus attached frame-tree origin storage-state save/load events. CDP websocket
+closure records a browser-stopped lifecycle diagnostic, and direct
+`Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
+lifecycle diagnostics. Unexpected websocket drops trigger bounded actor-level
+reconnect attempts with reconnecting/reconnected/failure lifecycle diagnostics.
 
 Remaining lifecycle gaps are tracked in #30: stale session rehydration after
-reconnect, multi-origin storage discovery, and a full general-purpose event bus
-are still lighter than upstream.
+reconnect, profile-wide storage discovery outside the attached frame tree, and a
+full general-purpose event bus are still lighter than upstream.
 
 ## Drift Policy
 

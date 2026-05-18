@@ -37,9 +37,9 @@ includes:
   requests that remain active beyond the watchdog budget.
   Launch profiles can set `downloads_path` to enable Chrome download behavior
   and browser-level download lifecycle events, and `storage_state_path` to
-  load/save browser cookie and current-origin local/session storage state with
-  lifecycle notifications. Stale session rehydration after reconnect and
-  multi-origin storage discovery are tracked in
+  load/save browser cookie and attached frame-tree origin local/session storage
+  state with lifecycle notifications. Stale session rehydration after reconnect
+  and profile-wide storage discovery are tracked in
   [#30](https://github.com/evalops/browser-use-rs/issues/30).
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe

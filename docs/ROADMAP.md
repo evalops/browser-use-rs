@@ -87,8 +87,8 @@ Implemented:
   outcomes, reconnect, JavaScript dialog, download, and storage-state event
   shapes without placing the full lifecycle stream into normal agent replies.
   Live CDP wiring records target crash, JavaScript dialog, navigation failure,
-  configured download events, cookie plus current-origin storage-state
-  save/load events, CDP websocket closure diagnostics, and direct
+  configured download events, cookie plus attached frame-tree origin
+  storage-state save/load events, CDP websocket closure diagnostics, and direct
   `Page.navigate` plus stuck HTTP(S) request timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with
   reconnecting/reconnected/failure lifecycle diagnostics.
@@ -193,6 +193,6 @@ Implemented:
 Next:
 
 1. Continue [#30](https://github.com/evalops/browser-use-rs/issues/30) by
-   wiring session rehydration after reconnect and multi-origin storage
-   discovery into live CDP/session behavior.
+   wiring session rehydration after reconnect and profile-wide storage
+   discovery outside the attached frame tree into live CDP/session behavior.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

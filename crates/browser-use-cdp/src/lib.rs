@@ -1,6 +1,6 @@
 //! Chrome DevTools Protocol browser-session layer.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -5166,11 +5166,34 @@ async fn browser_storage_state(
         "origins": [],
     });
     if let Some(page) = page {
-        if let Some(origin_state) = current_origin_storage_state(connection, page).await? {
-            state["origins"] = Value::Array(vec![origin_state]);
-        }
+        state["origins"] = Value::Array(origin_storage_states(connection, page).await?);
     }
     Ok(state)
+}
+
+async fn origin_storage_states(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+) -> Result<Vec<Value>, BrowserError> {
+    let mut states = BTreeMap::new();
+    if let Some(origin_state) = current_origin_storage_state(connection, page).await? {
+        upsert_origin_storage_state(&mut states, origin_state);
+    }
+
+    if let Ok(origins) = frame_security_origins(connection, page).await {
+        let _ = connection
+            .command("DOMStorage.enable", json!({}), Some(&page.session_id))
+            .await;
+        for origin in origins {
+            if let Some(origin_state) =
+                dom_storage_origin_state(connection, page, origin.as_str()).await
+            {
+                upsert_origin_storage_state(&mut states, origin_state);
+            }
+        }
+    }
+
+    Ok(states.into_values().collect())
 }
 
 async fn current_origin_storage_state(
@@ -5200,6 +5223,191 @@ fn origin_storage_has_items(origin_state: &Value) -> bool {
             .get("sessionStorage")
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty())
+}
+
+fn upsert_origin_storage_state(states: &mut BTreeMap<String, Value>, origin_state: Value) {
+    let Some(origin) = origin_state.get("origin").and_then(Value::as_str) else {
+        return;
+    };
+    if !origin_storage_has_items(&origin_state) {
+        return;
+    }
+
+    states
+        .entry(origin.to_owned())
+        .and_modify(|existing| {
+            *existing = merge_origin_storage_states(existing, &origin_state);
+        })
+        .or_insert(origin_state);
+}
+
+fn merge_origin_storage_states(existing: &Value, incoming: &Value) -> Value {
+    let origin = incoming
+        .get("origin")
+        .and_then(Value::as_str)
+        .or_else(|| existing.get("origin").and_then(Value::as_str))
+        .unwrap_or_default();
+    json!({
+        "origin": origin,
+        "localStorage": merge_storage_item_arrays(
+            existing.get("localStorage"),
+            incoming.get("localStorage"),
+        ),
+        "sessionStorage": merge_storage_item_arrays(
+            existing.get("sessionStorage"),
+            incoming.get("sessionStorage"),
+        ),
+    })
+}
+
+fn merge_storage_item_arrays(first: Option<&Value>, second: Option<&Value>) -> Value {
+    let mut items = BTreeMap::new();
+    for item in first
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(second.and_then(Value::as_array).into_iter().flatten())
+    {
+        let Some(name) = item.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let value = item
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        items.insert(name.to_owned(), value.to_owned());
+    }
+
+    Value::Array(
+        items
+            .into_iter()
+            .map(|(name, value)| json!({ "name": name, "value": value }))
+            .collect(),
+    )
+}
+
+async fn frame_security_origins(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+) -> Result<BTreeSet<String>, BrowserError> {
+    let result = connection
+        .command("Page.getFrameTree", json!({}), Some(&page.session_id))
+        .await?;
+    Ok(frame_security_origins_from_result(&result))
+}
+
+fn frame_security_origins_from_result(result: &Value) -> BTreeSet<String> {
+    let mut origins = BTreeSet::new();
+    if let Some(frame_tree) = result.get("frameTree") {
+        collect_frame_security_origins(frame_tree, &mut origins);
+    }
+    origins
+}
+
+fn collect_frame_security_origins(frame_tree: &Value, origins: &mut BTreeSet<String>) {
+    if let Some(frame) = frame_tree.get("frame") {
+        if let Some(origin) = security_origin_for_frame(frame) {
+            origins.insert(origin);
+        }
+    }
+    for child in frame_tree
+        .get("childFrames")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        collect_frame_security_origins(child, origins);
+    }
+}
+
+fn security_origin_for_frame(frame: &Value) -> Option<String> {
+    frame
+        .get("securityOrigin")
+        .and_then(Value::as_str)
+        .and_then(normalize_http_origin)
+        .or_else(|| {
+            frame
+                .get("url")
+                .and_then(Value::as_str)
+                .and_then(http_origin_for_url)
+        })
+}
+
+fn normalize_http_origin(origin: &str) -> Option<String> {
+    let origin = origin.trim();
+    if origin.starts_with("http://") || origin.starts_with("https://") {
+        Some(origin.trim_end_matches('/').to_owned())
+    } else {
+        None
+    }
+}
+
+fn http_origin_for_url(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return None;
+    }
+    Some(parsed.origin().ascii_serialization())
+}
+
+async fn dom_storage_origin_state(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+    origin: &str,
+) -> Option<Value> {
+    let local_storage = dom_storage_items(connection, page, origin, true)
+        .await
+        .unwrap_or_default();
+    let session_storage = dom_storage_items(connection, page, origin, false)
+        .await
+        .unwrap_or_default();
+    let origin_state = json!({
+        "origin": origin,
+        "localStorage": local_storage,
+        "sessionStorage": session_storage,
+    });
+    origin_storage_has_items(&origin_state).then_some(origin_state)
+}
+
+async fn dom_storage_items(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+    origin: &str,
+    is_local_storage: bool,
+) -> Result<Vec<Value>, BrowserError> {
+    let result = connection
+        .command(
+            "DOMStorage.getDOMStorageItems",
+            json!({
+                "storageId": {
+                    "securityOrigin": origin,
+                    "isLocalStorage": is_local_storage,
+                }
+            }),
+            Some(&page.session_id),
+        )
+        .await?;
+    Ok(dom_storage_entries_to_items(result.get("entries")))
+}
+
+fn dom_storage_entries_to_items(entries: Option<&Value>) -> Vec<Value> {
+    let mut items = BTreeMap::new();
+    for entry in entries.and_then(Value::as_array).into_iter().flatten() {
+        let Some(pair) = entry.as_array() else {
+            continue;
+        };
+        let Some(name) = pair.first().and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(value) = pair.get(1).and_then(Value::as_str) else {
+            continue;
+        };
+        items.insert(name.to_owned(), value.to_owned());
+    }
+    items
+        .into_iter()
+        .map(|(name, value)| json!({ "name": name, "value": value }))
+        .collect()
 }
 
 async fn load_browser_storage_state(
@@ -7082,6 +7290,79 @@ mod tests {
                 "sessionStorage": []
             }))
             .is_none()
+        );
+
+        let frame_tree = json!({
+            "frameTree": {
+                "frame": {
+                    "id": "root",
+                    "url": "https://example.test/dashboard",
+                    "securityOrigin": "https://example.test"
+                },
+                "childFrames": [
+                    {
+                        "frame": {
+                            "id": "child-1",
+                            "url": "https://accounts.example.test/login"
+                        }
+                    },
+                    {
+                        "frame": {
+                            "id": "child-2",
+                            "url": "about:blank",
+                            "securityOrigin": "null"
+                        }
+                    }
+                ]
+            }
+        });
+        assert_eq!(
+            frame_security_origins_from_result(&frame_tree)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                "https://accounts.example.test".to_owned(),
+                "https://example.test".to_owned()
+            ]
+        );
+
+        let dom_storage_items = dom_storage_entries_to_items(Some(&json!([
+            ["zeta", "last"],
+            ["alpha", "first"],
+            ["ignored"],
+        ])));
+        assert_eq!(
+            dom_storage_items,
+            vec![
+                json!({ "name": "alpha", "value": "first" }),
+                json!({ "name": "zeta", "value": "last" }),
+            ]
+        );
+
+        let mut origin_states = BTreeMap::new();
+        upsert_origin_storage_state(
+            &mut origin_states,
+            json!({
+                "origin": "https://example.test",
+                "localStorage": [{ "name": "theme", "value": "dark" }],
+                "sessionStorage": []
+            }),
+        );
+        upsert_origin_storage_state(
+            &mut origin_states,
+            json!({
+                "origin": "https://example.test",
+                "localStorage": [{ "name": "theme", "value": "light" }],
+                "sessionStorage": [{ "name": "tab", "value": "reports" }]
+            }),
+        );
+        assert_eq!(
+            origin_states["https://example.test"]["localStorage"],
+            json!([{ "name": "theme", "value": "light" }])
+        );
+        assert_eq!(
+            origin_states["https://example.test"]["sessionStorage"],
+            json!([{ "name": "tab", "value": "reports" }])
         );
     }
 
