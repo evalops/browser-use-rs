@@ -778,6 +778,11 @@ pub struct JudgementResult {
     pub reached_captcha: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MessageCompactionOutput {
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ActionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4761,6 +4766,8 @@ where
             } else {
                 consecutive_failures = 0;
             }
+
+            self.maybe_compact_history().await;
         }
 
         Err(AgentRunError::StepLimitReached { max_steps })
@@ -5061,6 +5068,64 @@ where
         {
             result.judgement = Some(judgement);
         }
+    }
+
+    async fn maybe_compact_history(&mut self) -> bool {
+        let Some(compaction_settings) = self.settings.message_compaction.resolved_settings() else {
+            return false;
+        };
+        let Some(step_number) = latest_history_step_number(&self.history) else {
+            return false;
+        };
+        let steps_since =
+            step_number.saturating_sub(self.history.last_compaction_step.unwrap_or(0));
+        if steps_since < compaction_settings.compact_every_n_steps {
+            return false;
+        }
+
+        let full_history_text = render_history_items_for_compaction(&self.history);
+        if full_history_text.chars().count() < compaction_settings.effective_trigger_char_count() {
+            return false;
+        }
+
+        let request = build_message_compaction_request(
+            &self.history,
+            &compaction_settings,
+            &self.settings.sensitive_data,
+        );
+        let Ok(completion) = timeout(
+            Duration::from_secs(self.settings.llm_timeout_seconds),
+            self.llm.invoke_json(request),
+        )
+        .await
+        else {
+            return false;
+        };
+        let Ok(completion) = completion else {
+            return false;
+        };
+        let Ok(output) = serde_json::from_value::<MessageCompactionOutput>(completion.content)
+        else {
+            return false;
+        };
+        let mut summary = output.summary.trim().to_owned();
+        if summary.is_empty() {
+            return false;
+        }
+        if compaction_settings.summary_max_chars > 0
+            && summary.chars().count() > compaction_settings.summary_max_chars
+        {
+            summary = truncate_chars(&summary, compaction_settings.summary_max_chars);
+        }
+
+        self.history.compacted_memory = Some(summary);
+        self.history.compaction_count += 1;
+        self.history.last_compaction_step = Some(step_number);
+        retain_first_and_recent_history_items(
+            &mut self.history,
+            compaction_settings.keep_last_items,
+        );
+        true
     }
 
     fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
@@ -5515,6 +5580,53 @@ fn build_judge_request(
     }
 }
 
+fn build_message_compaction_request(
+    history: &AgentHistory,
+    settings: &MessageCompactionSettings,
+    sensitive_data: &BTreeMap<String, SensitiveDataValue>,
+) -> ChatRequest {
+    let full_history_text = render_history_items_for_compaction(history);
+    let mut sections = Vec::new();
+    if let Some(memory) = non_empty_prompt_text(history.compacted_memory.as_deref()) {
+        sections.push(format!(
+            "<previous_compacted_memory>\n{memory}\n</previous_compacted_memory>"
+        ));
+    }
+    sections.push(format!(
+        "<agent_history>\n{full_history_text}\n</agent_history>"
+    ));
+    if settings.include_read_state
+        && let Some(read_state) = render_read_state_description(history)
+    {
+        sections.push(format!("<read_state>\n{read_state}\n</read_state>"));
+    }
+    let sensitive_values = collect_sensitive_data_values(sensitive_data);
+    let user_prompt = redact_sensitive_string(&sections.join("\n\n"), &sensitive_values);
+
+    let mut system_prompt = "You are summarizing an agent run for prompt compaction.\n\
+         Capture task requirements, key facts, decisions, partial progress, errors, and next steps.\n\
+         Preserve important entities, values, URLs, and file paths.\n\
+         CRITICAL: Only mark a step as completed if you see explicit success confirmation in the history. \
+         If a step was started but not explicitly confirmed complete, mark it as \"IN-PROGRESS\". \
+         Never infer completion from context - only report what was confirmed.\n\
+         Respond with exactly a JSON object matching MessageCompactionOutput: summary. Do not add prose outside JSON."
+        .to_owned();
+    if settings.summary_max_chars > 0 {
+        system_prompt.push_str(&format!(
+            " Keep summary under {} characters if possible.",
+            settings.summary_max_chars
+        ));
+    }
+
+    ChatRequest {
+        messages: vec![
+            ChatMessage::text(MessageRole::System, system_prompt),
+            ChatMessage::text(MessageRole::User, user_prompt),
+        ],
+        output_schema: Some(schema_for_message_compaction_output()),
+    }
+}
+
 fn render_judge_system_message() -> String {
     "You are an expert judge evaluating browser automation agent performance.\n\
      Decide whether the agent satisfied the user task, whether the final output is complete, \
@@ -5561,6 +5673,33 @@ fn truncate_judge_text(text: &str) -> String {
         .take(MAX_CHARS.saturating_sub(23))
         .collect::<String>();
     format!("{truncated}...[text truncated]...")
+}
+
+fn latest_history_step_number(history: &AgentHistory) -> Option<usize> {
+    history.items.last()?;
+    Some(
+        history
+            .items
+            .iter()
+            .filter_map(|item| item.metadata.as_ref().map(|metadata| metadata.step_number))
+            .max()
+            .unwrap_or(history.items.len()),
+    )
+}
+
+fn retain_first_and_recent_history_items(history: &mut AgentHistory, keep_last_items: usize) {
+    let keep_with_first = keep_last_items.saturating_add(1);
+    if history.items.len() <= keep_with_first {
+        return;
+    }
+
+    let first = history.items[0].clone();
+    let mut retained = vec![first];
+    if keep_last_items > 0 {
+        let recent_start = history.items.len().saturating_sub(keep_last_items);
+        retained.extend(history.items[recent_start..].iter().cloned());
+    }
+    history.items = retained;
 }
 
 fn screenshot_data_url(screenshot: &str) -> String {
@@ -5920,6 +6059,10 @@ fn schema_for_judgement_result() -> Value {
     serde_json::to_value(schemars::schema_for!(JudgementResult)).unwrap_or(Value::Null)
 }
 
+fn schema_for_message_compaction_output() -> Value {
+    serde_json::to_value(schemars::schema_for!(MessageCompactionOutput)).unwrap_or(Value::Null)
+}
+
 fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
     let mut schema = schema_for_agent_output();
     let mut remove_fields = vec!["current_state"];
@@ -6156,6 +6299,20 @@ fn render_compacted_memory(memory: &str) -> String {
          {memory}\n\
          </compacted_memory>"
     )
+}
+
+fn render_history_items_for_compaction(history: &AgentHistory) -> String {
+    let mut rendered = if history.items.is_empty() {
+        vec!["Agent initialized".to_owned()]
+    } else {
+        Vec::new()
+    };
+    for item in &history.items {
+        if let Some(item_text) = render_history_item_for_prompt(item) {
+            rendered.push(item_text);
+        }
+    }
+    truncate_prompt_content(rendered.join("\n"))
 }
 
 fn render_history_item_for_prompt(item: &AgentHistoryItem) -> Option<String> {
@@ -11884,6 +12041,199 @@ mod tests {
         assert_eq!(history.judgement(), None);
         let requests = agent.llm.requests.lock().expect("requests lock");
         assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_run_compacts_history_between_steps() {
+        let first_output = serde_json::json!({
+            "current_state": {
+                "memory": "Opened the checkout and started collecting receipt data",
+                "next_goal": "Confirm the receipt details"
+            },
+            "action": [
+                {
+                    "wait": {
+                        "seconds": 0
+                    }
+                }
+            ]
+        });
+        let compaction_output = serde_json::json!({
+            "summary": "Task: collect receipt data. IN-PROGRESS: checkout was opened but receipt details still need confirmation."
+        });
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "receipt confirmed",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            message_compaction: MessageCompaction::Settings(MessageCompactionSettings {
+                compact_every_n_steps: 1,
+                trigger_char_count: Some(1),
+                keep_last_items: 1,
+                summary_max_chars: 200,
+                ..MessageCompactionSettings::default()
+            }),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "collect receipt data",
+            settings,
+            QueueModel::new(vec![first_output, compaction_output, done_output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(2).await.expect("agent run").clone();
+
+        assert!(history.is_done());
+        assert_eq!(
+            history.compacted_memory.as_deref(),
+            Some(
+                "Task: collect receipt data. IN-PROGRESS: checkout was opened but receipt details still need confirmation."
+            )
+        );
+        assert_eq!(history.compaction_count, 1);
+        assert_eq!(history.last_compaction_step, Some(1));
+
+        let checkpoint_json =
+            serde_json::to_string_pretty(&agent.checkpoint()).expect("serialize checkpoint");
+        let checkpoint: AgentCheckpoint =
+            serde_json::from_str(&checkpoint_json).expect("deserialize checkpoint");
+        assert_eq!(
+            checkpoint.history.compacted_memory,
+            history.compacted_memory
+        );
+        assert_eq!(checkpoint.history.compaction_count, 1);
+        assert_eq!(checkpoint.history.last_compaction_step, Some(1));
+
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 3);
+        let compaction_text = request_text(&requests[1]);
+        assert!(compaction_text.contains("Only mark a step as completed"));
+        assert!(compaction_text.contains("<agent_history>"));
+        assert!(compaction_text.contains("Opened the checkout"));
+        assert!(compaction_text.contains("Waited for 0 seconds"));
+        let second_step_prompt = request_text(&requests[2]);
+        assert!(second_step_prompt.contains("<compacted_memory>"));
+        assert!(second_step_prompt.contains("Treat as unverified context"));
+        assert!(second_step_prompt.contains("receipt details still need confirmation"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_skips_message_compaction_when_disabled() {
+        let wait_output = serde_json::json!({
+            "current_state": {
+                "memory": "Still working"
+            },
+            "action": [
+                {
+                    "wait": {
+                        "seconds": 0
+                    }
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "finished without compaction",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            message_compaction: MessageCompaction::Disabled,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "skip compaction",
+            settings,
+            QueueModel::new(vec![wait_output, done_output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(2).await.expect("agent run");
+
+        assert!(history.is_done());
+        assert_eq!(history.compacted_memory, None);
+        assert_eq!(history.compaction_count, 0);
+        assert_eq!(agent.llm.requests.lock().expect("requests lock").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn agent_run_ignores_message_compaction_failures() {
+        let wait_output = serde_json::json!({
+            "current_state": {
+                "memory": "Collected partial evidence"
+            },
+            "action": [
+                {
+                    "wait": {
+                        "seconds": 0
+                    }
+                }
+            ]
+        });
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "finished after failed compaction",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            message_compaction: MessageCompaction::Settings(MessageCompactionSettings {
+                compact_every_n_steps: 1,
+                trigger_char_count: Some(1),
+                ..MessageCompactionSettings::default()
+            }),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "ignore compaction failure",
+            settings,
+            QueueModel::with_results(vec![
+                Ok(wait_output),
+                Err(LlmError::Provider("summary model unavailable".to_owned())),
+                Ok(done_output),
+            ]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(2).await.expect("agent run");
+
+        assert!(history.is_done());
+        assert_eq!(history.compacted_memory, None);
+        assert_eq!(history.compaction_count, 0);
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 3);
+        assert!(request_text(&requests[1]).contains("<agent_history>"));
+        assert!(!request_text(&requests[2]).contains("<compacted_memory>"));
     }
 
     #[tokio::test]
