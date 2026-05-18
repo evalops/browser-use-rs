@@ -392,10 +392,18 @@ fn element_action_js(index: u32, action: &str) -> String {
     element_eval_js(index, &format!("{action}\n  return true;"))
 }
 
-fn click_element_js(index: u32) -> String {
-    element_action_js(
-        index,
-        r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
+fn element_action_function_js(action: &str) -> String {
+    format!(
+        r#"function() {{
+  const el = this;
+  el.scrollIntoView({{ block: 'center', inline: 'center' }});
+  {action}
+  return true;
+}}"#
+    )
+}
+
+const CLICK_ELEMENT_ACTION_JS: &str = r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
   if (tag === 'select') {
     throw new Error('Cannot click on <select> elements. Use get_dropdown_options and select_dropdown_option instead.');
   }
@@ -403,8 +411,10 @@ fn click_element_js(index: u32) -> String {
     throw new Error('Cannot click on file input elements. Use upload_file instead.');
   }
   if (typeof el.focus === 'function') el.focus();
-  el.click();"#,
-    )
+  el.click();"#;
+
+fn click_element_js(index: u32) -> String {
+    element_action_js(index, CLICK_ELEMENT_ACTION_JS)
 }
 
 fn dropdown_options_js(index: u32) -> String {
@@ -1009,6 +1019,7 @@ pub struct AttachedPage {
 pub struct CdpBrowserSession {
     connection: CdpConnection,
     page: Mutex<AttachedPage>,
+    last_dom_state: Mutex<Option<SerializedDomState>>,
     _launched_browser: Option<LaunchedBrowser>,
 }
 
@@ -1020,6 +1031,7 @@ impl CdpBrowserSession {
         Ok(Self {
             connection,
             page: Mutex::new(page),
+            last_dom_state: Mutex::new(None),
             _launched_browser: None,
         })
     }
@@ -1032,6 +1044,7 @@ impl CdpBrowserSession {
         Ok(Self {
             connection,
             page: Mutex::new(page),
+            last_dom_state: Mutex::new(None),
             _launched_browser: Some(launched_browser),
         })
     }
@@ -1049,6 +1062,24 @@ impl CdpBrowserSession {
 
     async fn set_current_page(&self, page: AttachedPage) {
         *self.page.lock().await = page;
+    }
+
+    async fn set_cached_dom_state(&self, dom_state: SerializedDomState) {
+        *self.last_dom_state.lock().await = Some(dom_state);
+    }
+
+    async fn clear_cached_dom_state(&self) {
+        *self.last_dom_state.lock().await = None;
+    }
+
+    async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
+        self.last_dom_state
+            .lock()
+            .await
+            .as_ref()?
+            .selector_map
+            .get(&index)
+            .cloned()
     }
 
     async fn evaluate_json(&self, expression: &str) -> Result<Value, BrowserError> {
@@ -1077,6 +1108,55 @@ impl CdpBrowserSession {
                 "Runtime.evaluate",
                 json!({
                     "expression": expression,
+                    "awaitPromise": true,
+                    "returnByValue": true,
+                }),
+                Some(&page.session_id),
+            )
+            .await?;
+        let _ = runtime_evaluate_value(result)?;
+        Ok(())
+    }
+
+    async fn resolve_element_object_id(
+        &self,
+        page: &AttachedPage,
+        element: &DomElementRef,
+    ) -> Result<String, BrowserError> {
+        let params = if let Some(node_id) = element.node_id {
+            json!({ "nodeId": node_id })
+        } else if element.backend_node_id != 0 {
+            json!({ "backendNodeId": element.backend_node_id })
+        } else {
+            return Err(BrowserError::MissingResponseData(
+                "cached element node id".to_owned(),
+            ));
+        };
+
+        self.connection
+            .command("DOM.resolveNode", params, Some(&page.session_id))
+            .await?
+            .get("object")
+            .and_then(|object| object.get("objectId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| BrowserError::MissingResponseData("DOM.resolveNode objectId".to_owned()))
+    }
+
+    async fn call_element_function(
+        &self,
+        element: &DomElementRef,
+        function_declaration: String,
+    ) -> Result<(), BrowserError> {
+        let page = self.current_page().await;
+        let object_id = self.resolve_element_object_id(&page, element).await?;
+        let result = self
+            .connection
+            .command(
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": function_declaration,
                     "awaitPromise": true,
                     "returnByValue": true,
                 }),
@@ -1402,6 +1482,19 @@ fn nonempty_value(value: Option<&str>) -> Option<&str> {
 
 fn is_useful_ax_role(role: &str) -> bool {
     !matches!(role, "generic" | "none" | "presentation" | "StaticText")
+}
+
+fn should_fallback_to_index_traversal(error: &BrowserError) -> bool {
+    match error {
+        BrowserError::MissingResponseData(message) => message.contains("cached element node id"),
+        BrowserError::CommandFailed { method, message } => {
+            method == "DOM.resolveNode"
+                && (message.contains("No node")
+                    || message.contains("Could not find")
+                    || message.contains("Invalid remote object id"))
+        }
+        _ => false,
+    }
 }
 
 fn element_bounds_from_value(value: &Value) -> Option<ElementBounds> {
@@ -1975,6 +2068,7 @@ impl BrowserSession for CdpBrowserSession {
         let (url, title) = self.page_location().await?;
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
+        self.set_cached_dom_state(dom_state.clone()).await;
         let pagination_buttons = detect_pagination_buttons(&dom_state);
         let current_page = self.current_page().await;
         let tabs = page_tabs(&self.connection).await?;
@@ -2017,6 +2111,7 @@ impl BrowserSession for CdpBrowserSession {
             let target_id = create_target(&self.connection, url).await?;
             let page = attach_to_target(&self.connection, target_id).await?;
             self.set_current_page(page).await;
+            self.clear_cached_dom_state().await;
             return Ok(());
         }
 
@@ -2030,6 +2125,7 @@ impl BrowserSession for CdpBrowserSession {
                 Some(&page.session_id),
             )
             .await?;
+        self.clear_cached_dom_state().await;
         Ok(())
     }
 
@@ -2051,6 +2147,7 @@ impl BrowserSession for CdpBrowserSession {
                 Some(&page.session_id),
             )
             .await?;
+        self.clear_cached_dom_state().await;
         Ok(())
     }
 
@@ -2058,6 +2155,7 @@ impl BrowserSession for CdpBrowserSession {
         let target_id = resolve_page_target_id(&self.connection, target_id).await?;
         let page = attach_to_target(&self.connection, target_id).await?;
         self.set_current_page(page).await;
+        self.clear_cached_dom_state().await;
         Ok(())
     }
 
@@ -2075,11 +2173,25 @@ impl BrowserSession for CdpBrowserSession {
             let page = attach_or_create_page(&self.connection).await?;
             self.set_current_page(page).await;
         }
+        self.clear_cached_dom_state().await;
 
         Ok(())
     }
 
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
+        if let Some(element) = self.cached_element(index).await {
+            match self
+                .call_element_function(
+                    &element,
+                    element_action_function_js(CLICK_ELEMENT_ACTION_JS),
+                )
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) if should_fallback_to_index_traversal(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
         self.evaluate_effect(click_element_js(index)).await
     }
 
@@ -2938,6 +3050,16 @@ mod tests {
     }
 
     #[test]
+    fn cached_click_function_uses_same_guard_body() {
+        let function = element_action_function_js(CLICK_ELEMENT_ACTION_JS);
+
+        assert!(function.contains("const el = this;"));
+        assert!(function.contains("Cannot click on <select> elements."));
+        assert!(function.contains("Cannot click on file input elements."));
+        assert!(function.contains("el.click();"));
+    }
+
+    #[test]
     fn interactive_snapshot_uses_image_alt_text_sources() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("descendantAltText"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("'img[alt], svg[aria-label]'"));
@@ -3367,6 +3489,53 @@ mod tests {
             .await
             .expect("probe leak check");
         assert_eq!(leaked_probe.as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_click_uses_cached_observed_node_after_dom_reorder() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>stable click smoke</title></head><body><button id='target' onclick=\"document.title='target clicked'\">Target</button><script>function insertBeforeTarget(){const button=document.createElement('button');button.id='inserted';button.textContent='Inserted';button.onclick=()=>{document.title='inserted clicked'};document.body.insertBefore(button, document.getElementById('target'));}</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let target_index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "target")
+            })
+            .expect("target button")
+            .index;
+
+        session
+            .evaluate_json("insertBeforeTarget(); true")
+            .await
+            .expect("insert button before observed target");
+        session
+            .click(target_index)
+            .await
+            .expect("click cached target");
+
+        let title = session
+            .evaluate_json("document.title")
+            .await
+            .expect("title");
+        assert_eq!(title.as_str(), Some("target clicked"));
     }
 
     #[tokio::test]
