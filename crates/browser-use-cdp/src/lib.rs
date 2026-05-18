@@ -125,6 +125,24 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
   };
+  const isTopmostAtCenter = (el) => {
+    if (isFileInput(el)) return true;
+    try {
+      const rect = el.getBoundingClientRect();
+      const doc = el.ownerDocument || document;
+      const view = doc.defaultView || window;
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return true;
+      const top = doc.elementFromPoint(x, y);
+      if (!top) return true;
+      if (top === el || el.contains(top)) return true;
+      const root = el.getRootNode && el.getRootNode();
+      return Boolean(root && root.host && (top === root.host || root.host.contains(top)));
+    } catch (_) {
+      return true;
+    }
+  };
   const isDecorativeSvgChild = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
@@ -141,7 +159,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (isFileInput(el)) return true;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && isTopmostAtCenter(el);
   };
   const isInteractive = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -466,6 +484,24 @@ fn element_eval_js(index: u32, body: &str) -> String {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
   }};
+  const isTopmostAtCenter = (el) => {{
+    if (isFileInput(el)) return true;
+    try {{
+      const rect = el.getBoundingClientRect();
+      const doc = el.ownerDocument || document;
+      const view = doc.defaultView || window;
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return true;
+      const top = doc.elementFromPoint(x, y);
+      if (!top) return true;
+      if (top === el || el.contains(top)) return true;
+      const root = el.getRootNode && el.getRootNode();
+      return Boolean(root && root.host && (top === root.host || root.host.contains(top)));
+    }} catch (_) {{
+      return true;
+    }}
+  }};
   const isDecorativeSvgChild = (el) => {{
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
@@ -482,7 +518,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (isFileInput(el)) return true;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && isTopmostAtCenter(el);
   }};
   const isScrollable = (el) => {{
     const style = window.getComputedStyle(el);
@@ -4133,6 +4169,17 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_filters_occluded_elements() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isTopmostAtCenter"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("elementFromPoint"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("root.host"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isTopmostAtCenter"));
+        assert!(action_script.contains("elementFromPoint"));
+    }
+
+    #[test]
     fn interactive_snapshot_skips_browser_use_excluded_subtrees() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("isBrowserUseExcluded"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("data-browser-use-exclude"));
@@ -4915,6 +4962,57 @@ mod tests {
             .await
             .expect("document title");
         assert_eq!(title.as_str(), Some("svg clicked"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_filters_occluded_elements() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>occlusion smoke</title></head><body><button id='covered' onclick=\"document.title='covered clicked'\" style='position:absolute;left:20px;top:20px;width:120px;height:40px'>Covered</button><div id='cover' style='position:absolute;left:0;top:0;width:220px;height:100px;background:white;z-index:2'></div><button id='visible' onclick=\"document.title='visible clicked'\" style='position:absolute;left:20px;top:140px;width:120px;height:40px'>Visible</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let ids = state
+            .dom_state
+            .selector_map
+            .values()
+            .filter_map(|element| element.attributes.get("id").map(String::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"visible"), "missing visible button: {ids:?}");
+        assert!(
+            !ids.contains(&"covered"),
+            "covered button should not be indexed: {ids:?}"
+        );
+
+        let visible = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "visible")
+            })
+            .expect("visible button indexed");
+
+        session.click(visible.index).await.expect("click visible");
+        let title = session
+            .evaluate_json("document.title")
+            .await
+            .expect("document title");
+        assert_eq!(title.as_str(), Some("visible clicked"));
     }
 
     #[tokio::test]

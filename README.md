@@ -31,12 +31,12 @@ includes:
   attributes, validation patterns, `data-state`,
   input mask/autocomplete/date-format hints, static history-matching
   attributes, hidden-element and `data-browser-use-exclude` subtree filtering,
-  non-content `head`/`script`/`style` tag pruning, hidden file-input upload
-  targets, plain scroll-container indexing, and scrollable element metadata,
-  plus common ARIA widget roles, search affordance signals, small icon controls,
-  cursor-pointer controls, decorative SVG child pruning, static mouse/keyboard
-  handler attributes, pagination affordances, and configurable prompt-visible
-  attributes.
+  non-content `head`/`script`/`style` tag pruning, occluded-element filtering,
+  hidden file-input upload targets, plain scroll-container indexing, and
+  scrollable element metadata, plus common ARIA widget roles, search affordance
+  signals, small icon controls, cursor-pointer controls, decorative SVG child
+  pruning, static mouse/keyboard handler attributes, pagination affordances, and
+  configurable prompt-visible attributes.
 - DOM indexing recognizes controls backed only by JavaScript click/pointer
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
