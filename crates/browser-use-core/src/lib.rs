@@ -4881,6 +4881,8 @@ pub enum AgentRunError {
     LoopDetected { window: usize },
     #[error("agent stopped before the next step: {reason}")]
     Stopped { reason: String },
+    #[error("agent paused before the next step")]
+    Paused,
     #[error("agent callback {callback} failed: {message}")]
     Callback {
         callback: &'static str,
@@ -4906,7 +4908,15 @@ pub struct AgentCheckpoint {
     pub settings: AgentSettings,
     pub history: AgentHistory,
     pub initial_actions_executed: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stopped: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub paused: bool,
     pub file_system_state: FileSystemState,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub type AgentCallbackFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -4937,6 +4947,7 @@ pub struct Agent<M, S> {
     history: AgentHistory,
     initial_actions_executed: bool,
     stopped: bool,
+    paused: bool,
     step_callbacks: Vec<AgentStepCallback>,
     done_callbacks: Vec<AgentDoneCallback>,
     should_stop_callback: Option<AgentShouldStopCallback>,
@@ -5016,6 +5027,7 @@ where
             history: AgentHistory::default(),
             initial_actions_executed: false,
             stopped: false,
+            paused: false,
             step_callbacks: Vec::new(),
             done_callbacks: Vec::new(),
             should_stop_callback: None,
@@ -5045,7 +5057,8 @@ where
             executor,
             history: checkpoint.history,
             initial_actions_executed: checkpoint.initial_actions_executed,
-            stopped: false,
+            stopped: checkpoint.stopped,
+            paused: checkpoint.paused,
             step_callbacks: Vec::new(),
             done_callbacks: Vec::new(),
             should_stop_callback: None,
@@ -5110,6 +5123,8 @@ where
             settings: self.settings.clone(),
             history: self.history.clone(),
             initial_actions_executed: self.initial_actions_executed,
+            stopped: self.stopped,
+            paused: self.paused,
             file_system_state: self.file_system_state(),
         }
     }
@@ -5206,11 +5221,26 @@ where
         self.stopped
     }
 
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     async fn check_stop_requested(&mut self) -> Result<(), AgentRunError> {
         if self.stopped {
             return Err(AgentRunError::Stopped {
                 reason: "stop requested".to_owned(),
             });
+        }
+        if self.paused {
+            return Err(AgentRunError::Paused);
         }
 
         if let Some(callback) = self.should_stop_callback.as_mut() {
@@ -14469,6 +14499,113 @@ mod tests {
         assert!(agent.is_stopped());
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
         assert!(agent.executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_step_pauses_before_model_or_browser_work() {
+        let mut agent = Agent::new("pause", QueueModel::new(vec![]), MockSession::new());
+
+        agent.pause();
+        let error = agent.step().await.expect_err("step should pause");
+
+        assert!(matches!(error, AgentRunError::Paused));
+        assert!(agent.is_paused());
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+        assert!(agent.executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_checkpoint_preserves_paused_state() {
+        let mut agent = Agent::new(
+            "pause checkpoint",
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        );
+        agent.pause();
+
+        let checkpoint = agent.checkpoint();
+        assert!(checkpoint.paused);
+        assert!(!checkpoint.stopped);
+        let checkpoint_json =
+            serde_json::to_string_pretty(&checkpoint).expect("serialize checkpoint");
+        assert!(checkpoint_json.contains(r#""paused": true"#));
+        let checkpoint: AgentCheckpoint =
+            serde_json::from_str(&checkpoint_json).expect("deserialize checkpoint");
+        let mut resumed =
+            Agent::from_checkpoint(checkpoint, QueueModel::new(vec![]), MockSession::new())
+                .expect("resume paused checkpoint");
+
+        assert!(resumed.is_paused());
+        let error = resumed
+            .run(1)
+            .await
+            .expect_err("paused checkpoint should pause");
+        assert!(matches!(error, AgentRunError::Paused));
+    }
+
+    #[tokio::test]
+    async fn agent_resume_continues_paused_run_without_clearing_history() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "resumed",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_judge: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "resume",
+            settings,
+            QueueModel::new(vec![done_output]),
+            MockSession::new(),
+        );
+
+        agent.pause();
+        let error = agent.run(1).await.expect_err("run should pause");
+        assert!(matches!(error, AgentRunError::Paused));
+        assert!(agent.history().items.is_empty());
+
+        agent.resume();
+        let (final_result, item_count) = {
+            let history = agent.run(1).await.expect("resumed run");
+            (
+                history.final_result().map(str::to_owned),
+                history.items.len(),
+            )
+        };
+
+        assert!(!agent.is_paused());
+        assert_eq!(final_result.as_deref(), Some("resumed"));
+        assert_eq!(item_count, 1);
+    }
+
+    #[tokio::test]
+    async fn agent_stop_remains_stronger_than_resume_after_pause() {
+        let mut agent = Agent::new("stop wins", QueueModel::new(vec![]), MockSession::new());
+
+        agent.pause();
+        agent.stop();
+        agent.resume();
+        let error = agent
+            .run(1)
+            .await
+            .expect_err("stopped agent should stay stopped");
+
+        assert!(matches!(
+            error,
+            AgentRunError::Stopped { reason } if reason == "stop requested"
+        ));
+        assert!(agent.is_stopped());
+        assert!(!agent.is_paused());
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
     }
 
     #[tokio::test]
