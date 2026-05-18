@@ -557,10 +557,15 @@ pub enum AgentHistoryReplayStopReason {
     TerminatingAction,
 }
 
-pub fn build_history_replay_plan(
-    history: &AgentHistory,
-    current_dom: &SerializedDomState,
-) -> Result<AgentHistoryReplayPlan, AgentHistoryReplayPlanError> {
+#[derive(Debug, Clone)]
+struct HistoricalReplayAction {
+    step_index: usize,
+    action_index: usize,
+    action: BrowserAction,
+    interacted_element: Option<DomInteractedElement>,
+}
+
+fn historical_replay_actions(history: &AgentHistory) -> Vec<HistoricalReplayAction> {
     let mut actions = Vec::new();
     for (step_index, item) in history.items.iter().enumerate() {
         let Some(output) = item.model_output.as_ref() else {
@@ -571,23 +576,42 @@ pub fn build_history_replay_plan(
                 .interacted_element_index()
                 .and_then(|index| item.state.dom_state.selector_map.get(&index))
                 .map(DomInteractedElement::from_element);
-            let rematch =
-                rematch_action_for_replay(action, interacted_element.as_ref(), current_dom)
-                    .map_err(|failure| AgentHistoryReplayPlanError {
-                        step_index,
-                        action_index,
-                        original_action: Box::new(action.clone()),
-                        original_index: action.interacted_element_index(),
-                        failure: Box::new(failure),
-                    })?;
-            actions.push(AgentHistoryReplayPlanItem {
+            actions.push(HistoricalReplayAction {
                 step_index,
                 action_index,
-                original_action: action.clone(),
-                remapped_action: rematch.action.clone(),
-                rematch,
+                action: action.clone(),
+                interacted_element,
             });
         }
+    }
+    actions
+}
+
+pub fn build_history_replay_plan(
+    history: &AgentHistory,
+    current_dom: &SerializedDomState,
+) -> Result<AgentHistoryReplayPlan, AgentHistoryReplayPlanError> {
+    let mut actions = Vec::new();
+    for historical in historical_replay_actions(history) {
+        let rematch = rematch_action_for_replay(
+            &historical.action,
+            historical.interacted_element.as_ref(),
+            current_dom,
+        )
+        .map_err(|failure| AgentHistoryReplayPlanError {
+            step_index: historical.step_index,
+            action_index: historical.action_index,
+            original_action: Box::new(historical.action.clone()),
+            original_index: historical.action.interacted_element_index(),
+            failure: Box::new(failure),
+        })?;
+        actions.push(AgentHistoryReplayPlanItem {
+            step_index: historical.step_index,
+            action_index: historical.action_index,
+            original_action: historical.action,
+            remapped_action: rematch.action.clone(),
+            rematch,
+        });
     }
 
     Ok(AgentHistoryReplayPlan { actions })
@@ -1079,17 +1103,109 @@ where
                 message: error.to_string(),
             }
         })?;
-        let plan = history
-            .replay_plan(&current_state.dom_state)
-            .map_err(|error| AgentHistoryReplayRunError::Plan {
-                error: Box::new(error),
-            })?;
-        let execution = self.execute_replay_plan(&plan).await;
+        let (plan, execution) = self
+            .execute_history_replay_with_recapture(history, current_state.clone())
+            .await?;
         Ok(AgentHistoryReplayRun {
             current_state,
             plan,
             execution,
         })
+    }
+
+    async fn execute_history_replay_with_recapture(
+        &mut self,
+        history: &AgentHistory,
+        mut latest_state: BrowserStateSummary,
+    ) -> Result<(AgentHistoryReplayPlan, AgentHistoryReplayExecution), AgentHistoryReplayRunError>
+    {
+        let mut plan_items = Vec::new();
+        let mut execution_items = Vec::new();
+        let mut stop = None;
+
+        for historical in historical_replay_actions(history) {
+            if !plan_items.is_empty() && matches!(historical.action, BrowserAction::Done(_)) {
+                stop = Some(AgentHistoryReplayStop {
+                    step_index: historical.step_index,
+                    action_index: historical.action_index,
+                    reason: AgentHistoryReplayStopReason::DoneAfterPriorAction,
+                    diagnostic: None,
+                });
+                break;
+            }
+
+            let rematch = rematch_action_for_replay(
+                &historical.action,
+                historical.interacted_element.as_ref(),
+                &latest_state.dom_state,
+            )
+            .map_err(|failure| AgentHistoryReplayRunError::Plan {
+                error: Box::new(AgentHistoryReplayPlanError {
+                    step_index: historical.step_index,
+                    action_index: historical.action_index,
+                    original_action: Box::new(historical.action.clone()),
+                    original_index: historical.action.interacted_element_index(),
+                    failure: Box::new(failure),
+                }),
+            })?;
+            let action = rematch.action.clone();
+            let plan_item = AgentHistoryReplayPlanItem {
+                step_index: historical.step_index,
+                action_index: historical.action_index,
+                original_action: historical.action.clone(),
+                remapped_action: action.clone(),
+                rematch,
+            };
+            plan_items.push(plan_item.clone());
+
+            let needs_recapture = !action.terminates_sequence();
+            let result = self.execute(&action).await;
+            let mut stop_reason = replay_stop_reason(&action, &result);
+            let mut stop_diagnostic = result.error.clone();
+            let mut recaptured_state = None;
+            if stop_reason.is_none() && needs_recapture {
+                match self.session.state(false).await {
+                    Ok(state) => recaptured_state = Some(state),
+                    Err(error) => {
+                        stop_reason = Some(AgentHistoryReplayStopReason::Error);
+                        stop_diagnostic = Some(error.to_string());
+                    }
+                }
+            }
+
+            execution_items.push(AgentHistoryReplayExecutionItem {
+                step_index: historical.step_index,
+                action_index: historical.action_index,
+                original_action: historical.action,
+                executed_action: action,
+                rematch: plan_item.rematch,
+                result,
+            });
+
+            if let Some(reason) = stop_reason {
+                stop = Some(AgentHistoryReplayStop {
+                    step_index: historical.step_index,
+                    action_index: historical.action_index,
+                    reason,
+                    diagnostic: stop_diagnostic,
+                });
+                break;
+            }
+
+            if let Some(state) = recaptured_state {
+                latest_state = state;
+            }
+        }
+
+        Ok((
+            AgentHistoryReplayPlan {
+                actions: plan_items,
+            },
+            AgentHistoryReplayExecution {
+                items: execution_items,
+                stop,
+            },
+        ))
     }
 }
 
@@ -7482,6 +7598,91 @@ mod tests {
         );
         assert_eq!(run.execution.stop, None);
         assert_eq!(executor.session().events(), vec!["click:7"]);
+        assert_eq!(
+            executor.session().state_screenshot_requests(),
+            vec![false, false]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_history_recaptures_dom_between_actions() {
+        let mut historical_click_state = blank_state();
+        historical_click_state.dom_state =
+            SerializedDomState::from_elements(vec![replay_dom_element(
+                1,
+                "button",
+                BTreeMap::from([("id".to_owned(), "reveal-email".to_owned())]),
+            )]);
+        let mut historical_input_state = blank_state();
+        historical_input_state.dom_state =
+            SerializedDomState::from_elements(vec![replay_dom_element(
+                2,
+                "input",
+                BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+            )]);
+        let history = AgentHistory {
+            items: vec![
+                history_item_with_state_actions(
+                    historical_click_state,
+                    vec![BrowserAction::Click(ClickElementAction {
+                        index: Some(1),
+                        coordinate_x: None,
+                        coordinate_y: None,
+                    })],
+                ),
+                history_item_with_state_actions(
+                    historical_input_state,
+                    vec![BrowserAction::Input(InputTextAction {
+                        index: 2,
+                        text: "ada@example.test".to_owned(),
+                        clear: true,
+                    })],
+                ),
+            ],
+        };
+        let mut initial_state = blank_state();
+        initial_state.url = "https://example.com/start".to_owned();
+        initial_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            7,
+            "button",
+            BTreeMap::from([("id".to_owned(), "reveal-email".to_owned())]),
+        )]);
+        let mut after_click_state = blank_state();
+        after_click_state.url = "https://example.com/form".to_owned();
+        after_click_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            8,
+            "input",
+            BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+        )]);
+        let after_input_state = after_click_state.clone();
+        let session = MockSession::with_states(vec![
+            initial_state.clone(),
+            after_click_state,
+            after_input_state,
+        ]);
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let run = executor.replay_history(&history).await.expect("replay run");
+
+        assert_eq!(run.current_state.url, initial_state.url);
+        assert_eq!(run.plan.actions.len(), 2);
+        assert_eq!(
+            run.plan.actions[0]
+                .remapped_action
+                .interacted_element_index(),
+            Some(7)
+        );
+        assert_eq!(
+            run.plan.actions[1]
+                .remapped_action
+                .interacted_element_index(),
+            Some(8)
+        );
+        assert_eq!(run.execution.stop, None);
+        assert_eq!(
+            executor.session().events(),
+            vec!["click:7", "input:8:ada@example.test:true"]
+        );
         assert_eq!(
             executor.session().state_screenshot_requests(),
             vec![false, false, false]
