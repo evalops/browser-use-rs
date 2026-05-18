@@ -121,10 +121,16 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     }
     return false;
   };
+  const isFileInput = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
+  };
   const isDisabledOrHidden = (el) => {
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
   const isVisible = (el) => {
+    if (isBrowserUseExcluded(el) || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true') return false;
+    if (isFileInput(el)) return true;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
@@ -418,10 +424,16 @@ fn element_eval_js(index: u32, body: &str) -> String {
     }}
     return false;
   }};
+  const isFileInput = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
+  }};
   const isDisabledOrHidden = (el) => {{
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
   const isVisible = (el) => {{
+    if (isBrowserUseExcluded(el) || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true') return false;
+    if (isFileInput(el)) return true;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
@@ -3813,6 +3825,17 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_keeps_hidden_file_inputs() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isFileInput"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("toLowerCase() === 'file'"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("if (isFileInput(el)) return true;"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isFileInput"));
+        assert!(action_script.contains("if (isFileInput(el)) return true;"));
+    }
+
+    #[test]
     fn interactive_snapshot_marks_elements_for_accessibility_join() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains(AX_REF_ATTRIBUTE));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("ax_ref: axRef"));
@@ -4621,6 +4644,55 @@ mod tests {
             .expect("upload values json");
         assert_eq!(values["target"].as_str(), Some("cached-upload.txt"));
         assert_eq!(values["inserted"].as_str(), Some(""));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_hidden_file_inputs_for_upload() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+        let upload_dir = tempfile::tempdir().expect("upload temp dir");
+        let upload_path = upload_dir.path().join("hidden-upload.txt");
+        std::fs::write(&upload_path, "EvalOps hidden upload").expect("write upload file");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>hidden upload smoke</title></head><body><label for='hidden-file'>Upload</label><input id='hidden-file' type='file' style='display:none' onchange=\"document.body.dataset.uploaded=this.files[0]?.name || ''\"></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let hidden_file = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "hidden-file")
+            })
+            .expect("hidden file input indexed");
+        assert_eq!(hidden_file.tag_name, "input");
+        assert_eq!(
+            hidden_file.attributes.get("type").map(String::as_str),
+            Some("file")
+        );
+
+        session
+            .upload_file(hidden_file.index, &upload_path)
+            .await
+            .expect("upload hidden file input");
+        let uploaded_name = session
+            .evaluate_json("document.body.dataset.uploaded || ''")
+            .await
+            .expect("uploaded file name");
+        assert_eq!(uploaded_name.as_str(), Some("hidden-upload.txt"));
     }
 
     #[tokio::test]
