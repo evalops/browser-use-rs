@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #94 lands and CI is green.
+- [#97 Add upstream judge_llm routing](https://github.com/evalops/browser-use-rs/issues/97)
 
 ## Completed Tracks
 
