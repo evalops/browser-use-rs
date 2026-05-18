@@ -67,7 +67,18 @@ jobs:
           ./dist/smoke/browser-use-rs mcp-tools > dist/smoke/mcp-tools.json
           grep -q '"browser_use_state"' dist/smoke/mcp-tools.json
           if [ "${{ matrix.browser_smoke }}" = "true" ]; then
-            ./dist/smoke/browser-use-rs state "data:text/html,<html><head><title>artifact smoke</title></head><body><button>Run</button><input placeholder='Name'></body></html>" > dist/smoke/state.json
+            for attempt in 1 2; do
+              echo "browser-backed package smoke attempt ${attempt}/2"
+              rm -f dist/smoke/state.json
+              if ./dist/smoke/browser-use-rs state "data:text/html,<html><head><title>artifact smoke</title></head><body><button>Run</button><input placeholder='Name'></body></html>" > dist/smoke/state.json; then
+                break
+              fi
+              status="$?"
+              if [ "${attempt}" = "2" ]; then
+                exit "${status}"
+              fi
+              sleep 5
+            done
             grep -q '"title": "artifact smoke"' dist/smoke/state.json
             grep -q '"interactive_elements": 2' dist/smoke/state.json
           fi
