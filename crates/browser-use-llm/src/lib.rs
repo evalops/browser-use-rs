@@ -754,6 +754,16 @@ fn gemini_part(part: ContentPart) -> Value {
 }
 
 fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError> {
+    if let Some(finish_reason) = raw_response
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .filter(|reason| matches!(*reason, "length" | "content_filter"))
+    {
+        return Err(LlmError::Provider(format!(
+            "chat completion stopped with {finish_reason} before completing structured output"
+        )));
+    }
+
     let message = raw_response
         .pointer("/choices/0/message")
         .ok_or_else(|| LlmError::Provider("missing chat completion message".to_owned()))?;
@@ -764,15 +774,12 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
         )));
     }
 
-    if let Some(arguments) = openai_tool_call_arguments(message) {
-        return match arguments {
-            Value::String(text) => serde_json::from_str(text)
-                .map_err(|error| LlmError::InvalidStructuredOutput(error.to_string())),
-            Value::Object(_) => Ok(arguments.clone()),
-            _ => Err(LlmError::InvalidStructuredOutput(
-                "chat completion tool call arguments were not a JSON object".to_owned(),
-            )),
-        };
+    if message.get("tool_calls").is_some() || message.get("function_call").is_some() {
+        let arguments = openai_tool_call_arguments(message).ok_or_else(|| {
+            LlmError::Provider("missing chat completion tool call arguments".to_owned())
+        })?;
+
+        return parse_json_object_compatible(arguments, "chat completion tool call arguments");
     }
 
     let content = message
@@ -791,11 +798,32 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
 
 fn openai_tool_call_arguments(message: &Value) -> Option<&Value> {
     message
-        .get("tool_calls")?
-        .as_array()?
-        .first()?
-        .get("function")?
-        .get("arguments")
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .and_then(|tool_calls| tool_calls.first())
+        .and_then(|tool_call| tool_call.pointer("/function/arguments"))
+        .or_else(|| message.pointer("/function_call/arguments"))
+}
+
+fn parse_json_object_compatible(value: &Value, source: &str) -> Result<Value, LlmError> {
+    let parsed = match value {
+        Value::String(text) => serde_json::from_str(text)
+            .map_err(|error| LlmError::InvalidStructuredOutput(format!("{source}: {error}")))?,
+        Value::Object(_) => value.clone(),
+        _ => {
+            return Err(LlmError::InvalidStructuredOutput(format!(
+                "{source} were not a JSON object"
+            )));
+        }
+    };
+
+    if parsed.is_object() {
+        Ok(parsed)
+    } else {
+        Err(LlmError::InvalidStructuredOutput(format!(
+            "{source} were not a JSON object"
+        )))
+    }
 }
 
 fn parse_ollama_chat_response(raw_response: &Value) -> Result<Value, LlmError> {
@@ -1320,6 +1348,97 @@ mod tests {
         let parsed = parse_openai_chat_completion(&raw).expect("parse tool call");
 
         assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_legacy_function_call_json_chat_completion() {
+        let raw = json!({
+            "model": "function-call-test",
+            "choices": [
+                {
+                    "finish_reason": "function_call",
+                    "message": {
+                        "role": "assistant",
+                        "function_call": {
+                            "name": "agent_output",
+                            "arguments": {
+                                "ok": true
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let parsed = parse_openai_chat_completion(&raw).expect("parse function call");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn openai_parser_rejects_malformed_tool_call_arguments_and_truncation() {
+        let malformed = json!({
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "agent_output",
+                                    "arguments": "{\"ok\""
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let missing_arguments = json!({
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "agent_output"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let truncated = json!({
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": "{\"ok\""
+                    }
+                }
+            ]
+        });
+
+        assert!(matches!(
+            parse_openai_chat_completion(&malformed),
+            Err(LlmError::InvalidStructuredOutput(message))
+                if message.contains("tool call arguments")
+        ));
+        assert!(matches!(
+            parse_openai_chat_completion(&missing_arguments),
+            Err(LlmError::Provider(message)) if message.contains("tool call arguments")
+        ));
+        assert!(matches!(
+            parse_openai_chat_completion(&truncated),
+            Err(LlmError::Provider(message)) if message.contains("length")
+        ));
     }
 
     #[test]

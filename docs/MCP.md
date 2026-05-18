@@ -47,8 +47,9 @@ contract with provider-specific environment values: `DEEPSEEK_*`, `GROQ_*`,
 model, and optional base URL. Vercel also accepts `VERCEL_OIDC_TOKEN` and
 `VERCEL_MODEL`; DeepSeek, Cerebras, and Mistral use their upstream default
 models when a tool `model` argument is omitted. DeepSeek structured-output
-requests use JSON-object mode with schema guidance, while Cerebras uses
-prompt-only schema guidance. Anthropic runs require `ANTHROPIC_API_KEY` plus a
+requests force a schema function tool call and parse the tool-call arguments,
+while Cerebras uses prompt-only schema guidance. Anthropic runs require
+`ANTHROPIC_API_KEY` plus a
 tool `model` argument or `ANTHROPIC_MODEL`;
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_VERSION`, and `ANTHROPIC_MAX_TOKENS` are
 optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or

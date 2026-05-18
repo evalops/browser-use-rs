@@ -84,7 +84,7 @@ includes:
 - OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
   and Ollama Chat providers, including provider-specific structured-output
-  modes for DeepSeek and Cerebras.
+  modes for DeepSeek forced tool calls and Cerebras prompt-only guidance.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
   bearer/header auth, supervisor pid/ready files, packaged systemd/launchd
   templates, persistent session registry, typed MCP/CLI agent settings

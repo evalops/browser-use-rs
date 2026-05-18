@@ -1587,7 +1587,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["DEEPSEEK_BASE_URL"],
             default_model: Some("deepseek-chat"),
             default_base_url: "https://api.deepseek.com/v1",
-            structured_output_mode: OpenAiStructuredOutputMode::JsonObject,
+            structured_output_mode: OpenAiStructuredOutputMode::ToolCall,
         },
         LlmProvider::Groq => OpenAiWireProviderConfig {
             provider_name: "groq",
@@ -1861,7 +1861,7 @@ mod tests {
 
         assert_eq!(
             openai_wire_provider_config(LlmProvider::DeepSeek).structured_output_mode,
-            OpenAiStructuredOutputMode::JsonObject
+            OpenAiStructuredOutputMode::ToolCall
         );
         assert_eq!(
             openai_wire_provider_config(LlmProvider::Cerebras).structured_output_mode,

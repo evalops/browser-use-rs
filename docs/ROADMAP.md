@@ -87,7 +87,7 @@ Implemented:
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
-  payloads, including DeepSeek JSON-object and Cerebras prompt-only
+  payloads, including DeepSeek forced tool-call and Cerebras prompt-only
   structured-output modes.
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
@@ -143,7 +143,7 @@ Implemented:
 Next:
 
 1. Expand agent planning depth, replay coverage, and deeper provider-specific
-   structured-output fallbacks for model families that need tool-calling or
-   provider-routing hints.
+   structured-output fallbacks beyond the DeepSeek forced tool-call path for
+   model families that need provider-routing hints.
 2. Expand browser-profile security parity with deeper watchdog diagnostics and
    more provider-style lifecycle hooks.

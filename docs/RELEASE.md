@@ -93,8 +93,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
-  including DeepSeek JSON-object, Cerebras prompt-only, and OpenAI-wire strict
-  tool-call schema payload/parser modes.
+  including DeepSeek forced tool-call, Cerebras prompt-only, and OpenAI-wire
+  output-mode override payload/parser modes.
 - CLI one-shot commands plus `actions`, `agent` with typed settings flags
   including available-file-path and sensitive-data placeholder context,
   OpenAI-wire structured-output mode overrides, system-message control,
@@ -131,7 +131,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   packages, Homebrew formulas, and installer-managed secret stores are not
   implemented.
 - Provider-specific structured-output fallbacks for gateway routing hints and
-  non-chat-completions providers are still partial.
+  non-chat-completions providers are still partial; DeepSeek now has a forced
+  tool-call fallback.
 - Rich filesystem state and sandboxing are still lighter than upstream's
   `FileSystem` service.
 - Package publishing is limited to the GitHub release artifact.
