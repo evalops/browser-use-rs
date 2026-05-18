@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -46,6 +47,7 @@ small pushed checkpoints as each surface becomes real.
 - [#40 Implement interacted-element rematching for history replay](https://github.com/evalops/browser-use-rs/issues/40)
 - [#41 Apply interacted-element rematches to historical action replay](https://github.com/evalops/browser-use-rs/issues/41)
 - [#42 Build rematched replay plans from AgentHistory](https://github.com/evalops/browser-use-rs/issues/42)
+- [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
 
 ## Current Checkpoint
 
@@ -155,7 +157,8 @@ Implemented:
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,
-  duration helpers, and screenshot/URL helpers.
+  replay-plan execution through the action executor with per-action
+  diagnostics, duration helpers, and screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -222,7 +225,10 @@ Implemented:
   interactives, shadow roots, iframe contents, compact key attributes, scroll
   context, collapsed SVG contents, live CDP capture, Chrome OOPIF child target
   merging, and interacted-element rematching diagnostics for exact, stable,
-  XPath, AX-name, and unique-attribute history replay foundations.
+  XPath, AX-name, and unique-attribute history replay foundations. Core replay
+  helpers can remap saved history and execute the resulting action plan through
+  the existing action-executor boundary while preserving step/action
+  diagnostics.
 
 Next:
 

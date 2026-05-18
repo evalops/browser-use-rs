@@ -121,7 +121,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit
   replay action rematching for historical indexed actions, rematched replay
-  plan construction from saved `AgentHistory`, and screenshot/URL accessors.
+  plan construction from saved `AgentHistory`, replay-plan execution through
+  the action executor with per-action diagnostics, and screenshot/URL
+  accessors.
   `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.
@@ -190,8 +192,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   and conformance fixtures.
 - Agent history now captures compact interacted-element metadata for indexed
   actions and exposes current-page rematching plus action-level replay
-  remapping diagnostics and replay-plan construction; executing those plans
-  against a browser session remains outside this release slice.
+  remapping diagnostics, replay-plan construction, and replay-plan execution
+  through the action-executor boundary. DOM recapture between replayed actions
+  remains outside this release slice.
 - CLI sessions are local registry records. Session `status` reports registry
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does
