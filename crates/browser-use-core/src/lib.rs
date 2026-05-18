@@ -252,6 +252,8 @@ pub struct ActionResult {
     pub success: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
 }
@@ -276,6 +278,8 @@ struct ActionResultWire {
     success: Option<bool>,
     #[serde(default)]
     attachments: Vec<String>,
+    #[serde(default)]
+    images: Vec<Value>,
     #[serde(default)]
     metadata: Option<Value>,
 }
@@ -302,6 +306,7 @@ impl<'de> Deserialize<'de> for ActionResult {
             is_done: wire.is_done,
             success: wire.success,
             attachments: wire.attachments,
+            images: wire.images,
             metadata: wire.metadata,
         })
     }
@@ -321,6 +326,7 @@ impl ActionResult {
             is_done: false,
             success: None,
             attachments: Vec::new(),
+            images: Vec::new(),
             metadata: None,
         }
     }
@@ -337,6 +343,7 @@ impl ActionResult {
             is_done: false,
             success: None,
             attachments: Vec::new(),
+            images: Vec::new(),
             metadata: None,
         }
     }
@@ -353,6 +360,7 @@ impl ActionResult {
             is_done: true,
             success: Some(success),
             attachments: Vec::new(),
+            images: Vec::new(),
             metadata: None,
         }
     }
@@ -752,6 +760,7 @@ where
                     is_done: false,
                     success: None,
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                 })
             }
@@ -777,6 +786,7 @@ where
                     is_done: false,
                     success: None,
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                 })
             }
@@ -818,6 +828,7 @@ where
                     is_done: false,
                     success: None,
                     attachments: vec![file_name],
+                    images: Vec::new(),
                     metadata: None,
                 })
             } else {
@@ -831,6 +842,7 @@ where
                     is_done: false,
                     success: None,
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: Some(serde_json::json!({ "include_screenshot": true })),
                 })
             }
@@ -984,6 +996,7 @@ where
                 is_done: false,
                 success: None,
                 attachments: vec![file_name],
+                images: Vec::new(),
                 metadata: None,
             })
         }
@@ -1131,6 +1144,7 @@ fn extract_action_result(
         is_done: false,
         success: None,
         attachments: Vec::new(),
+        images: Vec::new(),
         metadata: extract_metadata(
             params,
             source_url,
@@ -1482,8 +1496,11 @@ fn write_file_action(
 }
 
 fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
-    if let Some(result) = validate_text_file_name(file_name) {
+    if let Some(result) = validate_read_file_name(file_name) {
         return Ok(result);
+    }
+    if is_supported_read_image_file(file_name) {
+        return read_image_file_action(file_name);
     }
     let content = std::fs::read_to_string(file_name)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
@@ -1498,6 +1515,35 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
         is_done: false,
         success: None,
         attachments: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
+    })
+}
+
+fn read_image_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    let bytes =
+        std::fs::read(file_name).map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let image_name = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(file_name)
+        .to_owned();
+
+    Ok(ActionResult {
+        extracted_content: Some(format!("Read image file {file_name}.")),
+        error: None,
+        judgement: None,
+        long_term_memory: Some(format!("Read image file {file_name}")),
+        include_extracted_content_only_once: true,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+        attachments: Vec::new(),
+        images: vec![serde_json::json!({
+            "name": image_name,
+            "data": data,
+        })],
         metadata: None,
     })
 }
@@ -1561,8 +1607,53 @@ fn validate_text_file_name(file_name: &str) -> Option<ActionResult> {
     None
 }
 
+fn validate_read_file_name(file_name: &str) -> Option<ActionResult> {
+    let path = std::path::Path::new(file_name);
+    let base_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(file_name);
+    let Some(extension) = path.extension().and_then(std::ffi::OsStr::to_str) else {
+        return Some(ActionResult::error(format!(
+            "Filename '{base_name}' has no extension. Supported extensions: {}.",
+            supported_read_extensions_message()
+        )));
+    };
+    let extension = extension.to_ascii_lowercase();
+
+    if supported_text_extensions().contains(&extension.as_str())
+        || supported_read_image_extensions().contains(&extension.as_str())
+    {
+        return None;
+    }
+
+    if unsupported_binary_extensions().contains(&extension.as_str()) {
+        return Some(ActionResult::error(format!(
+            "Cannot read binary/image file '{base_name}'. The read_file action supports text files and PNG/JPEG images. Supported extensions: {}.",
+            supported_read_extensions_message()
+        )));
+    }
+
+    Some(ActionResult::error(format!(
+        "Unsupported file extension '.{extension}' in '{base_name}'. Supported extensions: {}.",
+        supported_read_extensions_message()
+    )))
+}
+
 fn supported_text_extensions() -> &'static [&'static str] {
     &["txt", "md", "json", "jsonl", "csv", "html", "xml"]
+}
+
+fn supported_read_image_extensions() -> &'static [&'static str] {
+    &["png", "jpg", "jpeg"]
+}
+
+fn is_supported_read_image_file(file_name: &str) -> bool {
+    std::path::Path::new(file_name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|extension| supported_read_image_extensions().contains(&extension.as_str()))
 }
 
 fn unsupported_binary_extensions() -> &'static [&'static str] {
@@ -1575,6 +1666,15 @@ fn unsupported_binary_extensions() -> &'static [&'static str] {
 fn supported_text_extensions_message() -> String {
     supported_text_extensions()
         .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn supported_read_extensions_message() -> String {
+    supported_text_extensions()
+        .iter()
+        .chain(supported_read_image_extensions().iter())
         .map(|extension| format!(".{extension}"))
         .collect::<Vec<_>>()
         .join(", ")
@@ -2186,6 +2286,7 @@ pub fn build_step_request(
             image_url: screenshot_data_url(screenshot),
         });
     }
+    append_latest_action_result_images(&mut user_content, history);
     Ok(ChatRequest {
         messages: vec![
             ChatMessage::text(
@@ -2238,6 +2339,45 @@ fn screenshot_data_url(screenshot: &str) -> String {
     } else {
         format!("data:image/png;base64,{screenshot}")
     }
+}
+
+fn append_latest_action_result_images(content: &mut Vec<ContentPart>, history: &AgentHistory) {
+    let Some(latest) = history.items.last() else {
+        return;
+    };
+
+    for image in latest.result.iter().flat_map(|result| result.images.iter()) {
+        let Some(data) = image.get("data").and_then(Value::as_str) else {
+            continue;
+        };
+        if data.is_empty() {
+            continue;
+        }
+        let name = image
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+
+        content.push(ContentPart::Text {
+            text: format!("Image from file: {name}"),
+        });
+        content.push(ContentPart::ImageUrl {
+            image_url: action_result_image_data_url(name, data),
+        });
+    }
+}
+
+fn action_result_image_data_url(name: &str, data: &str) -> String {
+    if data.starts_with("data:image/") {
+        return data.to_owned();
+    }
+
+    let media_type = if name.to_ascii_lowercase().ends_with(".png") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    format!("data:{media_type};base64,{data}")
 }
 
 fn truncate_clickable_elements_text(text: &str, max_chars: usize) -> String {
@@ -2802,6 +2942,24 @@ mod tests {
     }
 
     #[test]
+    fn action_result_deserializes_image_payloads() {
+        let result: ActionResult = serde_json::from_value(serde_json::json!({
+            "extracted_content": "Read image file chart.png.",
+            "images": [
+                {
+                    "name": "chart.png",
+                    "data": "abc123"
+                }
+            ]
+        }))
+        .expect("image payloads should deserialize");
+
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0]["name"], "chart.png");
+        assert_eq!(result.images[0]["data"], "abc123");
+    }
+
+    #[test]
     fn agent_output_accepts_flattened_planning_shape() {
         let output: AgentOutput = serde_json::from_value(serde_json::json!({
             "thinking": "Need a plan",
@@ -2995,6 +3153,7 @@ mod tests {
                     is_done: true,
                     success: Some(true),
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                 }],
                 state: blank_state(),
@@ -3035,6 +3194,7 @@ mod tests {
                         is_done: false,
                         success: None,
                         attachments: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                     }],
                     state: blank_state(),
@@ -3224,6 +3384,7 @@ mod tests {
                     is_done: true,
                     success: Some(false),
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                 }],
                 state: blank_state(),
@@ -3296,6 +3457,7 @@ mod tests {
                 is_done: matches!(action, BrowserAction::Done(_)),
                 success: None,
                 attachments: Vec::new(),
+                images: Vec::new(),
                 metadata: None,
             }
         }
@@ -3918,6 +4080,39 @@ mod tests {
                 .contains("hello EvalOps\n\nEvalOps")
         );
         assert!(read_result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_reads_image_files_as_one_time_image_payloads() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("chart.png");
+        std::fs::write(&path, b"PNGDATA").expect("seed image");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some(format!("Read image file {file_name}.").as_str())
+        );
+        assert_eq!(
+            result.long_term_memory.as_deref(),
+            Some(format!("Read image file {file_name}").as_str())
+        );
+        assert!(result.include_extracted_content_only_once);
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0]["name"], "chart.png");
+        assert_eq!(
+            result.images[0]["data"],
+            base64::engine::general_purpose::STANDARD.encode("PNGDATA")
+        );
     }
 
     #[tokio::test]
@@ -5171,6 +5366,79 @@ mod tests {
     }
 
     #[test]
+    fn step_request_attaches_latest_action_result_images_as_image_parts() {
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult {
+                        extracted_content: Some("old image".to_owned()),
+                        error: None,
+                        judgement: None,
+                        long_term_memory: Some("old image".to_owned()),
+                        include_extracted_content_only_once: true,
+                        include_in_memory: true,
+                        is_done: false,
+                        success: None,
+                        attachments: Vec::new(),
+                        images: vec![serde_json::json!({
+                            "name": "old.jpg",
+                            "data": "old-data",
+                        })],
+                        metadata: None,
+                    }],
+                    state: blank_state(),
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult {
+                        extracted_content: Some("Read image file chart.png.".to_owned()),
+                        error: None,
+                        judgement: None,
+                        long_term_memory: Some("Read image file chart.png".to_owned()),
+                        include_extracted_content_only_once: true,
+                        include_in_memory: true,
+                        is_done: false,
+                        success: None,
+                        attachments: Vec::new(),
+                        images: vec![serde_json::json!({
+                            "name": "chart.png",
+                            "data": "abc123",
+                        })],
+                        metadata: None,
+                    }],
+                    state: blank_state(),
+                    metadata: None,
+                },
+            ],
+        };
+        let settings = AgentSettings {
+            use_vision: false,
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request("inspect file image", &blank_state(), &history, &settings)
+            .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+
+        assert!(matches!(
+            &user_message.content[1],
+            ContentPart::Text { text } if text == "Image from file: chart.png"
+        ));
+        assert!(matches!(
+            &user_message.content[2],
+            ContentPart::ImageUrl { image_url } if image_url == "data:image/png;base64,abc123"
+        ));
+        let request_text = serde_json::to_string(user_message).expect("message json");
+        assert!(!request_text.contains("old-data"));
+    }
+
+    #[test]
     fn step_request_uses_custom_dom_include_attributes() {
         let mut state = blank_state();
         state.dom_state = SerializedDomState::from_elements(vec![browser_use_dom::DomElementRef {
@@ -5277,6 +5545,7 @@ mod tests {
                         is_done: false,
                         success: None,
                         attachments: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                     }],
                     state: blank_state(),
@@ -5313,6 +5582,7 @@ mod tests {
                     is_done: false,
                     success: None,
                     attachments: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                 }],
                 state: blank_state(),
@@ -5343,6 +5613,7 @@ mod tests {
                         is_done: false,
                         success: None,
                         attachments: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                     },
                     ActionResult {
@@ -5355,6 +5626,7 @@ mod tests {
                         is_done: false,
                         success: None,
                         attachments: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                     },
                 ],

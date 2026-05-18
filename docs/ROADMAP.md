@@ -31,7 +31,8 @@ Implemented:
 - PDF save action behavior for local files, including default page-title names,
   `.pdf` extension normalization, duplicate filename avoidance, and attachment
   paths.
-- Built-in text-file read/write/replace action parity for local agent artifacts.
+- Built-in text-file read/write/replace action parity for local agent artifacts,
+  plus upstream-style PNG/JPEG read payloads for one-shot image prompt parts.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -50,8 +51,8 @@ Implemented:
 - Single-step and bounded agent loops with schema-guided model output, history,
   max-step, max-failure handling, step and LLM timeouts, compact page-stat
   prompt context, vision-aware screenshot capture, screenshot action
-  next-observation image overrides, one-time extraction replay handling,
-  invalid model-output recovery,
+  next-observation image overrides, action-result image prompt parts, one-time
+  extraction replay handling, invalid model-output recovery,
   upstream-style final `done` responses after repeated failures,
   normalized repeated-action loop detection, loop-awareness prompt nudges,
   upstream flattened planning fields, custom

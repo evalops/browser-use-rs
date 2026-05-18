@@ -24,9 +24,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
-  file upload, local text-file read/write/replace, PDF capture, extraction,
-  page search, element lookup, cached observed-node
-  click/input/scroll/dropdown/upload resolution, and done.
+  file upload, local text-file read/write/replace, PNG/JPEG image-file reads
+  with one-shot image prompt parts, PDF capture, extraction, page search,
+  element lookup, cached observed-node click/input/scroll/dropdown/upload
+  resolution, and done.
 - `screenshot` requests screenshot inclusion in the next observation by default
   and writes a local `.png` file with an attachment path when `file_name` is
   supplied.
@@ -41,8 +42,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   steps, max failures, step and LLM timeouts, upstream-style final `done`
   responses after repeated failures, normalized repeated-action loop detection,
   previous result context, vision-aware screenshot capture and image prompt
-  parts, screenshot action next-observation image overrides, compact page-stat
-  prompt context, one-time extraction replay handling, invalid model-output
+  parts, screenshot action next-observation image overrides, action-result
+  image prompt parts, compact page-stat prompt context, one-time extraction
+  replay handling, invalid model-output
   recovery, loop-awareness prompt nudges, upstream
   flattened planning fields, configurable planning prompt nudges, per-step
   timing metadata, thinking/flash output-schema controls, upstream-style
@@ -86,6 +88,6 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   implemented.
 - Provider parity beyond OpenAI-compatible Chat Completions, Anthropic Messages,
   Gemini GenerateContent, and Ollama Chat is not implemented.
-- Filesystem actions are text-file focused; upstream PDF, DOCX, and image file
-  handling is not implemented.
+- Filesystem actions cover text files and PNG/JPEG image reads; upstream PDF and
+  DOCX `read_file` extraction is not implemented.
 - Package publishing is limited to the GitHub release artifact.
