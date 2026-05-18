@@ -42,8 +42,9 @@ includes:
   `done` with requested text-file display attachments.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
-  prompts, action-result image prompt parts, compact page-stat prompt context,
-  one-time extraction replay handling, step/LLM timeouts, max-failure handling,
+  prompts, action-result image prompt parts, upstream-style page-stat prompt
+  context with loading/skeleton hints, one-time extraction replay handling,
+  step/LLM timeouts, max-failure handling,
   upstream-style initial actions, upstream-style max-action truncation,
   page-change guards, normalized repeated-action loop detection,
   loop-awareness prompt nudges, an

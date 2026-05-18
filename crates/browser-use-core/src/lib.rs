@@ -2769,39 +2769,71 @@ fn truncate_clickable_elements_text(text: &str, max_chars: usize) -> String {
 }
 
 fn render_page_stats(state: &BrowserStateSummary) -> String {
-    let indexed_elements = state.dom_state.selector_map.values();
-    let total_indexed = state.dom_state.selector_map.len();
-    let interactive = indexed_elements
-        .clone()
-        .filter(|element| element.is_interactive)
-        .count();
-    let links = indexed_elements
-        .clone()
-        .filter(|element| element.tag_name == "a")
-        .count();
-    let iframes = indexed_elements
-        .clone()
-        .filter(|element| matches!(element.tag_name.as_str(), "iframe" | "frame"))
-        .count();
-    let scroll_containers = indexed_elements
-        .clone()
-        .filter(|element| element.is_scrollable)
-        .count();
-    let text_chars = state.dom_state.text.chars().count();
-
-    let mut stats = format!(
-        "<page_stats>{links} links, {interactive} interactive, {iframes} iframes, {scroll_containers} scroll containers, {total_indexed} indexed elements, {text_chars} text chars"
-    );
+    let stats = if state.dom_state.page_stats.is_empty() {
+        fallback_page_stats(state)
+    } else {
+        state.dom_state.page_stats
+    };
+    let mut stats_text = "<page_stats>".to_owned();
+    if stats.total_elements < 10 {
+        stats_text.push_str("Page appears empty (SPA not loaded?) - ");
+    } else if stats.total_elements > 20 && stats.text_chars < stats.total_elements.saturating_mul(5)
+    {
+        stats_text
+            .push_str("Page appears to show skeleton/placeholder content (still loading?) - ");
+    }
+    stats_text.push_str(&format!(
+        "{} links, {} interactive, {} iframes",
+        stats.links, stats.interactive_elements, stats.iframes
+    ));
+    if stats.shadow_open > 0 || stats.shadow_closed > 0 {
+        stats_text.push_str(&format!(
+            ", {} shadow(open), {} shadow(closed)",
+            stats.shadow_open, stats.shadow_closed
+        ));
+    }
+    if stats.images > 0 {
+        stats_text.push_str(&format!(", {} images", stats.images));
+    }
+    stats_text.push_str(&format!(
+        ", {} scroll containers, {} total elements, {} text chars",
+        stats.scroll_containers, stats.total_elements, stats.text_chars
+    ));
 
     if let Some(page_info) = state.page_info {
-        stats.push_str(&format!(
+        stats_text.push_str(&format!(
             ", {}px above, {}px below",
             page_info.pixels_above, page_info.pixels_below
         ));
     }
 
-    stats.push_str("</page_stats>");
-    stats
+    stats_text.push_str("</page_stats>");
+    stats_text
+}
+
+fn fallback_page_stats(state: &BrowserStateSummary) -> browser_use_dom::DomPageStats {
+    let indexed_elements = state.dom_state.selector_map.values();
+    browser_use_dom::DomPageStats {
+        links: indexed_elements
+            .clone()
+            .filter(|element| element.tag_name == "a")
+            .count() as u32,
+        iframes: indexed_elements
+            .clone()
+            .filter(|element| matches!(element.tag_name.as_str(), "iframe" | "frame"))
+            .count() as u32,
+        scroll_containers: indexed_elements
+            .clone()
+            .filter(|element| element.is_scrollable)
+            .count() as u32,
+        interactive_elements: indexed_elements
+            .clone()
+            .filter(|element| element.is_interactive)
+            .count() as u32,
+        total_elements: state.dom_state.selector_map.len() as u32,
+        text_chars: state.dom_state.text.chars().count() as u32,
+        ..browser_use_dom::DomPageStats::default()
+    }
 }
 
 fn render_agent_state_description(
@@ -6177,7 +6209,18 @@ mod tests {
                 is_interactive: true,
                 is_scrollable: true,
             },
-        ]);
+        ])
+        .with_page_stats(browser_use_dom::DomPageStats {
+            links: 1,
+            iframes: 1,
+            shadow_open: 1,
+            shadow_closed: 0,
+            scroll_containers: 1,
+            images: 3,
+            interactive_elements: 2,
+            total_elements: 30,
+            text_chars: 120,
+        });
         state.tabs = vec![browser_use_dom::TabInfo {
             url: "https://example.com/docs".to_owned(),
             title: "Docs".to_owned(),
@@ -6212,13 +6255,55 @@ mod tests {
         assert!(user_text.contains("</agent_history>"));
         assert!(user_text.contains("<agent_state>"));
         assert!(user_text.contains("Page stats"));
-        assert!(user_text.contains("1 links, 2 interactive"));
+        assert!(user_text.contains("1 links, 2 interactive, 1 iframes"));
+        assert!(user_text.contains("1 shadow(open), 0 shadow(closed)"));
+        assert!(user_text.contains("3 images"));
         assert!(user_text.contains("1 scroll containers"));
+        assert!(user_text.contains("30 total elements, 120 text chars"));
         assert!(user_text.contains("</agent_state>"));
         assert!(user_text.contains("<browser_state>"));
         assert!(user_text.contains("</browser_state>"));
         assert!(user_text.contains(r#""tab_id": "abcd""#));
         assert!(request_text.contains("Avoid repeating the same action sequence"));
+    }
+
+    #[test]
+    fn step_request_includes_loading_page_stats_hint_like_upstream() {
+        let mut state = blank_state();
+        state.dom_state =
+            SerializedDomState::default().with_page_stats(browser_use_dom::DomPageStats {
+                links: 0,
+                iframes: 0,
+                shadow_open: 0,
+                shadow_closed: 0,
+                scroll_containers: 0,
+                images: 0,
+                interactive_elements: 0,
+                total_elements: 25,
+                text_chars: 10,
+            });
+        let request = build_step_request(
+            "wait for app",
+            &state,
+            &AgentHistory::default(),
+            &AgentSettings::default(),
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let user_text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+
+        assert!(
+            user_text
+                .contains("Page appears to show skeleton/placeholder content (still loading?)")
+        );
+        assert!(user_text.contains("25 total elements"));
     }
 
     #[test]

@@ -139,6 +139,36 @@ pub struct DomElementRef {
     pub is_scrollable: bool,
 }
 
+/// Compact page-shape statistics rendered into the agent prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DomPageStats {
+    #[serde(default)]
+    pub links: u32,
+    #[serde(default)]
+    pub iframes: u32,
+    #[serde(default)]
+    pub shadow_open: u32,
+    #[serde(default)]
+    pub shadow_closed: u32,
+    #[serde(default)]
+    pub scroll_containers: u32,
+    #[serde(default)]
+    pub images: u32,
+    #[serde(default)]
+    pub interactive_elements: u32,
+    #[serde(default)]
+    pub total_elements: u32,
+    #[serde(default)]
+    pub text_chars: u32,
+}
+
+impl DomPageStats {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Serialized DOM state in the form the agent consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SerializedDomState {
@@ -146,6 +176,8 @@ pub struct SerializedDomState {
     pub text: String,
     #[serde(default)]
     pub selector_map: BTreeMap<u32, DomElementRef>,
+    #[serde(default, skip_serializing_if = "DomPageStats::is_empty")]
+    pub page_stats: DomPageStats,
 }
 
 impl SerializedDomState {
@@ -162,7 +194,14 @@ impl SerializedDomState {
         Self {
             text: lines.join("\n"),
             selector_map,
+            page_stats: DomPageStats::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_page_stats(mut self, page_stats: DomPageStats) -> Self {
+        self.page_stats = page_stats;
+        self
     }
 
     #[must_use]

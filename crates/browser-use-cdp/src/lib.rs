@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use browser_use_dom::{
-    BrowserStateSummary, DomElementRef, ElementBounds, PageInfo, PaginationButton,
+    BrowserStateSummary, DomElementRef, DomPageStats, ElementBounds, PageInfo, PaginationButton,
     PaginationButtonType, SerializedDomState, TabInfo, render_element_text,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -159,6 +159,22 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     return '';
   };
   const elements = [];
+  const stats = {
+    links: 0,
+    iframes: 0,
+    shadow_open: 0,
+    shadow_closed: 0,
+    scroll_containers: 0,
+    images: 0,
+    interactive_elements: 0,
+    total_elements: 0,
+    text_chars: 0
+  };
+  const addDirectTextStats = (node) => {
+    for (const child of Array.from(node.childNodes || [])) {
+      if (child.nodeType === Node.TEXT_NODE) stats.text_chars += (child.nodeValue || '').trim().length;
+    }
+  };
   const visitFrame = (iframe, offset) => {
     if (!isVisible(iframe)) return;
     try {
@@ -172,16 +188,32 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   };
   const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
-    if (isInteractive(node) && isVisible(node)) elements.push({ el: node, offset });
-    if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
-    if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
+    stats.total_elements += 1;
+    addDirectTextStats(node);
+    const tag = node.tagName ? node.tagName.toLowerCase() : '';
+    if (tag === 'a') stats.links += 1;
+    if (tag === 'iframe' || tag === 'frame') stats.iframes += 1;
+    if (tag === 'img') stats.images += 1;
+    if (isScrollable(node)) stats.scroll_containers += 1;
+    const interactive = isInteractive(node) && isVisible(node);
+    if (interactive) {
+      stats.interactive_elements += 1;
+      elements.push({ el: node, offset });
+    }
+    if (node.shadowRoot) {
+      stats.shadow_open += 1;
+      visitChildren(node.shadowRoot, offset);
+    }
+    if (tag === 'iframe' || tag === 'frame') visitFrame(node, offset);
     visitChildren(node, offset);
   };
   const visitChildren = (root, offset) => {
     for (const child of Array.from(root.children || [])) visitNode(child, offset);
   };
   visitChildren(document, { x: 0, y: 0 });
-  return elements.slice(0, 400).map(({ el, offset }, index) => {
+  return {
+    stats,
+    elements: elements.slice(0, 400).map(({ el, offset }, index) => {
     const rect = el.getBoundingClientRect();
     const axRef = `browser-use-rs-${index + 1}`;
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
@@ -217,7 +249,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       is_scrollable: isScrollable(el),
       ax_ref: axRef
     };
-  });
+  })};
 })()
 "#;
 
@@ -1249,16 +1281,7 @@ impl CdpBrowserSession {
             .await
             .unwrap_or_default();
         let _ = self.evaluate_effect(CLEANUP_AX_REFS_JS.to_owned()).await;
-        let elements = value
-            .as_array()
-            .ok_or_else(|| {
-                BrowserError::MissingResponseData("interactive element array".to_owned())
-            })?
-            .iter()
-            .map(|element| dom_element_from_value(&page.target_id, element, &accessibility))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(SerializedDomState::from_elements(elements))
+        dom_state_from_interactive_value(&page.target_id, &value, &accessibility)
     }
 
     async fn accessibility_enrichment(
@@ -1355,6 +1378,41 @@ struct AccessibilityNodeInfo {
     node_id: Option<u64>,
     role: Option<String>,
     name: Option<String>,
+}
+
+fn dom_state_from_interactive_value(
+    target_id: &str,
+    value: &Value,
+    accessibility: &BTreeMap<String, AccessibilityNodeInfo>,
+) -> Result<SerializedDomState, BrowserError> {
+    let stats = value
+        .get("stats")
+        .and_then(dom_page_stats_from_value)
+        .unwrap_or_default();
+    let element_values = value
+        .as_array()
+        .or_else(|| value.get("elements").and_then(Value::as_array))
+        .ok_or_else(|| BrowserError::MissingResponseData("interactive element array".to_owned()))?;
+    let elements = element_values
+        .iter()
+        .map(|element| dom_element_from_value(target_id, element, accessibility))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(SerializedDomState::from_elements(elements).with_page_stats(stats))
+}
+
+fn dom_page_stats_from_value(value: &Value) -> Option<DomPageStats> {
+    Some(DomPageStats {
+        links: u32_field(value, "links").unwrap_or_default(),
+        iframes: u32_field(value, "iframes").unwrap_or_default(),
+        shadow_open: u32_field(value, "shadow_open").unwrap_or_default(),
+        shadow_closed: u32_field(value, "shadow_closed").unwrap_or_default(),
+        scroll_containers: u32_field(value, "scroll_containers").unwrap_or_default(),
+        images: u32_field(value, "images").unwrap_or_default(),
+        interactive_elements: u32_field(value, "interactive_elements").unwrap_or_default(),
+        total_elements: u32_field(value, "total_elements").unwrap_or_default(),
+        text_chars: u32_field(value, "text_chars").unwrap_or_default(),
+    })
 }
 
 fn dom_element_from_value(
@@ -3342,6 +3400,47 @@ mod tests {
     }
 
     #[test]
+    fn dom_state_parser_carries_page_stats() {
+        let state = dom_state_from_interactive_value(
+            "target-1",
+            &json!({
+                "stats": {
+                    "links": 1,
+                    "iframes": 2,
+                    "shadow_open": 1,
+                    "shadow_closed": 0,
+                    "scroll_containers": 3,
+                    "images": 4,
+                    "interactive_elements": 5,
+                    "total_elements": 30,
+                    "text_chars": 40
+                },
+                "elements": [{
+                    "index": 1,
+                    "tag_name": "a",
+                    "name": "Docs",
+                    "text": "Docs",
+                    "attributes": { "href": "/docs" },
+                    "is_visible": true,
+                    "is_interactive": true
+                }]
+            }),
+            &BTreeMap::new(),
+        )
+        .expect("dom state");
+
+        assert_eq!(state.selector_map.len(), 1);
+        assert_eq!(state.page_stats.links, 1);
+        assert_eq!(state.page_stats.iframes, 2);
+        assert_eq!(state.page_stats.shadow_open, 1);
+        assert_eq!(state.page_stats.scroll_containers, 3);
+        assert_eq!(state.page_stats.images, 4);
+        assert_eq!(state.page_stats.interactive_elements, 5);
+        assert_eq!(state.page_stats.total_elements, 30);
+        assert_eq!(state.page_stats.text_chars, 40);
+    }
+
+    #[test]
     fn interactive_snapshot_detects_search_affordances() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasSearchIndicator"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("search-icon"));
@@ -3376,6 +3475,17 @@ mod tests {
 
         let params = runtime_evaluate_params("document.title", false);
         assert!(params.get("includeCommandLineAPI").is_none());
+    }
+
+    #[test]
+    fn interactive_snapshot_collects_page_statistics() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("const stats = {"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("shadow_open"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("interactive_elements"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("total_elements"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("text_chars"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("return {"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("elements: elements.slice"));
     }
 
     #[test]
@@ -4273,6 +4383,9 @@ mod tests {
 
         let initial_state = session.state(false).await.expect("initial state");
         assert_eq!(initial_state.dom_state.element_count(), 3);
+        assert!(initial_state.dom_state.page_stats.total_elements >= 5);
+        assert_eq!(initial_state.dom_state.page_stats.interactive_elements, 3);
+        assert!(initial_state.dom_state.page_stats.text_chars > 0);
         assert!(
             initial_state
                 .dom_state

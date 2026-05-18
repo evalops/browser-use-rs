@@ -51,10 +51,11 @@ Implemented:
 - MCP stdio persistent session lifecycle tool for start/stop/list.
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, max-step, max-failure handling,
-  upstream-style max-action truncation, step and LLM timeouts, compact page-stat
-  prompt context, vision-aware screenshot capture, screenshot action
-  next-observation image overrides, action-result image prompt parts, one-time
-  extraction replay handling, invalid model-output recovery,
+  upstream-style max-action truncation, step and LLM timeouts, upstream-style
+  page-stat prompt context with loading/skeleton hints, vision-aware screenshot
+  capture, screenshot action next-observation image overrides, action-result
+  image prompt parts, one-time extraction replay handling, invalid model-output
+  recovery,
   upstream-style final `done` responses after repeated failures,
   normalized repeated-action loop detection, loop-awareness prompt nudges,
   upstream flattened planning fields, custom
@@ -93,9 +94,10 @@ Implemented:
   hints, preserves static history-matching attributes, renders native and text
   datepicker input format hints, detects search affordance signals and small
   icon controls, detects JavaScript click/pointer listener-backed controls,
-  detects pagination affordances, supports caller-selected prompt attributes,
-  renders the upstream empty-DOM load hint, and excludes hidden or disabled
-  interactive elements from the selector map.
+  detects pagination affordances, carries page-shape stats for agent prompts,
+  supports caller-selected prompt attributes, renders the upstream empty-DOM
+  load hint, and excludes hidden or disabled interactive elements from the
+  selector map.
 
 Next:
 
