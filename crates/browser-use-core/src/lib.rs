@@ -6,7 +6,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::future::Future;
 use std::io::{Read, Write};
+use std::pin::Pin;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -4812,8 +4814,8 @@ pub enum AgentRunError {
     MaxFailuresExceeded { failures: u32 },
     #[error("agent repeated the same action sequence for {window} steps")]
     LoopDetected { window: usize },
-    #[error("agent stopped programmatically")]
-    Stopped,
+    #[error("agent stopped before the next step: {reason}")]
+    Stopped { reason: String },
     #[error("agent callback {callback} failed: {message}")]
     Callback {
         callback: &'static str,
@@ -4842,11 +4844,20 @@ pub struct AgentCheckpoint {
     pub file_system_state: FileSystemState,
 }
 
+pub type AgentCallbackFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type AgentStepCallback = Box<
-    dyn FnMut(&BrowserStateSummary, &AgentOutput, usize) -> Result<(), String> + Send + 'static,
+    dyn for<'a> FnMut(
+            &'a BrowserStateSummary,
+            &'a AgentOutput,
+            usize,
+        ) -> AgentCallbackFuture<'a, ()>
+        + Send
+        + 'static,
 >;
-pub type AgentDoneCallback = Box<dyn FnMut(&AgentHistory) -> Result<(), String> + Send + 'static>;
-pub type AgentShouldStopCallback = Box<dyn FnMut() -> Result<bool, String> + Send + 'static>;
+pub type AgentDoneCallback =
+    Box<dyn for<'a> FnMut(&'a AgentHistory) -> AgentCallbackFuture<'a, ()> + Send + 'static>;
+pub type AgentShouldStopCallback =
+    Box<dyn FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static>;
 
 pub struct Agent<M, S> {
     id: Uuid,
@@ -4985,10 +4996,27 @@ where
         F: FnMut(&BrowserStateSummary, &AgentOutput, usize) -> Result<(), E> + Send + 'static,
         E: ToString + 'static,
     {
-        self.step_callbacks
-            .push(Box::new(move |state, output, step| {
-                callback(state, output, step).map_err(|error| error.to_string())
-            }));
+        self.register_new_step_callback_async(move |state, output, step| {
+            let result = callback(state, output, step).map_err(|error| error.to_string());
+            Box::pin(async move { result })
+        });
+    }
+
+    pub fn register_new_step_callback_async<F>(&mut self, callback: F)
+    where
+        F: for<'a> FnMut(
+                &'a BrowserStateSummary,
+                &'a AgentOutput,
+                usize,
+            ) -> AgentCallbackFuture<'a, ()>
+            + Send
+            + 'static,
+    {
+        self.step_callbacks.push(Box::new(callback));
+    }
+
+    pub fn clear_new_step_callbacks(&mut self) {
+        self.step_callbacks.clear();
     }
 
     pub fn register_done_callback<F, E>(&mut self, mut callback: F)
@@ -4996,9 +5024,21 @@ where
         F: FnMut(&AgentHistory) -> Result<(), E> + Send + 'static,
         E: ToString + 'static,
     {
-        self.done_callbacks.push(Box::new(move |history| {
-            callback(history).map_err(|error| error.to_string())
-        }));
+        self.register_done_callback_async(move |history| {
+            let result = callback(history).map_err(|error| error.to_string());
+            Box::pin(async move { result })
+        });
+    }
+
+    pub fn register_done_callback_async<F>(&mut self, callback: F)
+    where
+        F: for<'a> FnMut(&'a AgentHistory) -> AgentCallbackFuture<'a, ()> + Send + 'static,
+    {
+        self.done_callbacks.push(Box::new(callback));
+    }
+
+    pub fn clear_done_callbacks(&mut self) {
+        self.done_callbacks.clear();
     }
 
     pub fn register_should_stop_callback<F, E>(&mut self, mut callback: F)
@@ -5006,9 +5046,21 @@ where
         F: FnMut() -> Result<bool, E> + Send + 'static,
         E: ToString + 'static,
     {
-        self.should_stop_callback = Some(Box::new(move || {
-            callback().map_err(|error| error.to_string())
-        }));
+        self.register_should_stop_callback_async(move || {
+            let result = callback().map_err(|error| error.to_string());
+            Box::pin(async move { result })
+        });
+    }
+
+    pub fn register_should_stop_callback_async<F>(&mut self, callback: F)
+    where
+        F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
+    {
+        self.should_stop_callback = Some(Box::new(callback));
+    }
+
+    pub fn clear_should_stop_callback(&mut self) {
+        self.should_stop_callback = None;
     }
 
     pub fn stop(&mut self) {
@@ -5019,48 +5071,56 @@ where
         self.stopped
     }
 
-    fn check_stop_requested(&mut self) -> Result<(), AgentRunError> {
+    async fn check_stop_requested(&mut self) -> Result<(), AgentRunError> {
         if self.stopped {
-            return Err(AgentRunError::Stopped);
+            return Err(AgentRunError::Stopped {
+                reason: "stop requested".to_owned(),
+            });
         }
 
         if let Some(callback) = self.should_stop_callback.as_mut() {
-            let should_stop = callback().map_err(|message| AgentRunError::Callback {
-                callback: "should_stop",
-                message,
-            })?;
+            let should_stop = callback()
+                .await
+                .map_err(|message| AgentRunError::Callback {
+                    callback: "should_stop",
+                    message,
+                })?;
             if should_stop {
                 self.stopped = true;
-                return Err(AgentRunError::Stopped);
+                return Err(AgentRunError::Stopped {
+                    reason: "should_stop callback requested stop".to_owned(),
+                });
             }
         }
 
         Ok(())
     }
 
-    fn invoke_step_callbacks(
+    async fn invoke_step_callbacks(
         &mut self,
         state: &BrowserStateSummary,
         model_output: &AgentOutput,
         step_number: usize,
     ) -> Result<(), AgentRunError> {
         for callback in &mut self.step_callbacks {
-            callback(state, model_output, step_number).map_err(|message| {
-                AgentRunError::Callback {
+            callback(state, model_output, step_number)
+                .await
+                .map_err(|message| AgentRunError::Callback {
                     callback: "new_step",
                     message,
-                }
-            })?;
+                })?;
         }
         Ok(())
     }
 
-    fn invoke_done_callbacks(&mut self) -> Result<(), AgentRunError> {
+    async fn invoke_done_callbacks(&mut self) -> Result<(), AgentRunError> {
         for callback in &mut self.done_callbacks {
-            callback(&self.history).map_err(|message| AgentRunError::Callback {
-                callback: "done",
-                message,
-            })?;
+            callback(&self.history)
+                .await
+                .map_err(|message| AgentRunError::Callback {
+                    callback: "done",
+                    message,
+                })?;
         }
         Ok(())
     }
@@ -5068,7 +5128,7 @@ where
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
 
-        self.check_stop_requested()?;
+        self.check_stop_requested().await?;
         self.execute_initial_actions().await?;
         if self
             .history
@@ -5080,7 +5140,7 @@ where
         }
 
         for step_index in 0..max_steps {
-            self.check_stop_requested()?;
+            self.check_stop_requested().await?;
             let (is_done, has_error) = {
                 let seconds = self.settings.step_timeout_seconds;
                 let steps_used = step_index + 1;
@@ -5106,10 +5166,10 @@ where
                 )
             };
 
-            self.check_stop_requested()?;
             if is_done {
                 return self.finish_successful_run().await;
             }
+            self.check_stop_requested().await?;
 
             if self.settings.loop_detection_enabled
                 && repeated_action_loop(&self.history, self.settings.loop_detection_window)
@@ -5146,7 +5206,7 @@ where
     }
 
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
-        self.check_stop_requested()?;
+        self.check_stop_requested().await?;
         let seconds = self.settings.step_timeout_seconds;
         timeout(Duration::from_secs(seconds), self.step_inner())
             .await
@@ -5184,6 +5244,7 @@ where
         &mut self,
         step_kind: StepRequestKind,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
+        self.check_stop_requested().await?;
         let step_start_time = now_seconds();
         let include_screenshot = self.should_include_screenshot();
         let state = self.executor.session().state(include_screenshot).await?;
@@ -5279,16 +5340,17 @@ where
                 .action
                 .truncate(self.settings.max_actions_per_step);
         }
-        if let Some(error) = excluded_action_error(&model_output.action, &self.settings) {
-            return self.record_model_error(state, error, step_start_time);
-        }
         let step_number = latest_history_step_number(&self.history)
             .map(|step| step + 1)
             .unwrap_or(1);
-        self.invoke_step_callbacks(&state, &model_output, step_number)?;
-        self.check_stop_requested()?;
+        self.invoke_step_callbacks(&state, &model_output, step_number)
+            .await?;
+        self.check_stop_requested().await?;
+        if let Some(error) = excluded_action_error(&model_output.action, &self.settings) {
+            return self.record_model_error(state, error, step_start_time);
+        }
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
-        let result = self.execute_agent_sequence(&actions).await;
+        let result = self.execute_agent_sequence(&actions).await?;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
         self.history.items.push(AgentHistoryItem {
@@ -5304,10 +5366,15 @@ where
             .ok_or_else(|| AgentRunError::InvalidOutput("history item was not recorded".to_owned()))
     }
 
-    async fn execute_agent_sequence(&mut self, actions: &[BrowserAction]) -> Vec<ActionResult> {
+    async fn execute_agent_sequence(
+        &mut self,
+        actions: &[BrowserAction],
+    ) -> Result<Vec<ActionResult>, AgentRunError> {
         let mut results = Vec::new();
 
         for (index, action) in actions.iter().enumerate() {
+            self.check_stop_requested().await?;
+
             if index > 0 && matches!(action, BrowserAction::Done(_)) {
                 break;
             }
@@ -5359,7 +5426,7 @@ where
             }
         }
 
-        results
+        Ok(results)
     }
 
     async fn resolve_agent_action_result(
@@ -5417,7 +5484,7 @@ where
         let current_url = state.url.clone();
         let execution_actions =
             actions_for_execution(&initial_actions, &self.settings, &current_url);
-        let result = self.execute_agent_sequence(&execution_actions).await;
+        let result = self.execute_agent_sequence(&execution_actions).await?;
         let step_end_time = now_seconds();
 
         self.history.items.push(AgentHistoryItem {
@@ -5442,6 +5509,7 @@ where
         &mut self,
         failures: u32,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
+        self.check_stop_requested().await?;
         let step_start_time = now_seconds();
         let include_screenshot = self.should_include_screenshot();
         let state = self.executor.session().state(include_screenshot).await?;
@@ -5597,8 +5665,8 @@ where
 
     async fn finish_successful_run(&mut self) -> Result<&AgentHistory, AgentRunError> {
         self.maybe_judge_done_result().await;
-        self.invoke_done_callbacks()?;
         self.save_history_gif()?;
+        self.invoke_done_callbacks().await?;
         Ok(&self.history)
     }
 
@@ -13269,13 +13337,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_run_invokes_async_step_callback() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "async complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut agent = Agent::with_settings(
+            "complete async",
+            AgentSettings {
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let step_events = Arc::clone(&events);
+        agent.register_new_step_callback_async(move |_state, output, step_number| {
+            let step_events = Arc::clone(&step_events);
+            let action_name = output
+                .action
+                .first()
+                .map(BrowserAction::name)
+                .unwrap_or("none")
+                .to_owned();
+            Box::pin(async move {
+                step_events
+                    .lock()
+                    .expect("async step events lock")
+                    .push(format!("async-step:{step_number}:{action_name}"));
+                Ok(())
+            })
+        });
+
+        let history = agent.run(1).await.expect("agent run");
+
+        assert_eq!(history.final_result(), Some("async complete"));
+        assert_eq!(
+            events.lock().expect("events lock").as_slice(),
+            ["async-step:1:done"]
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_done_callback_sees_judged_history() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "judge before callback",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let judge_output = serde_json::json!({
+            "reasoning": "Checked the terminal result before invoking callbacks.",
+            "verdict": true,
+            "failure_reason": null,
+            "impossible_task": false,
+            "reached_captcha": false
+        });
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let callback_seen = Arc::clone(&seen);
+        let mut agent = Agent::new(
+            "finish with judged history",
+            QueueModel::new(vec![done_output, judge_output]),
+            MockSession::new(),
+        );
+        agent.register_done_callback(move |history| {
+            let verdict = history
+                .items
+                .last()
+                .and_then(|item| item.result.last())
+                .and_then(|result| result.judgement.as_ref())
+                .map(|judgement| judgement.verdict);
+            callback_seen
+                .lock()
+                .expect("done callback log")
+                .push(format!("items:{}:verdict:{verdict:?}", history.items.len()));
+            Ok::<(), String>(())
+        });
+
+        agent.run(1).await.expect("agent run");
+
+        assert_eq!(
+            seen.lock().expect("seen log").as_slice(),
+            ["items:1:verdict:Some(true)"]
+        );
+    }
+
+    #[tokio::test]
     async fn agent_run_stops_before_model_when_stop_requested() {
         let mut agent = Agent::new("complete", QueueModel::new(vec![]), MockSession::new());
 
         agent.stop();
         let error = agent.run(1).await.expect_err("run should stop");
 
-        assert!(matches!(error, AgentRunError::Stopped));
+        assert!(matches!(
+            error,
+            AgentRunError::Stopped { reason } if reason == "stop requested"
+        ));
         assert!(agent.is_stopped());
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
         assert!(agent.executor.session().events().is_empty());
@@ -13294,7 +13467,10 @@ mod tests {
 
         let error = agent.run(1).await.expect_err("run should stop");
 
-        assert!(matches!(error, AgentRunError::Stopped));
+        assert!(matches!(
+            error,
+            AgentRunError::Stopped { reason } if reason == "should_stop callback requested stop"
+        ));
         assert!(agent.is_stopped());
         assert_eq!(*calls.lock().expect("calls lock"), 1);
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
