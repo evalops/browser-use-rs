@@ -1541,6 +1541,12 @@ fn write_file_action(
         return Ok(result);
     }
     let path = std::path::Path::new(&params.file_name);
+    if params.append && !path.exists() {
+        return Ok(ActionResult::error(format!(
+            "File '{}' not found.",
+            params.file_name
+        )));
+    }
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -1562,11 +1568,8 @@ fn write_file_action(
 
     if params.append {
         if is_csv_file(&params.file_name) {
-            let existing = match std::fs::read_to_string(path) {
-                Ok(existing) => existing,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(error) => return Err(BrowserError::ActionFailed(error.to_string())),
-            };
+            let existing = std::fs::read_to_string(path)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_csv_append_content(&existing, &content);
             std::fs::write(path, merged)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
@@ -4976,6 +4979,47 @@ mod tests {
                 .contains("hello EvalOps\n\nEvalOps")
         );
         assert!(read_result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_append_file_requires_existing_file_like_upstream() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let text_path = temp_dir.path().join("missing.md");
+        let csv_path = temp_dir.path().join("missing.csv");
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let text_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: text_path.display().to_string(),
+                content: "hello".to_owned(),
+                append: true,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let csv_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: csv_path.display().to_string(),
+                content: "name,value".to_owned(),
+                append: true,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+
+        let expected_text_error = format!("File '{}' not found.", text_path.display());
+        let expected_csv_error = format!("File '{}' not found.", csv_path.display());
+        assert_eq!(
+            text_result.error.as_deref(),
+            Some(expected_text_error.as_str())
+        );
+        assert_eq!(
+            csv_result.error.as_deref(),
+            Some(expected_csv_error.as_str())
+        );
+        assert!(!text_path.exists());
+        assert!(!csv_path.exists());
     }
 
     #[tokio::test]
