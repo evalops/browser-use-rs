@@ -1627,6 +1627,10 @@ pub struct BrowserProfile {
     #[serde(default)]
     pub block_ip_addresses: bool,
     #[serde(default)]
+    pub disable_security: bool,
+    #[serde(default)]
+    pub deterministic_rendering: bool,
+    #[serde(default)]
     pub viewport: BrowserViewport,
     #[serde(default = "default_browser_start_timeout_ms")]
     pub browser_start_timeout_ms: u64,
@@ -1656,6 +1660,8 @@ impl Default for BrowserProfile {
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
             block_ip_addresses: false,
+            disable_security: false,
+            deterministic_rendering: false,
             viewport: BrowserViewport::default(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
             navigation_timeout_ms: default_navigation_timeout_ms(),
@@ -1684,6 +1690,25 @@ fn default_navigation_timeout_ms() -> u64 {
 fn default_network_request_timeout_ms() -> u64 {
     10_000
 }
+
+const CHROME_DISABLE_SECURITY_ARGS: &[&str] = &[
+    "--disable-site-isolation-trials",
+    "--disable-web-security",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--allow-running-insecure-content",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--ignore-certificate-errors-spki-list",
+];
+
+const CHROME_DETERMINISTIC_RENDERING_ARGS: &[&str] = &[
+    "--deterministic-mode",
+    "--js-flags=--random-seed=1157259159",
+    "--force-device-scale-factor=2",
+    "--enable-webgl",
+    "--font-render-hinting=none",
+    "--force-color-profile=srgb",
+];
 
 impl BrowserProfile {
     #[must_use]
@@ -1765,6 +1790,22 @@ impl BrowserProfile {
 
         if let Some(user_data_dir) = &self.user_data_dir {
             args.push(format!("--user-data-dir={}", user_data_dir.display()));
+        }
+
+        if self.disable_security {
+            args.extend(
+                CHROME_DISABLE_SECURITY_ARGS
+                    .iter()
+                    .map(|arg| (*arg).to_owned()),
+            );
+        }
+
+        if self.deterministic_rendering {
+            args.extend(
+                CHROME_DETERMINISTIC_RENDERING_ARGS
+                    .iter()
+                    .map(|arg| (*arg).to_owned()),
+            );
         }
 
         if let Some(proxy) = &self.proxy {
@@ -7760,6 +7801,12 @@ mod tests {
         })
     }
 
+    fn arg_index(args: &[String], expected: &str) -> usize {
+        args.iter()
+            .position(|arg| arg == expected)
+            .unwrap_or_else(|| panic!("missing launch arg {expected} in {args:?}"))
+    }
+
     #[test]
     fn default_profile_uses_headless_chrome_args() {
         let profile = BrowserProfile::default();
@@ -7768,10 +7815,33 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert!(!profile.disable_security);
+        assert!(!profile.deterministic_rendering);
+        assert!(
+            !CHROME_DISABLE_SECURITY_ARGS
+                .iter()
+                .any(|arg| plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg))
+        );
+        assert!(
+            !CHROME_DETERMINISTIC_RENDERING_ARGS
+                .iter()
+                .any(|arg| plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg))
+        );
         assert_eq!(profile.browser_start_timeout_ms, 30_000);
         assert_eq!(profile.navigation_timeout_ms, 20_000);
         assert!(!profile.uses_cloud());
         assert_eq!(profile.cloud_create_request(), None);
+    }
+
+    #[test]
+    fn browser_profile_security_toggles_default_false_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(!decoded.disable_security);
+        assert!(!decoded.deterministic_rendering);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["disable_security"], json!(false));
+        assert_eq!(encoded["deterministic_rendering"], json!(false));
     }
 
     #[test]
@@ -8190,6 +8260,78 @@ mod tests {
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_disable_security_args() {
+        let profile = BrowserProfile {
+            disable_security: true,
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        for arg in CHROME_DISABLE_SECURITY_ARGS {
+            assert!(
+                plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg),
+                "missing disable_security launch arg {arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_plan_emits_deterministic_rendering_args() {
+        let profile = BrowserProfile {
+            deterministic_rendering: true,
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        for arg in CHROME_DETERMINISTIC_RENDERING_ARGS {
+            assert!(
+                plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg),
+                "missing deterministic_rendering launch arg {arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_plan_keeps_security_and_rendering_args_before_custom_args() {
+        let profile = BrowserProfile {
+            disable_security: true,
+            deterministic_rendering: true,
+            args: vec![
+                "--force-device-scale-factor=1".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            proxy: Some(ProxySettings {
+                server: "http://127.0.0.1:8080".to_owned(),
+                bypass: Some("localhost".to_owned()),
+                username: None,
+                password: None,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let first_custom_arg_index = arg_index(&plan.args, "--force-device-scale-factor=1");
+
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+        for arg in CHROME_DISABLE_SECURITY_ARGS
+            .iter()
+            .chain(CHROME_DETERMINISTIC_RENDERING_ARGS.iter())
+        {
+            assert!(
+                arg_index(&plan.args, *arg) < first_custom_arg_index,
+                "generated launch arg {arg} should come before caller args"
+            );
+        }
+        assert!(
+            arg_index(&plan.args, "--disable-site-isolation-trials")
+                < arg_index(&plan.args, "--deterministic-mode")
+        );
+        assert!(arg_index(&plan.args, "--proxy-bypass-list=localhost") < first_custom_arg_index);
     }
 
     #[test]
