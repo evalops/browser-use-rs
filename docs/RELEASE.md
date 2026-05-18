@@ -70,8 +70,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
-  file upload, local text-file read/write/replace with upstream-style CSV row
-  normalization and relative filename sanitization, page-aware PDF read
+  file upload with upstream-style agent availability checks, local text-file
+  read/write/replace with upstream-style CSV row normalization and relative
+  filename sanitization, page-aware PDF read
   envelopes, PDF/DOCX write/append artifacts with paginated PDF text layout,
   and append-only-to-existing-file semantics, upstream-aligned binary/image
   extension rejection, DOCX text extraction, PNG/JPEG image-file reads with

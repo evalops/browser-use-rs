@@ -93,11 +93,12 @@ Implemented:
   paths.
 - Built-in text-file read/write/replace action parity for local agent artifacts,
   upstream-style CSV write/append normalization, relative filename
-  sanitization for local file actions, page-aware PDF read envelopes, PDF/DOCX
-  write/append artifacts with paginated PDF text layout, plus upstream-style
-  DOCX text extraction and PNG/JPEG read payloads for one-shot image prompt
-  parts, with upstream-aligned binary/image extension rejection. Append mode
-  requires an existing file, matching upstream `FileSystem` semantics.
+  sanitization for local file actions, upstream-style agent `upload_file`
+  availability checks, page-aware PDF read envelopes, PDF/DOCX write/append
+  artifacts with paginated PDF text layout, plus upstream-style DOCX text
+  extraction and PNG/JPEG read payloads for one-shot image prompt parts, with
+  upstream-aligned binary/image extension rejection. Append mode requires an
+  existing file, matching upstream `FileSystem` semantics.
 - Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX

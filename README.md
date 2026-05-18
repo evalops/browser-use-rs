@@ -82,7 +82,8 @@ includes:
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
-  `send_keys` for text, special keys, and shortcuts, `upload_file`,
+  `send_keys` for text, special keys, and shortcuts, `upload_file` with
+  upstream-style agent availability checks,
   text/PDF/DOCX read support with page-aware PDF envelopes, text-file
   write/replace with CSV normalization and relative filename sanitization,
   PDF/DOCX write/append artifacts with paginated PDF text layout, and

@@ -142,7 +142,8 @@ into the final answer, `--no-loop-detection`, `--loop-detection-window`,
 browser event diagnostics into the agent prompt, repeated
 `--include-attribute <name>` for prompt-visible DOM attributes, and repeated
 `--available-file-path <path>` for upstream-style file-path context in the
-agent prompt. Repeated
+agent prompt. Agent-owned `upload_file` actions are limited to those declared
+paths or files created in the managed agent filesystem. Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns
 one, while keeping `done` available for completion. Use repeated

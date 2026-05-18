@@ -1056,6 +1056,8 @@ pub struct BrowserActionExecutor<S> {
     session: S,
     file_system: ManagedFileSystem,
     display_files_in_done_text: bool,
+    enforce_upload_file_availability: bool,
+    available_file_paths: BTreeSet<String>,
 }
 
 impl<S> BrowserActionExecutor<S> {
@@ -1073,6 +1075,8 @@ impl<S> BrowserActionExecutor<S> {
             session,
             file_system,
             display_files_in_done_text: true,
+            enforce_upload_file_availability: false,
+            available_file_paths: BTreeSet::new(),
         }
     }
 
@@ -1092,6 +1096,15 @@ impl<S> BrowserActionExecutor<S> {
 
     pub fn set_display_files_in_done_text(&mut self, display_files_in_done_text: bool) {
         self.display_files_in_done_text = display_files_in_done_text;
+    }
+
+    pub fn set_upload_file_availability(
+        &mut self,
+        enforce_upload_file_availability: bool,
+        available_file_paths: Vec<String>,
+    ) {
+        self.enforce_upload_file_availability = enforce_upload_file_availability;
+        self.available_file_paths = available_file_paths.into_iter().collect();
     }
 }
 
@@ -1368,6 +1381,8 @@ where
             &mut self.file_system,
             action,
             self.display_files_in_done_text,
+            self.enforce_upload_file_availability,
+            &self.available_file_paths,
         )
         .await
         {
@@ -1382,6 +1397,8 @@ async fn execute_browser_action<S>(
     file_system: &mut ManagedFileSystem,
     action: &BrowserAction,
     display_files_in_done_text: bool,
+    enforce_upload_file_availability: bool,
+    available_file_paths: &BTreeSet<String>,
 ) -> Result<ActionResult, BrowserError>
 where
     S: BrowserSession + Send + Sync,
@@ -1737,12 +1754,20 @@ where
             })
         }
         BrowserAction::UploadFile(params) => {
-            session
-                .upload_file(params.index, std::path::Path::new(&params.path))
-                .await?;
+            let upload_path = match upload_file_action_path(
+                params,
+                file_system,
+                enforce_upload_file_availability,
+                available_file_paths,
+            ) {
+                Ok(upload_path) => upload_path,
+                Err(result) => return Ok(result),
+            };
+            session.upload_file(params.index, &upload_path).await?;
             Ok(ActionResult::extracted(format!(
                 "Uploaded {} to element {}",
-                params.path, params.index
+                upload_path.display(),
+                params.index
             )))
         }
         BrowserAction::WriteFile(params) => file_system.write_file(params),
@@ -1808,6 +1833,43 @@ fn display_done_file(file_name: &str) -> Option<(String, String)> {
         .display()
         .to_string();
     Some((format!("{file_name}:\n{content}"), attachment))
+}
+
+fn upload_file_action_path(
+    params: &browser_use_tools::UploadFileAction,
+    file_system: &ManagedFileSystem,
+    enforce_upload_file_availability: bool,
+    available_file_paths: &BTreeSet<String>,
+) -> Result<std::path::PathBuf, ActionResult> {
+    if !enforce_upload_file_availability {
+        return Ok(std::path::PathBuf::from(&params.path));
+    }
+
+    let path = if available_file_paths.contains(&params.path) {
+        std::path::PathBuf::from(&params.path)
+    } else if let Some(path) = file_system.upload_file_path(&params.path) {
+        path
+    } else {
+        return Err(ActionResult::error(format!(
+            "File path {} is not available. Add it to AgentSettings.available_file_paths before using upload_file.",
+            params.path
+        )));
+    };
+
+    if !path.exists() {
+        return Err(ActionResult::error(format!(
+            "File {} does not exist",
+            path.display()
+        )));
+    }
+    if path.metadata().map(|metadata| metadata.len()).unwrap_or(0) == 0 {
+        return Err(ActionResult::error(format!(
+            "File {} is empty (0 bytes). The file may not have been saved correctly.",
+            path.display()
+        )));
+    }
+
+    Ok(path)
 }
 
 const MAX_EXTRACT_CHAR_LIMIT: usize = 100_000;
@@ -3305,6 +3367,25 @@ impl ManagedFileSystem {
         ))
     }
 
+    pub fn upload_file_path(&self, file_name: &str) -> Option<std::path::PathBuf> {
+        if std::path::Path::new(file_name).is_absolute() {
+            return None;
+        }
+
+        let resolved_file = resolve_file_action_path_at(
+            file_name,
+            supported_write_extensions(),
+            Some(&self.data_dir),
+        );
+        if validate_write_file_name(&resolved_file.display_name).is_some()
+            || !self.files.contains_key(&resolved_file.display_name)
+        {
+            return None;
+        }
+
+        Some(resolved_file.path)
+    }
+
     pub fn write_file(
         &mut self,
         params: &browser_use_tools::WriteFileAction,
@@ -4164,6 +4245,7 @@ where
     ) -> Self {
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
+        executor.set_upload_file_availability(true, settings.available_file_paths.clone());
         Self {
             task: task.into(),
             settings,
@@ -4182,6 +4264,8 @@ where
         let file_system = ManagedFileSystem::from_state(checkpoint.file_system_state)?;
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(checkpoint.settings.display_files_in_done_text);
+        executor
+            .set_upload_file_availability(true, checkpoint.settings.available_file_paths.clone());
         Ok(Self {
             task: checkpoint.task,
             settings: checkpoint.settings,
@@ -9474,6 +9558,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_executor_enforces_available_upload_paths_when_enabled() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let upload_path = temp_dir.path().join("allowed.txt");
+        std::fs::write(&upload_path, "upload me").expect("upload file");
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+        executor.set_upload_file_availability(true, vec![upload_path.display().to_string()]);
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: upload_path.display().to_string(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            executor.session().events(),
+            vec![format!("upload_file:3:{}", upload_path.display())]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_unavailable_upload_paths_before_session_call() {
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+        executor.set_upload_file_availability(true, Vec::new());
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "/tmp/not-declared.txt".to_owned(),
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("upload error")
+                .contains("AgentSettings.available_file_paths")
+        );
+        assert!(executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_empty_available_upload_files() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let upload_path = temp_dir.path().join("empty.txt");
+        std::fs::write(&upload_path, "").expect("empty upload file");
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+        executor.set_upload_file_availability(true, vec![upload_path.display().to_string()]);
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: upload_path.display().to_string(),
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("upload error")
+                .contains("empty (0 bytes)")
+        );
+        assert!(executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_executor_uploads_managed_files_by_relative_name() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session = MockSession::new();
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+        executor.set_upload_file_availability(true, Vec::new());
+        executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: "report.md".to_owned(),
+                content: "upload me".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let managed_path = executor.file_system().data_dir().join("report.md");
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "report.md".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            executor.session().events(),
+            vec![format!("upload_file:3:{}", managed_path.display())]
+        );
+    }
+
+    #[tokio::test]
     async fn browser_executor_saves_pdf_when_file_name_is_present() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let requested_output_path = temp_dir.path().join("out");
@@ -9848,6 +10036,39 @@ mod tests {
         assert!(state.files.contains_key("report.md"));
         let restored = ManagedFileSystem::from_state(state).expect("restore file system");
         assert_eq!(restored.display_file("report.md").as_deref(), Some("alpha"));
+    }
+
+    #[tokio::test]
+    async fn agent_rejects_unavailable_upload_paths_before_browser_side_effects() {
+        let upload_output = serde_json::json!({
+            "current_state": {
+                "thinking": "upload"
+            },
+            "action": [
+                {
+                    "upload_file": {
+                        "index": 3,
+                        "path": "/tmp/not-declared.txt"
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::new(
+            "upload a file",
+            QueueModel::new(vec![upload_output]),
+            MockSession::new(),
+        );
+
+        let item = agent.step().await.expect("agent step");
+
+        assert!(
+            item.result
+                .first()
+                .and_then(|result| result.error.as_deref())
+                .expect("upload error")
+                .contains("AgentSettings.available_file_paths")
+        );
+        assert!(agent.executor.session().events().is_empty());
     }
 
     #[tokio::test]
