@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next parity track to be opened from the remaining gaps below.
+- [#20 Align file action binary extension guards](https://github.com/evalops/browser-use-rs/issues/20)
 
 ## Completed Tracks
 
@@ -47,8 +47,9 @@ Implemented:
   upstream-style CSV write/append normalization, page-aware PDF read envelopes,
   PDF/DOCX write/append artifacts with paginated PDF text layout, plus
   upstream-style DOCX text extraction and PNG/JPEG read payloads for one-shot
-  image prompt parts. Append mode requires an existing file, matching upstream
-  `FileSystem` semantics.
+  image prompt parts, with upstream-aligned binary/image extension rejection.
+  Append mode requires an existing file, matching upstream `FileSystem`
+  semantics.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.

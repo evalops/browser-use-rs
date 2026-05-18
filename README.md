@@ -57,7 +57,7 @@ includes:
   text/PDF/DOCX read support with page-aware PDF envelopes, text-file
   write/replace with CSV normalization, PDF/DOCX write/append artifacts with
   paginated PDF text layout, and upstream-style append semantics, PNG/JPEG
-  image-file read payloads,
+  image-file read payloads, upstream-aligned binary/image extension rejection,
   `screenshot` with optional PNG file save, `save_as_pdf` with filename
   normalization, `extract`, `search_page`, `find_elements` including
   Chrome OOPIF iframe targets, back

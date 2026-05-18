@@ -2529,8 +2529,8 @@ fn file_extension(file_name: &str) -> Option<String> {
 
 fn unsupported_binary_extensions() -> &'static [&'static str] {
     &[
-        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "mp4", "mov", "avi", "zip", "gz", "tar",
-        "exe", "bin",
+        "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "ico", "mp3", "mp4", "wav", "avi",
+        "mov", "zip", "tar", "gz", "rar", "exe", "bin", "dll", "so",
     ]
 }
 
@@ -6035,6 +6035,20 @@ mod tests {
                 leading_newline: false,
             }))
             .await;
+        let svg_write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: temp_dir.path().join("diagram.svg").display().to_string(),
+                content: "<svg />".to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let audio_read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: temp_dir.path().join("clip.mp3").display().to_string(),
+            }))
+            .await;
         let extensionless_result = executor
             .execute(&BrowserAction::ReadFile(ReadFileAction {
                 file_name: temp_dir.path().join("notes").display().to_string(),
@@ -6050,12 +6064,33 @@ mod tests {
                 new_str: "EvalOps".to_owned(),
             }))
             .await;
+        let dll_replace_result = executor
+            .execute(&BrowserAction::ReplaceFile(ReplaceFileAction {
+                file_name: temp_dir.path().join("plugin.dll").display().to_string(),
+                old_str: "old".to_owned(),
+                new_str: "new".to_owned(),
+            }))
+            .await;
 
         assert!(
             binary_result
                 .error
                 .as_deref()
                 .expect("binary error")
+                .contains("binary/image file")
+        );
+        assert!(
+            svg_write_result
+                .error
+                .as_deref()
+                .expect("svg binary error")
+                .contains("binary/image file")
+        );
+        assert!(
+            audio_read_result
+                .error
+                .as_deref()
+                .expect("mp3 binary error")
                 .contains("binary/image file")
         );
         assert!(
@@ -6072,6 +6107,14 @@ mod tests {
                 .expect("empty replace error")
                 .contains("Cannot replace empty string")
         );
+        assert!(
+            dll_replace_result
+                .error
+                .as_deref()
+                .expect("dll binary error")
+                .contains("binary/image file")
+        );
+        assert!(!temp_dir.path().join("diagram.svg").exists());
         assert_eq!(
             std::fs::read_to_string(editable_path).expect("editable content"),
             "hello"
