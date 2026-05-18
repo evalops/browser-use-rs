@@ -129,6 +129,10 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
   };
+  const isNonContentTag = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return ['style', 'script', 'head', 'meta', 'link', 'title'].includes(tag);
+  };
   const isDisabledOrHidden = (el) => {
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
@@ -142,6 +146,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const isInteractive = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'html' || tag === 'body') return false;
+    if (isNonContentTag(el)) return false;
     if (tag === 'iframe' || tag === 'frame') {
       const rect = el.getBoundingClientRect();
       return rect.width > 100 && rect.height > 100;
@@ -174,7 +179,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const hasInteractiveDescendant = (el) => {
     const visit = (root) => {
       for (const child of Array.from(root.children || [])) {
-        if (isDecorativeSvgChild(child) || isBrowserUseExcluded(child)) continue;
+        if (isDecorativeSvgChild(child) || isNonContentTag(child) || isBrowserUseExcluded(child)) continue;
         if (isInteractive(child) && isVisible(child)) return true;
         if (child.shadowRoot && visit(child.shadowRoot)) return true;
         if (visit(child)) return true;
@@ -248,6 +253,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (isDecorativeSvgChild(node)) return;
+    if (isNonContentTag(node)) return;
     if (isBrowserUseExcluded(node)) return;
     stats.total_elements += 1;
     addDirectTextStats(node);
@@ -464,6 +470,10 @@ fn element_eval_js(index: u32, body: &str) -> String {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
   }};
+  const isNonContentTag = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return ['style', 'script', 'head', 'meta', 'link', 'title'].includes(tag);
+  }};
   const isDisabledOrHidden = (el) => {{
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
@@ -494,6 +504,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   const isInteractive = (el) => {{
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'html' || tag === 'body') return false;
+    if (isNonContentTag(el)) return false;
     if (tag === 'iframe' || tag === 'frame') {{
       const rect = el.getBoundingClientRect();
       return rect.width > 100 && rect.height > 100;
@@ -508,7 +519,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   const hasInteractiveDescendant = (el) => {{
     const visit = (root) => {{
       for (const child of Array.from(root.children || [])) {{
-        if (isDecorativeSvgChild(child) || isBrowserUseExcluded(child)) continue;
+        if (isDecorativeSvgChild(child) || isNonContentTag(child) || isBrowserUseExcluded(child)) continue;
         if (isInteractive(child) && isVisible(child)) return true;
         if (child.shadowRoot && visit(child.shadowRoot)) return true;
         if (visit(child)) return true;
@@ -535,6 +546,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   const visitNode = (node, offset) => {{
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (isDecorativeSvgChild(node)) return;
+    if (isNonContentTag(node)) return;
     if (isBrowserUseExcluded(node)) return;
     if ((isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
@@ -4133,6 +4145,26 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_skips_non_content_dom_tags() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isNonContentTag"));
+        for tag in ["style", "script", "head", "meta", "link", "title"] {
+            assert!(
+                INTERACTIVE_ELEMENTS_JS.contains(tag),
+                "state walker missing {tag}"
+            );
+        }
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isNonContentTag"));
+        for tag in ["style", "script", "head", "meta", "link", "title"] {
+            assert!(
+                action_script.contains(tag),
+                "action fallback walker missing {tag}"
+            );
+        }
+    }
+
+    #[test]
     fn interactive_snapshot_detects_javascript_click_listeners() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
@@ -5497,6 +5529,57 @@ mod tests {
             .await
             .expect("scrollTop");
         assert!(scroll_top.as_f64().unwrap_or_default() > 0.0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_skips_non_content_dom_tags() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>Hidden title copy</title><meta name='hidden' content='Hidden meta copy'><link rel='stylesheet' href='data:text/css,button{}'><style>Hidden style copy</style><script>window.__hiddenScriptCopy='Hidden script copy';</script></head><body><button id='visible' onclick=\"document.body.dataset.clicked='true'\">Visible</button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        assert_eq!(state.dom_state.element_count(), 1);
+        assert_eq!(state.dom_state.page_stats.total_elements, 3);
+        assert_eq!(state.dom_state.page_stats.text_chars, 7);
+        assert_eq!(
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .next()
+                .and_then(|element| element.attributes.get("id"))
+                .map(String::as_str),
+            Some("visible")
+        );
+        for hidden_text in [
+            "Hidden title copy",
+            "Hidden style copy",
+            "Hidden script copy",
+        ] {
+            assert!(
+                !state.dom_state.llm_representation().contains(hidden_text),
+                "non-content text leaked into DOM state: {}",
+                state.dom_state.llm_representation()
+            );
+        }
+
+        session.click(1).await.expect("click visible button");
+        let clicked = session
+            .evaluate_json("document.body.dataset.clicked")
+            .await
+            .expect("clicked flag");
+        assert_eq!(clicked.as_str(), Some("true"));
     }
 
     #[tokio::test]
