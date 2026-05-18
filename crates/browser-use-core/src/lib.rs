@@ -362,17 +362,12 @@ impl<'de> Deserialize<'de> for MessageCompactionSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum MessageCompaction {
     Disabled,
+    #[default]
     Enabled,
     Settings(MessageCompactionSettings),
-}
-
-impl Default for MessageCompaction {
-    fn default() -> Self {
-        Self::Enabled
-    }
 }
 
 impl MessageCompaction {
