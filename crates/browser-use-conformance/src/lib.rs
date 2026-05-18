@@ -396,11 +396,11 @@ mod tests {
     use async_trait::async_trait;
     use browser_use_cdp::{BrowserError, BrowserSession, FoundElement, Pdf, Screenshot};
     use browser_use_core::{
-        ActionExecutor, ActionResult, Agent, AgentSettings, ChatCompletion, ChatModel, ChatRequest,
-        ContentPart, FileSystemState, LlmError, ManagedFileSystem, MessageRole,
-        execute_action_sequence,
+        ActionExecutor, ActionResult, Agent, AgentRunError, AgentSettings, ChatCompletion,
+        ChatModel, ChatRequest, ContentPart, FileSystemState, LlmError, ManagedFileSystem,
+        MessageRole, execute_action_sequence,
     };
-    use browser_use_tools::BrowserAction;
+    use browser_use_tools::{BrowserAction, WaitAction};
     use schemars::schema_for;
     use serde_json::{Value, json};
     use std::{
@@ -802,6 +802,164 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn agent_checkpoint_resume_matches_golden_fixture() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let settings = AgentSettings {
+            initial_actions: vec![BrowserAction::Wait(WaitAction { seconds: 0 })],
+            ..AgentSettings::default()
+        };
+        let (writer_llm, _writer_requests) = ScriptedChatModel::new(vec![json!({
+            "current_state": {
+                "thinking": "write checkpoint files",
+                "evaluation_previous_goal": "No previous goal",
+                "memory": "Need a checkpoint",
+                "next_goal": "Seed files"
+            },
+            "action": [
+                {
+                    "write_file": {
+                        "file_name": "todo.md",
+                        "content": "- checkpoint read report",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                },
+                {
+                    "write_file": {
+                        "file_name": "report.md",
+                        "content": "alpha\nbeta",
+                        "append": false,
+                        "trailing_newline": false,
+                        "leading_newline": false
+                    }
+                }
+            ]
+        })]);
+        let mut writer = Agent::with_settings_and_file_system(
+            "checkpoint conformance",
+            settings,
+            writer_llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::new(Mutex::new(Vec::new())),
+            },
+            file_system,
+        );
+
+        assert!(matches!(
+            writer.run(1).await,
+            Err(AgentRunError::StepLimitReached { max_steps: 1 })
+        ));
+        writer
+            .file_system_mut()
+            .save_extracted_content("checkpoint conformance extract")
+            .expect("seed extracted content");
+        let checkpoint = writer.checkpoint();
+        let checkpoint_json =
+            serde_json::to_string_pretty(&checkpoint).expect("serialize checkpoint");
+        let checkpoint = serde_json::from_str(&checkpoint_json).expect("deserialize checkpoint");
+
+        let (reader_llm, reader_requests) = ScriptedChatModel::new(vec![
+            json!({
+                "current_state": {
+                    "thinking": "read checkpoint report",
+                    "evaluation_previous_goal": "Seeded checkpoint",
+                    "memory": "Need report contents",
+                    "next_goal": "Read report"
+                },
+                "action": [
+                    {
+                        "read_file": {
+                            "file_name": "report.md"
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "current_state": {
+                    "thinking": "finish checkpoint replay",
+                    "evaluation_previous_goal": "Read report",
+                    "memory": "Report contained alpha and beta",
+                    "next_goal": "Finish"
+                },
+                "action": [
+                    {
+                        "done": {
+                            "text": "checkpoint replay complete",
+                            "success": true,
+                            "files_to_display": []
+                        }
+                    }
+                ]
+            }),
+        ]);
+        let mut reader = Agent::from_checkpoint(
+            checkpoint,
+            reader_llm,
+            FixtureSession {
+                state: fixture_browser_state(),
+                clicked: Arc::new(Mutex::new(Vec::new())),
+            },
+        )
+        .expect("resume checkpoint");
+
+        reader.run(2).await.expect("reader run");
+        assert!(reader.history().is_done());
+        let (first_prompt, second_prompt) = {
+            let requests = reader_requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 2);
+            (request_text(&requests[0]), request_text(&requests[1]))
+        };
+        let next_extracted = reader
+            .file_system_mut()
+            .save_extracted_content("after checkpoint replay")
+            .expect("next extracted content");
+
+        let checkpoint = reader.checkpoint();
+        let checkpoint_history = &checkpoint.history.items;
+        let actual = json!({
+            "checkpoint": {
+                "task": checkpoint.task.as_str(),
+                "initial_actions_executed": checkpoint.initial_actions_executed,
+                "initial_actions": &checkpoint.settings.initial_actions,
+                "history_action_names": history_action_names(&checkpoint.history),
+                "history_results": checkpoint_history
+                    .iter()
+                    .map(|item| item.result.iter()
+                        .filter_map(|result| result.extracted_content.as_deref())
+                        .collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                "file_system_state": normalize_file_system_state(checkpoint.file_system_state.clone())
+            },
+            "resumed_first_prompt": {
+                "file_system": tagged_section(&first_prompt, "file_system"),
+                "todo_contents": tagged_section(&first_prompt, "todo_contents"),
+                "contains_prior_initial_action": first_prompt.contains("Waited for 0 seconds"),
+                "contains_prior_write_result": first_prompt.contains("Wrote file report.md")
+            },
+            "resumed_second_prompt": {
+                "read_state": tagged_section(&second_prompt, "read_state")
+            },
+            "resumed_history_summary": {
+                "steps": checkpoint_history.len(),
+                "is_done": reader.history().is_done(),
+                "final_result": reader.history().final_result(),
+                "first_resumed_result": checkpoint_history[2].result[0].extracted_content.as_deref(),
+                "second_resumed_result": checkpoint_history[3].result[0].extracted_content.as_deref()
+            },
+            "next_extracted_file": next_extracted,
+            "final_file_names": reader.file_system().list_files()
+        });
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/agent_checkpoint_replay.json"),
+        );
+    }
+
     fn assert_agent_step_metadata(history: &Value) {
         let items = history["items"].as_array().expect("history items");
         assert_eq!(items.len(), 2);
@@ -838,6 +996,25 @@ mod tests {
         let mut value = serde_json::to_value(state).expect("serialize file system state");
         value["base_dir"] = Value::String("__BASE_DIR__".to_owned());
         value
+    }
+
+    fn history_action_names(history: &browser_use_core::AgentHistory) -> Vec<Vec<String>> {
+        history
+            .items
+            .iter()
+            .map(|item| {
+                item.model_output
+                    .as_ref()
+                    .map(|output| {
+                        output
+                            .action
+                            .iter()
+                            .map(|action| action.name().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     fn request_text(request: &ChatRequest) -> String {

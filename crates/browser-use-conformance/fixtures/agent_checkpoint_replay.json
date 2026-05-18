@@ -1,0 +1,100 @@
+{
+  "checkpoint": {
+    "file_system_state": {
+      "base_dir": "__BASE_DIR__",
+      "extracted_content_count": 2,
+      "files": {
+        "extracted_content_0.md": {
+          "data": {
+            "content": "checkpoint conformance extract",
+            "name": "extracted_content_0"
+          },
+          "type": "MarkdownFile"
+        },
+        "extracted_content_1.md": {
+          "data": {
+            "content": "after checkpoint replay",
+            "name": "extracted_content_1"
+          },
+          "type": "MarkdownFile"
+        },
+        "report.md": {
+          "data": {
+            "content": "alpha\nbeta",
+            "name": "report"
+          },
+          "type": "MarkdownFile"
+        },
+        "todo.md": {
+          "data": {
+            "content": "- checkpoint read report",
+            "name": "todo"
+          },
+          "type": "MarkdownFile"
+        }
+      }
+    },
+    "history_action_names": [
+      [
+        "wait"
+      ],
+      [
+        "write_file",
+        "write_file"
+      ],
+      [
+        "read_file"
+      ],
+      [
+        "done"
+      ]
+    ],
+    "history_results": [
+      [
+        "Waited for 0 seconds"
+      ],
+      [
+        "Wrote file todo.md",
+        "Wrote file report.md"
+      ],
+      [
+        "Read from file report.md.\n<content>\nalpha\nbeta\n</content>"
+      ],
+      [
+        "checkpoint replay complete"
+      ]
+    ],
+    "initial_actions": [
+      {
+        "wait": {
+          "seconds": 0
+        }
+      }
+    ],
+    "initial_actions_executed": true,
+    "task": "checkpoint conformance"
+  },
+  "final_file_names": [
+    "extracted_content_0.md",
+    "extracted_content_1.md",
+    "report.md",
+    "todo.md"
+  ],
+  "next_extracted_file": "extracted_content_1.md",
+  "resumed_first_prompt": {
+    "contains_prior_initial_action": true,
+    "contains_prior_write_result": true,
+    "file_system": "<file>\nextracted_content_0.md - 1 lines\n<content>\ncheckpoint conformance extract\n</content>\n</file>\n<file>\nreport.md - 2 lines\n<content>\nalpha\nbeta\n</content>\n</file>",
+    "todo_contents": "- checkpoint read report"
+  },
+  "resumed_history_summary": {
+    "final_result": "checkpoint replay complete",
+    "first_resumed_result": "Read from file report.md.\n<content>\nalpha\nbeta\n</content>",
+    "is_done": true,
+    "second_resumed_result": "checkpoint replay complete",
+    "steps": 4
+  },
+  "resumed_second_prompt": {
+    "read_state": "<read_state_0>\nRead from file report.md.\n<content>\nalpha\nbeta\n</content>\n</read_state_0>"
+  }
+}
