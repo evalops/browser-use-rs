@@ -96,6 +96,7 @@ pub struct OpenAiCompatibleChatModel {
     api_key: String,
     model: String,
     base_url: String,
+    provider_name: String,
     schema_name: String,
     client: reqwest::Client,
 }
@@ -380,6 +381,7 @@ impl OpenAiCompatibleChatModel {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.openai.com/v1".to_owned(),
+            provider_name: "openai-compatible".to_owned(),
             schema_name: "agent_output".to_owned(),
             client: reqwest::Client::new(),
         }
@@ -398,6 +400,12 @@ impl OpenAiCompatibleChatModel {
     }
 
     #[must_use]
+    pub fn with_provider_name(mut self, provider_name: impl Into<String>) -> Self {
+        self.provider_name = provider_name.into();
+        self
+    }
+
+    #[must_use]
     pub fn with_schema_name(mut self, schema_name: impl Into<String>) -> Self {
         self.schema_name = schema_name.into();
         self
@@ -411,7 +419,7 @@ impl OpenAiCompatibleChatModel {
 #[async_trait]
 impl ChatModel for OpenAiCompatibleChatModel {
     fn provider(&self) -> &str {
-        "openai-compatible"
+        &self.provider_name
     }
 
     fn model(&self) -> &str {
@@ -837,6 +845,15 @@ mod tests {
                 text: "hello".to_owned()
             }]
         );
+    }
+
+    #[test]
+    fn openai_compatible_model_reports_provider_alias() {
+        let model =
+            OpenAiCompatibleChatModel::new("test-key", "test-model").with_provider_name("deepseek");
+
+        assert_eq!(model.provider(), "deepseek");
+        assert_eq!(model.model(), "test-model");
     }
 
     #[test]

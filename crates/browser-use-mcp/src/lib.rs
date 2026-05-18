@@ -86,6 +86,18 @@ pub struct AgentToolInput {
 pub enum AgentProvider {
     #[serde(rename = "openai-compatible", alias = "openai")]
     OpenAiCompatible,
+    #[serde(rename = "deepseek", alias = "deep-seek")]
+    DeepSeek,
+    #[serde(rename = "groq")]
+    Groq,
+    #[serde(rename = "cerebras")]
+    Cerebras,
+    #[serde(rename = "mistral")]
+    Mistral,
+    #[serde(rename = "openrouter", alias = "open-router")]
+    OpenRouter,
+    #[serde(rename = "vercel", alias = "ai-gateway", alias = "vercel-ai-gateway")]
+    Vercel,
     #[serde(rename = "anthropic")]
     Anthropic,
     #[serde(rename = "gemini", alias = "google")]
@@ -313,6 +325,12 @@ mod tests {
         assert!(!schema_text.contains("api_key"));
         assert!(schema_text.contains("provider"));
         assert!(schema_text.contains("openai-compatible"));
+        assert!(schema_text.contains("deepseek"));
+        assert!(schema_text.contains("groq"));
+        assert!(schema_text.contains("cerebras"));
+        assert!(schema_text.contains("mistral"));
+        assert!(schema_text.contains("openrouter"));
+        assert!(schema_text.contains("vercel"));
         assert!(schema_text.contains("anthropic"));
         assert!(schema_text.contains("gemini"));
         assert!(schema_text.contains("ollama"));

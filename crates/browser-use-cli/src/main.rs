@@ -160,6 +160,15 @@ enum Command {
 enum LlmProvider {
     #[value(name = "openai-compatible", alias = "openai")]
     OpenAiCompatible,
+    #[value(name = "deepseek", alias = "deep-seek")]
+    DeepSeek,
+    Groq,
+    Cerebras,
+    Mistral,
+    #[value(name = "openrouter", alias = "open-router")]
+    OpenRouter,
+    #[value(name = "vercel", alias = "ai-gateway", alias = "vercel-ai-gateway")]
+    Vercel,
     Anthropic,
     #[value(alias = "google")]
     Gemini,
@@ -186,6 +195,12 @@ impl LlmProvider {
     fn from_mcp(provider: Option<browser_use_mcp::AgentProvider>) -> Self {
         match provider.unwrap_or(browser_use_mcp::AgentProvider::OpenAiCompatible) {
             browser_use_mcp::AgentProvider::OpenAiCompatible => Self::OpenAiCompatible,
+            browser_use_mcp::AgentProvider::DeepSeek => Self::DeepSeek,
+            browser_use_mcp::AgentProvider::Groq => Self::Groq,
+            browser_use_mcp::AgentProvider::Cerebras => Self::Cerebras,
+            browser_use_mcp::AgentProvider::Mistral => Self::Mistral,
+            browser_use_mcp::AgentProvider::OpenRouter => Self::OpenRouter,
+            browser_use_mcp::AgentProvider::Vercel => Self::Vercel,
             browser_use_mcp::AgentProvider::Anthropic => Self::Anthropic,
             browser_use_mcp::AgentProvider::Gemini => Self::Gemini,
             browser_use_mcp::AgentProvider::Ollama => Self::Ollama,
@@ -1414,20 +1429,18 @@ fn configured_chat_model(
     base_url: Option<String>,
 ) -> anyhow::Result<Box<dyn ChatModel>> {
     match provider {
-        LlmProvider::OpenAiCompatible => {
-            let api_key = api_key
-                .or_else(|| nonempty_env("OPENAI_API_KEY"))
-                .ok_or_else(|| anyhow::anyhow!("OPENAI_API_KEY or --api-key is required"))?;
-            let model = model
-                .or_else(|| nonempty_env("OPENAI_MODEL"))
-                .ok_or_else(|| anyhow::anyhow!("OPENAI_MODEL or --model is required"))?;
-            let base_url = base_url
-                .or_else(|| nonempty_env("OPENAI_BASE_URL"))
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
-            Ok(Box::new(
-                OpenAiCompatibleChatModel::new(api_key, model).with_base_url(base_url),
-            ))
-        }
+        LlmProvider::OpenAiCompatible
+        | LlmProvider::DeepSeek
+        | LlmProvider::Groq
+        | LlmProvider::Cerebras
+        | LlmProvider::Mistral
+        | LlmProvider::OpenRouter
+        | LlmProvider::Vercel => configured_openai_wire_chat_model(
+            openai_wire_provider_config(provider),
+            api_key,
+            model,
+            base_url,
+        ),
         LlmProvider::Anthropic => {
             let api_key = api_key
                 .or_else(|| nonempty_env("ANTHROPIC_API_KEY"))
@@ -1474,6 +1487,122 @@ fn configured_chat_model(
             ))
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OpenAiWireProviderConfig {
+    provider_name: &'static str,
+    api_key_env: &'static [&'static str],
+    model_env: &'static [&'static str],
+    base_url_env: &'static [&'static str],
+    default_model: Option<&'static str>,
+    default_base_url: &'static str,
+}
+
+fn configured_openai_wire_chat_model(
+    config: OpenAiWireProviderConfig,
+    api_key: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> anyhow::Result<Box<dyn ChatModel>> {
+    let api_key = api_key
+        .or_else(|| first_nonempty_env(config.api_key_env))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} or --api-key is required",
+                provider_env_list(config.api_key_env)
+            )
+        })?;
+    let model = model
+        .or_else(|| first_nonempty_env(config.model_env))
+        .or_else(|| config.default_model.map(ToOwned::to_owned))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} or --model is required",
+                provider_env_list(config.model_env)
+            )
+        })?;
+    let base_url = base_url
+        .or_else(|| first_nonempty_env(config.base_url_env))
+        .unwrap_or_else(|| config.default_base_url.to_owned());
+
+    Ok(Box::new(
+        OpenAiCompatibleChatModel::new(api_key, model)
+            .with_base_url(base_url)
+            .with_provider_name(config.provider_name),
+    ))
+}
+
+fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfig {
+    match provider {
+        LlmProvider::OpenAiCompatible => OpenAiWireProviderConfig {
+            provider_name: "openai-compatible",
+            api_key_env: &["OPENAI_API_KEY"],
+            model_env: &["OPENAI_MODEL"],
+            base_url_env: &["OPENAI_BASE_URL"],
+            default_model: None,
+            default_base_url: "https://api.openai.com/v1",
+        },
+        LlmProvider::DeepSeek => OpenAiWireProviderConfig {
+            provider_name: "deepseek",
+            api_key_env: &["DEEPSEEK_API_KEY"],
+            model_env: &["DEEPSEEK_MODEL"],
+            base_url_env: &["DEEPSEEK_BASE_URL"],
+            default_model: Some("deepseek-chat"),
+            default_base_url: "https://api.deepseek.com/v1",
+        },
+        LlmProvider::Groq => OpenAiWireProviderConfig {
+            provider_name: "groq",
+            api_key_env: &["GROQ_API_KEY"],
+            model_env: &["GROQ_MODEL"],
+            base_url_env: &["GROQ_BASE_URL"],
+            default_model: None,
+            default_base_url: "https://api.groq.com/openai/v1",
+        },
+        LlmProvider::Cerebras => OpenAiWireProviderConfig {
+            provider_name: "cerebras",
+            api_key_env: &["CEREBRAS_API_KEY"],
+            model_env: &["CEREBRAS_MODEL"],
+            base_url_env: &["CEREBRAS_BASE_URL"],
+            default_model: Some("llama3.1-8b"),
+            default_base_url: "https://api.cerebras.ai/v1",
+        },
+        LlmProvider::Mistral => OpenAiWireProviderConfig {
+            provider_name: "mistral",
+            api_key_env: &["MISTRAL_API_KEY"],
+            model_env: &["MISTRAL_MODEL"],
+            base_url_env: &["MISTRAL_BASE_URL"],
+            default_model: Some("mistral-medium-latest"),
+            default_base_url: "https://api.mistral.ai/v1",
+        },
+        LlmProvider::OpenRouter => OpenAiWireProviderConfig {
+            provider_name: "openrouter",
+            api_key_env: &["OPENROUTER_API_KEY"],
+            model_env: &["OPENROUTER_MODEL"],
+            base_url_env: &["OPENROUTER_BASE_URL"],
+            default_model: None,
+            default_base_url: "https://openrouter.ai/api/v1",
+        },
+        LlmProvider::Vercel => OpenAiWireProviderConfig {
+            provider_name: "vercel",
+            api_key_env: &["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"],
+            model_env: &["AI_GATEWAY_MODEL", "VERCEL_MODEL"],
+            base_url_env: &["AI_GATEWAY_BASE_URL"],
+            default_model: None,
+            default_base_url: "https://ai-gateway.vercel.sh/v1",
+        },
+        LlmProvider::Anthropic | LlmProvider::Gemini | LlmProvider::Ollama => {
+            unreachable!("non-OpenAI-wire provider")
+        }
+    }
+}
+
+fn first_nonempty_env(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| nonempty_env(name))
+}
+
+fn provider_env_list(names: &[&str]) -> String {
+    names.join(", ")
 }
 
 fn nonempty_env(name: &str) -> Option<String> {
@@ -1629,6 +1758,61 @@ mod tests {
             }
             _ => panic!("expected agent command"),
         }
+    }
+
+    #[test]
+    fn parses_upstream_openai_wire_provider_aliases() {
+        for (provider_name, expected_provider) in [
+            ("deepseek", LlmProvider::DeepSeek),
+            ("deep-seek", LlmProvider::DeepSeek),
+            ("groq", LlmProvider::Groq),
+            ("cerebras", LlmProvider::Cerebras),
+            ("mistral", LlmProvider::Mistral),
+            ("openrouter", LlmProvider::OpenRouter),
+            ("open-router", LlmProvider::OpenRouter),
+            ("vercel", LlmProvider::Vercel),
+            ("ai-gateway", LlmProvider::Vercel),
+        ] {
+            let cli = Cli::try_parse_from([
+                "browser-use-rs",
+                "agent",
+                "https://example.com",
+                "test task",
+                "--provider",
+                provider_name,
+            ])
+            .expect("agent provider should parse");
+
+            match cli.command.expect("agent command") {
+                Command::Agent { provider, .. } => assert_eq!(provider, expected_provider),
+                _ => panic!("expected agent command"),
+            }
+        }
+    }
+
+    #[test]
+    fn configures_openai_wire_provider_aliases_without_env() {
+        for (provider, expected_name, expected_model) in [
+            (LlmProvider::DeepSeek, "deepseek", "deepseek-chat"),
+            (LlmProvider::Cerebras, "cerebras", "llama3.1-8b"),
+            (LlmProvider::Mistral, "mistral", "mistral-medium-latest"),
+        ] {
+            let llm = configured_chat_model(provider, Some("test-key".to_owned()), None, None)
+                .expect("provider should use default model");
+
+            assert_eq!(llm.provider(), expected_name);
+            assert_eq!(llm.model(), expected_model);
+        }
+
+        let openrouter = configured_chat_model(
+            LlmProvider::OpenRouter,
+            Some("test-key".to_owned()),
+            Some("openai/gpt-4o-mini".to_owned()),
+            None,
+        )
+        .expect("openrouter with explicit model");
+        assert_eq!(openrouter.provider(), "openrouter");
+        assert_eq!(openrouter.model(), "openai/gpt-4o-mini");
     }
 
     #[test]
