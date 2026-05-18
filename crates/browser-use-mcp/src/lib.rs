@@ -468,6 +468,8 @@ mod tests {
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("vision_detail_level"));
         assert!(schema_text.contains("flash_mode"));
+        assert!(schema_text.contains("use_judge"));
+        assert!(schema_text.contains("ground_truth"));
         assert!(schema_text.contains("save_conversation_path"));
         assert!(schema_text.contains("save_conversation_path_encoding"));
         assert!(schema_text.contains("max_clickable_elements_length"));
@@ -508,6 +510,8 @@ mod tests {
                 "available_file_paths": ["/tmp/report.pdf"],
                 "include_recent_events": true,
                 "display_files_in_done_text": false,
+                "use_judge": false,
+                "ground_truth": "Must include a receipt.",
                 "save_conversation_path": "/tmp/conversations",
                 "save_conversation_path_encoding": "utf-8"
             }
@@ -526,6 +530,11 @@ mod tests {
         assert_eq!(input.settings.available_file_paths, ["/tmp/report.pdf"]);
         assert!(input.settings.include_recent_events);
         assert!(!input.settings.display_files_in_done_text);
+        assert!(!input.settings.use_judge);
+        assert_eq!(
+            input.settings.ground_truth.as_deref(),
+            Some("Must include a receipt.")
+        );
         assert_eq!(
             input.settings.save_conversation_path.as_deref(),
             Some("/tmp/conversations")

@@ -145,6 +145,10 @@ enum Command {
         no_thinking: bool,
         #[arg(long, default_value_t = false)]
         flash_mode: bool,
+        #[arg(long, default_value_t = false)]
+        no_judge: bool,
+        #[arg(long = "ground-truth")]
+        ground_truth: Option<String>,
         #[arg(long = "save-conversation-path")]
         save_conversation_path: Option<String>,
         #[arg(long = "save-conversation-path-encoding")]
@@ -482,6 +486,8 @@ async fn main() -> anyhow::Result<()> {
             loop_detection_window,
             no_thinking,
             flash_mode,
+            no_judge,
+            ground_truth,
             save_conversation_path,
             save_conversation_path_encoding,
             no_planning,
@@ -529,6 +535,8 @@ async fn main() -> anyhow::Result<()> {
                 loop_detection_window,
                 no_thinking,
                 flash_mode,
+                no_judge,
+                ground_truth,
                 save_conversation_path,
                 save_conversation_path_encoding,
                 no_planning,
@@ -598,6 +606,8 @@ struct CliAgentSettingsArgs {
     loop_detection_window: Option<usize>,
     no_thinking: bool,
     flash_mode: bool,
+    no_judge: bool,
+    ground_truth: Option<String>,
     save_conversation_path: Option<String>,
     save_conversation_path_encoding: Option<String>,
     no_planning: bool,
@@ -657,6 +667,10 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     if args.flash_mode {
         settings.flash_mode = true;
     }
+    if args.no_judge {
+        settings.use_judge = false;
+    }
+    settings.ground_truth = args.ground_truth;
     settings.save_conversation_path = args.save_conversation_path;
     if let Some(value) = args.save_conversation_path_encoding {
         settings.save_conversation_path_encoding = Some(value);
@@ -2047,6 +2061,9 @@ mod tests {
             "4",
             "--no-thinking",
             "--flash-mode",
+            "--no-judge",
+            "--ground-truth",
+            "Must include a receipt.",
             "--save-conversation-path",
             "/tmp/browser-use-conversations",
             "--save-conversation-path-encoding",
@@ -2107,6 +2124,8 @@ mod tests {
                 loop_detection_window,
                 no_thinking,
                 flash_mode,
+                no_judge,
+                ground_truth,
                 save_conversation_path,
                 save_conversation_path_encoding,
                 no_planning,
@@ -2141,6 +2160,8 @@ mod tests {
                 assert_eq!(loop_detection_window, Some(4));
                 assert!(no_thinking);
                 assert!(flash_mode);
+                assert!(no_judge);
+                assert_eq!(ground_truth.as_deref(), Some("Must include a receipt."));
                 assert_eq!(
                     save_conversation_path.as_deref(),
                     Some("/tmp/browser-use-conversations")
@@ -2423,6 +2444,8 @@ mod tests {
             loop_detection_window: Some(4),
             no_thinking: true,
             flash_mode: true,
+            no_judge: true,
+            ground_truth: Some("Must include a receipt.".to_owned()),
             save_conversation_path: Some("/tmp/browser-use-conversations".to_owned()),
             save_conversation_path_encoding: Some("utf-8".to_owned()),
             no_planning: true,
@@ -2466,6 +2489,11 @@ mod tests {
         assert_eq!(settings.loop_detection_window, 4);
         assert!(!settings.use_thinking);
         assert!(settings.flash_mode);
+        assert!(!settings.use_judge);
+        assert_eq!(
+            settings.ground_truth.as_deref(),
+            Some("Must include a receipt.")
+        );
         assert_eq!(
             settings.save_conversation_path.as_deref(),
             Some("/tmp/browser-use-conversations")
