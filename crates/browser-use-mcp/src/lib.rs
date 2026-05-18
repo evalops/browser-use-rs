@@ -473,6 +473,10 @@ mod tests {
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("use_judge"));
         assert!(schema_text.contains("ground_truth"));
+        assert!(schema_text.contains("message_compaction"));
+        assert!(schema_text.contains("compact_every_n_steps"));
+        assert!(schema_text.contains("trigger_char_count"));
+        assert!(schema_text.contains("keep_last_items"));
         assert!(schema_text.contains("save_conversation_path"));
         assert!(schema_text.contains("save_conversation_path_encoding"));
         assert!(schema_text.contains("max_clickable_elements_length"));
@@ -518,6 +522,13 @@ mod tests {
                 "include_tool_call_examples": true,
                 "use_judge": false,
                 "ground_truth": "Must include a receipt.",
+                "message_compaction": {
+                    "compact_every_n_steps": 3,
+                    "trigger_char_count": 1024,
+                    "keep_last_items": 2,
+                    "summary_max_chars": 1200,
+                    "include_read_state": true
+                },
                 "save_conversation_path": "/tmp/conversations",
                 "save_conversation_path_encoding": "utf-8"
             }
@@ -547,6 +558,16 @@ mod tests {
             input.settings.ground_truth.as_deref(),
             Some("Must include a receipt.")
         );
+        let browser_use_core::MessageCompaction::Settings(message_compaction) =
+            &input.settings.message_compaction
+        else {
+            panic!("expected message compaction settings");
+        };
+        assert_eq!(message_compaction.compact_every_n_steps, 3);
+        assert_eq!(message_compaction.trigger_char_count, Some(1024));
+        assert_eq!(message_compaction.keep_last_items, 2);
+        assert_eq!(message_compaction.summary_max_chars, 1200);
+        assert!(message_compaction.include_read_state);
         assert_eq!(
             input.settings.save_conversation_path.as_deref(),
             Some("/tmp/conversations")

@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#72 Add upstream-style message compaction support](https://github.com/evalops/browser-use-rs/issues/72)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #72 lands and CI is green.
 
 ## Completed Tracks
 
+- [#72 Add upstream-style message compaction support](https://github.com/evalops/browser-use-rs/issues/72)
 - [#71 Preserve upstream non-judge auxiliary AgentSettings flags](https://github.com/evalops/browser-use-rs/issues/71)
 - [#70 Add upstream-style judge trace validation settings](https://github.com/evalops/browser-use-rs/issues/70)
 - [#69 Add upstream-style conversation transcript saving](https://github.com/evalops/browser-use-rs/issues/69)
@@ -188,7 +190,9 @@ Implemented:
   truncation, upstream-compatible action-result success validation,
   upstream-style judge trace validation and judgement results, per-step error
   slots, contract-preserved `generate_gif`, `calculate_cost`, and
-  `include_tool_call_examples` settings, model-output/action/thought accessors,
+  `include_tool_call_examples` settings, upstream-style message compaction
+  settings with non-fatal summary requests, compacted-memory prompt blocks, and
+  checkpoint preservation, model-output/action/thought accessors,
   model-action and truncated action-history interacted-element metadata for
   indexed actions, explicit replay action rematching for historical indexed
   actions, rematched replay-plan construction from saved `AgentHistory`,

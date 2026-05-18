@@ -156,8 +156,8 @@ includes:
   implicit `session_id` MCP calls with liveness status and stale-record
   cleanup, MCP input/output schemas, typed MCP/CLI agent settings including
   conversation transcript saving, judge trace validation, available-file-path
-  and sensitive-data placeholder context plus system-message control, and
-  conformance fixtures.
+  and sensitive-data placeholder context, upstream-style message compaction
+  controls plus system-message control, and conformance fixtures.
 
 ## Design Rules
 

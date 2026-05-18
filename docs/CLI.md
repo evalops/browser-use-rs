@@ -140,7 +140,14 @@ into the final answer, `--no-loop-detection`, `--loop-detection-window`,
 `--calculate-cost`, `--include-tool-call-examples`, `--no-judge`,
 `--ground-truth <text>`,
 `--no-planning`, `--planning-replan-on-stall`, `--planning-exploration-limit`,
-`--max-history-items`,
+`--max-history-items`, `--no-message-compaction`,
+`--message-compaction-compact-every-n-steps`,
+`--message-compaction-trigger-char-count`,
+`--message-compaction-trigger-token-count`,
+`--message-compaction-chars-per-token`,
+`--message-compaction-keep-last-items`,
+`--message-compaction-summary-max-chars`,
+`--message-compaction-include-read-state`,
 `--max-clickable-elements-length`, `--include-recent-events` for opting recent
 browser event diagnostics into the agent prompt, repeated
 `--include-attribute <name>` for prompt-visible DOM attributes, and repeated
@@ -155,6 +162,12 @@ By default, completed agent runs make a non-fatal judge request and
 attach `JudgementResult` to the final `done` action without overriding the
 agent-reported `success`; `--no-judge` disables that, and `--ground-truth`
 adds highest-priority evaluation criteria to the judge prompt.
+Message compaction is enabled by default for long runs. It summarizes older
+history into a `<compacted_memory>` block at the configured cadence once the
+history exceeds the character floor, keeps the first item plus recent tail, and
+continues without failing the run if the summary request fails. The compacted
+memory block is explicitly marked as unverified context so the model does not
+claim prior work as completed unless it confirms that work in the active run.
 `--generate-gif`, `--calculate-cost`, and `--include-tool-call-examples`
 preserve upstream `AgentSettings` contract flags for migrating callers; GIF
 rendering and token-cost side effects are tracked as separate runtime parity

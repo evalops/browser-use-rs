@@ -8,7 +8,7 @@ use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::{
     AgentHistory, AgentSettings, BrowserActionExecutor, GenerateGif, ImageDetailLevel,
-    SensitiveDataValue, VisionMode,
+    MessageCompaction, MessageCompactionSettings, SensitiveDataValue, VisionMode,
 };
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
@@ -167,6 +167,31 @@ enum Command {
         planning_exploration_limit: Option<usize>,
         #[arg(long)]
         max_history_items: Option<usize>,
+        #[arg(long = "no-message-compaction", default_value_t = false)]
+        no_message_compaction: bool,
+        #[arg(long = "message-compaction-compact-every-n-steps")]
+        message_compaction_compact_every_n_steps: Option<usize>,
+        #[arg(
+            long = "message-compaction-trigger-char-count",
+            conflicts_with = "message_compaction_trigger_token_count"
+        )]
+        message_compaction_trigger_char_count: Option<usize>,
+        #[arg(
+            long = "message-compaction-trigger-token-count",
+            conflicts_with = "message_compaction_trigger_char_count"
+        )]
+        message_compaction_trigger_token_count: Option<usize>,
+        #[arg(long = "message-compaction-chars-per-token")]
+        message_compaction_chars_per_token: Option<f64>,
+        #[arg(long = "message-compaction-keep-last-items")]
+        message_compaction_keep_last_items: Option<usize>,
+        #[arg(long = "message-compaction-summary-max-chars")]
+        message_compaction_summary_max_chars: Option<usize>,
+        #[arg(
+            long = "message-compaction-include-read-state",
+            default_value_t = false
+        )]
+        message_compaction_include_read_state: bool,
         #[arg(long)]
         max_clickable_elements_length: Option<usize>,
         #[arg(long, default_value_t = false)]
@@ -503,6 +528,14 @@ async fn main() -> anyhow::Result<()> {
             planning_replan_on_stall,
             planning_exploration_limit,
             max_history_items,
+            no_message_compaction,
+            message_compaction_compact_every_n_steps,
+            message_compaction_trigger_char_count,
+            message_compaction_trigger_token_count,
+            message_compaction_chars_per_token,
+            message_compaction_keep_last_items,
+            message_compaction_summary_max_chars,
+            message_compaction_include_read_state,
             max_clickable_elements_length,
             include_recent_events,
             include_attributes,
@@ -555,6 +588,14 @@ async fn main() -> anyhow::Result<()> {
                 planning_replan_on_stall,
                 planning_exploration_limit,
                 max_history_items,
+                no_message_compaction,
+                message_compaction_compact_every_n_steps,
+                message_compaction_trigger_char_count,
+                message_compaction_trigger_token_count,
+                message_compaction_chars_per_token,
+                message_compaction_keep_last_items,
+                message_compaction_summary_max_chars,
+                message_compaction_include_read_state,
                 max_clickable_elements_length,
                 include_recent_events,
                 include_attributes,
@@ -629,6 +670,14 @@ struct CliAgentSettingsArgs {
     planning_replan_on_stall: Option<usize>,
     planning_exploration_limit: Option<usize>,
     max_history_items: Option<usize>,
+    no_message_compaction: bool,
+    message_compaction_compact_every_n_steps: Option<usize>,
+    message_compaction_trigger_char_count: Option<usize>,
+    message_compaction_trigger_token_count: Option<usize>,
+    message_compaction_chars_per_token: Option<f64>,
+    message_compaction_keep_last_items: Option<usize>,
+    message_compaction_summary_max_chars: Option<usize>,
+    message_compaction_include_read_state: bool,
     max_clickable_elements_length: Option<usize>,
     include_recent_events: bool,
     include_attributes: Vec<String>,
@@ -642,6 +691,7 @@ struct CliAgentSettingsArgs {
 
 fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     let mut settings = AgentSettings::default();
+    let custom_message_compaction = cli_message_compaction_settings(&args);
 
     if args.no_vision {
         settings.use_vision = VisionMode::Never;
@@ -705,6 +755,11 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
         settings.planning_exploration_limit = value;
     }
     settings.max_history_items = args.max_history_items;
+    if args.no_message_compaction {
+        settings.message_compaction = MessageCompaction::Disabled;
+    } else if let Some(message_compaction) = custom_message_compaction {
+        settings.message_compaction = MessageCompaction::Settings(message_compaction);
+    }
     if let Some(value) = args.max_clickable_elements_length {
         settings.max_clickable_elements_length = value;
     }
@@ -717,6 +772,56 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     settings.extend_system_message = args.extend_system_message;
 
     settings
+}
+
+fn cli_message_compaction_settings(
+    args: &CliAgentSettingsArgs,
+) -> Option<MessageCompactionSettings> {
+    let has_custom_message_compaction = args.message_compaction_compact_every_n_steps.is_some()
+        || args.message_compaction_trigger_char_count.is_some()
+        || args.message_compaction_trigger_token_count.is_some()
+        || args.message_compaction_chars_per_token.is_some()
+        || args.message_compaction_keep_last_items.is_some()
+        || args.message_compaction_summary_max_chars.is_some()
+        || args.message_compaction_include_read_state;
+    if !has_custom_message_compaction {
+        return None;
+    }
+
+    let mut settings = MessageCompactionSettings::default();
+    if let Some(value) = args.message_compaction_compact_every_n_steps {
+        settings.compact_every_n_steps = value;
+    }
+    if let Some(value) = args.message_compaction_trigger_char_count {
+        settings.trigger_char_count = Some(value);
+        settings.trigger_token_count = None;
+    }
+    if let Some(value) = args.message_compaction_trigger_token_count {
+        settings.trigger_token_count = Some(value);
+        settings.trigger_char_count = Some(
+            (value as f64
+                * args
+                    .message_compaction_chars_per_token
+                    .unwrap_or(settings.chars_per_token))
+            .floor() as usize,
+        );
+    }
+    if let Some(value) = args.message_compaction_chars_per_token {
+        settings.chars_per_token = value;
+        if let Some(tokens) = settings.trigger_token_count {
+            settings.trigger_char_count = Some((tokens as f64 * value).floor() as usize);
+        }
+    }
+    if let Some(value) = args.message_compaction_keep_last_items {
+        settings.keep_last_items = value;
+    }
+    if let Some(value) = args.message_compaction_summary_max_chars {
+        settings.summary_max_chars = value;
+    }
+    if args.message_compaction_include_read_state {
+        settings.include_read_state = true;
+    }
+    Some(settings)
 }
 
 fn cli_generate_gif(value: String) -> GenerateGif {
@@ -2107,6 +2212,17 @@ mod tests {
             "6",
             "--max-history-items",
             "7",
+            "--message-compaction-compact-every-n-steps",
+            "3",
+            "--message-compaction-trigger-token-count",
+            "1000",
+            "--message-compaction-chars-per-token",
+            "3.5",
+            "--message-compaction-keep-last-items",
+            "2",
+            "--message-compaction-summary-max-chars",
+            "1200",
+            "--message-compaction-include-read-state",
             "--max-clickable-elements-length",
             "8000",
             "--include-recent-events",
@@ -2167,6 +2283,14 @@ mod tests {
                 planning_replan_on_stall,
                 planning_exploration_limit,
                 max_history_items,
+                no_message_compaction,
+                message_compaction_compact_every_n_steps,
+                message_compaction_trigger_char_count,
+                message_compaction_trigger_token_count,
+                message_compaction_chars_per_token,
+                message_compaction_keep_last_items,
+                message_compaction_summary_max_chars,
+                message_compaction_include_read_state,
                 max_clickable_elements_length,
                 include_recent_events,
                 include_attributes,
@@ -2209,6 +2333,14 @@ mod tests {
                 assert_eq!(planning_replan_on_stall, Some(5));
                 assert_eq!(planning_exploration_limit, Some(6));
                 assert_eq!(max_history_items, Some(7));
+                assert!(!no_message_compaction);
+                assert_eq!(message_compaction_compact_every_n_steps, Some(3));
+                assert_eq!(message_compaction_trigger_char_count, None);
+                assert_eq!(message_compaction_trigger_token_count, Some(1000));
+                assert_eq!(message_compaction_chars_per_token, Some(3.5));
+                assert_eq!(message_compaction_keep_last_items, Some(2));
+                assert_eq!(message_compaction_summary_max_chars, Some(1200));
+                assert!(message_compaction_include_read_state);
                 assert_eq!(max_clickable_elements_length, Some(8000));
                 assert!(include_recent_events);
                 assert_eq!(include_attributes, ["data-testid", "aria-label"]);
@@ -2529,6 +2661,14 @@ mod tests {
             planning_replan_on_stall: Some(5),
             planning_exploration_limit: Some(6),
             max_history_items: Some(7),
+            no_message_compaction: false,
+            message_compaction_compact_every_n_steps: Some(3),
+            message_compaction_trigger_char_count: None,
+            message_compaction_trigger_token_count: Some(1000),
+            message_compaction_chars_per_token: Some(3.5),
+            message_compaction_keep_last_items: Some(2),
+            message_compaction_summary_max_chars: Some(1200),
+            message_compaction_include_read_state: true,
             max_clickable_elements_length: Some(8000),
             include_recent_events: true,
             include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
@@ -2589,6 +2729,16 @@ mod tests {
         assert_eq!(settings.planning_replan_on_stall, 5);
         assert_eq!(settings.planning_exploration_limit, 6);
         assert_eq!(settings.max_history_items, Some(7));
+        let MessageCompaction::Settings(message_compaction) = &settings.message_compaction else {
+            panic!("expected custom message compaction settings");
+        };
+        assert_eq!(message_compaction.compact_every_n_steps, 3);
+        assert_eq!(message_compaction.trigger_token_count, Some(1000));
+        assert_eq!(message_compaction.trigger_char_count, Some(3500));
+        assert_eq!(message_compaction.chars_per_token, 3.5);
+        assert_eq!(message_compaction.keep_last_items, 2);
+        assert_eq!(message_compaction.summary_max_chars, 1200);
+        assert!(message_compaction.include_read_state);
         assert_eq!(settings.max_clickable_elements_length, 8000);
         assert!(settings.include_recent_events);
         assert_eq!(settings.include_attributes, ["data-testid", "aria-label"]);

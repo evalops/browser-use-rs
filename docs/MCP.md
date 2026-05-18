@@ -78,7 +78,8 @@ kebab-case enum values.
 `use_vision` values of `true`, `false`, or `"auto"`, image detail level,
 action limits, timeouts, final `done` responses after repeated failures,
 optional `done.files_to_display` text expansion, prompt-history limits,
-planning controls, thinking/flash output modes, and prompt-visible DOM
+planning controls, upstream-style message compaction settings, thinking/flash
+output modes, and prompt-visible DOM
 attributes plus initial actions, excluded action names, conversation transcript
 saving, non-fatal judge trace validation with optional `ground_truth`,
 contract-preserved `generate_gif`, `calculate_cost`, and
@@ -88,6 +89,12 @@ events, and system-message override/extension fields.
 GIF rendering and token-cost accounting side effects remain explicit later
 runtime parity slices; the MCP schema accepts and round-trips the upstream
 settings shape now.
+Message compaction accepts `true`, `false`, `null`, or a settings object with
+`compact_every_n_steps`, `trigger_char_count` or `trigger_token_count`,
+`chars_per_token`, `keep_last_items`, `summary_max_chars`, and
+`include_read_state`. Enabled runs compact older history into an unverified
+`<compacted_memory>` prompt block and checkpoint field without failing the agent
+when the summary request is unavailable.
 Excluded action names are removed from the model output schema and rejected
 before execution if a loose provider still returns one, while `done` remains
 available for completion. The `screenshot` action is exposed only when
