@@ -224,7 +224,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   configured, tagged releases also publish `Formula/browser-use-rs.rb` to the
   EvalOps Homebrew tap. The `Release` workflow can be manually dispatched to
   cut `patch`, `minor`, or `major` Cargo workspace versions before publishing
-  those tagged artifacts.
+  those tagged artifacts, and its scheduled `auto` mode can infer the bump from
+  release-worthy changes after the latest stable tag.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 

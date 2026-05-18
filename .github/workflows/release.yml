@@ -4,14 +4,17 @@ on:
   push:
     tags:
       - "v*"
+  schedule:
+    - cron: "17 17 * * 1-5"
   workflow_dispatch:
     inputs:
       release_type:
         description: "SemVer bump to cut when version is omitted."
         required: true
-        default: patch
+        default: auto
         type: choice
         options:
+          - auto
           - patch
           - minor
           - major
@@ -35,6 +38,9 @@ jobs:
       ref: ${{ steps.prepare.outputs.ref }}
       tag: ${{ steps.prepare.outputs.tag }}
       version: ${{ steps.prepare.outputs.version }}
+      should_release: ${{ steps.prepare.outputs.should_release }}
+      release_type: ${{ steps.prepare.outputs.release_type }}
+      release_reason: ${{ steps.prepare.outputs.release_reason }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,25 +59,34 @@ jobs:
         id: prepare
         shell: bash
         env:
-          RELEASE_TYPE: ${{ inputs.release_type }}
-          VERSION_INPUT: ${{ inputs.version }}
+          RELEASE_TYPE: ${{ inputs.release_type || 'auto' }}
+          VERSION_INPUT: ${{ inputs.version || '' }}
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            plan_output="$(mktemp)"
             python3 scripts/release-version.py \
               --release-type "${RELEASE_TYPE}" \
               --version "${VERSION_INPUT}" \
               --write \
-              --github-output "${GITHUB_OUTPUT}"
+              --allow-no-release \
+              --github-output "${plan_output}"
 
-            version="$(python3 - <<'PY'
-          import tomllib
-          with open("Cargo.toml", "rb") as handle:
-              print(tomllib.load(handle)["workspace"]["package"]["version"])
-          PY
-          )"
-            tag="v${version}"
+            cat "${plan_output}" >> "${GITHUB_OUTPUT}"
+            should_release="$(awk -F= '$1 == "should_release" { value = $2 } END { print value }' "${plan_output}")"
+            version="$(awk -F= '$1 == "version" { value = $2 } END { print value }' "${plan_output}")"
+            tag="$(awk -F= '$1 == "tag" { value = $2 } END { print value }' "${plan_output}")"
+
+            if [[ "${should_release}" != "true" ]]; then
+              {
+                echo "ref=${GITHUB_SHA}"
+                echo "tag=${tag}"
+                echo "version=${version}"
+              } >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+
 
             if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
               echo "Tag ${tag} already exists." >&2
@@ -92,8 +107,8 @@ jobs:
             version="${tag#v}"
             python3 scripts/release-version.py \
               --check \
-              --expect-version "${version}" \
-              --github-output "${GITHUB_OUTPUT}"
+              --expect-version "${version}"
+            echo "should_release=true" >> "${GITHUB_OUTPUT}"
           fi
 
           {
@@ -106,6 +121,7 @@ jobs:
     name: Build ${{ matrix.label }} binary
     runs-on: ${{ matrix.runner }}
     needs: prepare-release
+    if: needs.prepare-release.outputs.should_release == 'true'
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     strategy:
@@ -197,12 +213,14 @@ jobs:
     needs:
       - prepare-release
       - build-binary
+    if: needs.prepare-release.outputs.should_release == 'true'
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.prepare-release.outputs.ref }}
 
       - name: Download packaged artifacts
@@ -244,6 +262,28 @@ jobs:
             > dist/homebrew/browser-use-rs.rb
           ruby -c dist/homebrew/browser-use-rs.rb
 
+      - name: Generate release notes
+        shell: bash
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || true)"
+          {
+            echo "# browser-use-rs ${RELEASE_TAG}"
+            echo
+            if [[ -n "${previous_tag}" ]]; then
+              echo "## Changes Since ${previous_tag}"
+              echo
+              git log --pretty='- %s (%h)' "${previous_tag}..${RELEASE_TAG}"
+            else
+              echo "## Changes"
+              echo
+              git log --pretty='- %s (%h)' "${RELEASE_TAG}"
+            fi
+            echo
+            echo "## Release Support Matrix"
+            echo
+            cat docs/RELEASE.md
+          } > dist/RELEASE_NOTES.md
+
       - name: Upload release bundle artifact
         uses: actions/upload-artifact@v4
         with:
@@ -253,16 +293,18 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/homebrew/browser-use-rs.rb
+            dist/RELEASE_NOTES.md
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          body_path: docs/RELEASE.md
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/homebrew/browser-use-rs.rb
+            dist/RELEASE_NOTES.md
 
       - name: Publish Homebrew tap formula
         env:
