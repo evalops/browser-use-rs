@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#21 Introduce managed FileSystem state and sandbox directory](https://github.com/evalops/browser-use-rs/issues/21)
+- [#22 Add managed FileSystem sandbox directory for relative file actions](https://github.com/evalops/browser-use-rs/issues/22)
 
 ## Completed Tracks
 
@@ -25,6 +25,7 @@ small pushed checkpoints as each surface becomes real.
 - [#18 Add upstream-style PDF read_file page envelopes](https://github.com/evalops/browser-use-rs/issues/18)
 - [#19 Sanitize relative file action filenames like upstream FileSystem](https://github.com/evalops/browser-use-rs/issues/19)
 - [#20 Align file action binary extension guards](https://github.com/evalops/browser-use-rs/issues/20)
+- [#21 Introduce managed FileSystem state and sandbox directory](https://github.com/evalops/browser-use-rs/issues/21)
 
 ## Current Checkpoint
 
