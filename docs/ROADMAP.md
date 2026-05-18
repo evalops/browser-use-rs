@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#87 Add upstream sample_images prompt support](https://github.com/evalops/browser-use-rs/issues/87)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #87 lands and CI is green.
 
 ## Completed Tracks
 
+- [#87 Add upstream sample_images prompt support](https://github.com/evalops/browser-use-rs/issues/87)
 - [#86 Add upstream directly_open_url initial navigation](https://github.com/evalops/browser-use-rs/issues/86)
 - [#85 Add BrowserProfile proxy bypass launch parity](https://github.com/evalops/browser-use-rs/issues/85)
 - [#84 Add upstream step-budget warning prompt](https://github.com/evalops/browser-use-rs/issues/84)
