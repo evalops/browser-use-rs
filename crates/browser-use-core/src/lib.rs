@@ -1556,14 +1556,29 @@ fn write_file_action(
         content.insert(0, '\n');
     }
 
+    if is_csv_file(&params.file_name) {
+        content = normalize_csv_content(&content);
+    }
+
     if params.append {
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-        file.write_all(content.as_bytes())
-            .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        if is_csv_file(&params.file_name) {
+            let existing = match std::fs::read_to_string(path) {
+                Ok(existing) => existing,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(BrowserError::ActionFailed(error.to_string())),
+            };
+            let merged = merge_csv_append_content(&existing, &content);
+            std::fs::write(path, merged)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        } else {
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            file.write_all(content.as_bytes())
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        }
         Ok(ActionResult::extracted(format!(
             "Appended to file {}",
             params.file_name
@@ -1576,6 +1591,81 @@ fn write_file_action(
             params.file_name
         )))
     }
+}
+
+fn is_csv_file(file_name: &str) -> bool {
+    file_extension(file_name).as_deref() == Some("csv")
+}
+
+fn merge_csv_append_content(existing: &str, new_content: &str) -> String {
+    if new_content
+        .trim_matches(|char| char == '\n' || char == '\r')
+        .is_empty()
+    {
+        return existing.to_owned();
+    }
+
+    let mut merged = existing.to_owned();
+    if !merged.is_empty() && !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(new_content);
+    normalize_csv_content(&merged)
+}
+
+fn normalize_csv_content(raw: &str) -> String {
+    let mut content = raw
+        .trim_matches(|char| char == '\n' || char == '\r')
+        .to_owned();
+    if content.is_empty() {
+        return raw.to_owned();
+    }
+
+    if !content.contains('\n') && content.contains("\\n") {
+        content = content.replace("\\\"", "\"").replace("\\n", "\n");
+    }
+
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let Ok(record) = record else {
+            return raw.to_owned();
+        };
+        if !record.is_empty() {
+            rows.push(record);
+        }
+    }
+
+    if rows.is_empty() {
+        return raw.to_owned();
+    }
+
+    let mut output = Vec::new();
+    {
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_writer(&mut output);
+        for row in rows {
+            if writer.write_record(&row).is_err() {
+                return raw.to_owned();
+            }
+        }
+        if writer.flush().is_err() {
+            return raw.to_owned();
+        }
+    }
+
+    let Ok(mut normalized) = String::from_utf8(output) else {
+        return raw.to_owned();
+    };
+    while normalized.ends_with('\n') {
+        normalized.pop();
+    }
+    normalized
 }
 
 fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
@@ -4886,6 +4976,53 @@ mod tests {
                 .contains("hello EvalOps\n\nEvalOps")
         );
         assert!(read_result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_normalizes_csv_file_actions_like_upstream() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("contacts.csv");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: r#"name,notes\nAda,\"likes, commas\""#.to_owned(),
+                append: false,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let append_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: r#"Grace,"ships, tests""#.to_owned(),
+                append: true,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(append_result.error, None);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("csv content"),
+            "name,notes\nAda,\"likes, commas\"\nGrace,\"ships, tests\""
+        );
+        assert!(
+            read_result
+                .extracted_content
+                .as_deref()
+                .expect("read content")
+                .contains("Ada,\"likes, commas\"\nGrace,\"ships, tests\"")
+        );
     }
 
     #[tokio::test]

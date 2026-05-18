@@ -6,6 +6,7 @@ small pushed checkpoints as each surface becomes real.
 ## Active Tracks
 
 - [#13 Expand browser-profile watchdog diagnostics](https://github.com/evalops/browser-use-rs/issues/13)
+- [#12 Port upstream FileSystem CSV normalization](https://github.com/evalops/browser-use-rs/issues/12)
 
 ## Completed Tracks
 
@@ -37,8 +38,8 @@ Implemented:
   `.pdf` extension normalization, duplicate filename avoidance, and attachment
   paths.
 - Built-in text-file read/write/replace action parity for local agent artifacts,
-  plus upstream-style PDF/DOCX text extraction and PNG/JPEG read payloads for
-  one-shot image prompt parts.
+  upstream-style CSV write/append normalization, plus upstream-style PDF/DOCX
+  text extraction and PNG/JPEG read payloads for one-shot image prompt parts.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
@@ -143,8 +144,8 @@ Implemented:
 
 Next:
 
-1. Expand agent planning depth, replay coverage, and deeper provider-specific
-   structured-output fallbacks beyond the DeepSeek forced tool-call path for
-   model families that need provider-routing hints.
+1. Expand filesystem parity beyond CSV normalization toward upstream
+   `FileSystem` state, sandbox directories, and richer artifact lifecycle.
 2. Expand browser-profile security parity with more provider-style lifecycle
    hooks.
+3. Expand agent planning depth and replay coverage for longer multi-step tasks.
