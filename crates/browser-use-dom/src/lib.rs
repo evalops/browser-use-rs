@@ -435,6 +435,7 @@ fn aliased_render_attribute<'a>(element: &'a DomElementRef, attribute: &str) -> 
         "disabled" => "aria-disabled",
         "haspopup" => "aria-haspopup",
         "invalid" => "aria-invalid",
+        "keyshortcuts" => "aria-keyshortcuts",
         "pressed" => "aria-pressed",
         "required" => "aria-required",
         "selected" => "aria-selected",
@@ -815,6 +816,32 @@ mod tests {
         let attributes = render_element_attributes(&element);
 
         assert_eq!(attributes, "expanded=true");
+    }
+
+    #[test]
+    fn rendered_attributes_alias_aria_keyshortcuts_to_ax_shape() {
+        let element = DomElementRef {
+            index: 1,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "div".to_owned(),
+            role: None,
+            name: Some("Submit request".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([(
+                "aria-keyshortcuts".to_owned(),
+                "Control+Enter".to_owned(),
+            )]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let attributes = render_element_attributes(&element);
+
+        assert_eq!(attributes, "keyshortcuts=Control+Enter");
     }
 
     #[test]

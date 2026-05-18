@@ -166,9 +166,10 @@ templates live under `packaging/`; see
   traversal, open shadow-root traversal, AX role/name/state/value enrichment,
   backend/frontend node ids, and cached observed-node resolution for
   click/type/scroll/dropdown/upload actions, input
-  mask/autocomplete/date-format hints, plus JavaScript click/pointer
-  listener-backed control detection when Chrome exposes command-line inspection
-  APIs. Full browser-use DOM/AX snapshot parity is still tracked separately.
+  mask/autocomplete/date-format hints, ARIA keyshortcut rendering, plus
+  JavaScript click/pointer listener-backed control detection when Chrome
+  exposes command-line inspection APIs. Full browser-use DOM/AX snapshot parity
+  is still tracked separately.
 - Agent runs currently support OpenAI-compatible Chat Completions plus
   DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
   Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output

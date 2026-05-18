@@ -107,7 +107,9 @@ Implemented:
   `data-state`,
   input mask/autocomplete/date-format hints, and static
   history-matching attributes, renders native and text datepicker input format
-  hints, detects search affordance signals and small icon controls, detects
+  hints, indexes ARIA required/autocomplete/keyshortcut interactivity signals,
+  renders keyboard shortcuts as `keyshortcuts`, detects search affordance
+  signals and small icon controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
   controls, prunes decorative SVG child elements, detects static mouse/keyboard
   handler attributes, prunes contained duplicate descendants inside action

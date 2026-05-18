@@ -52,6 +52,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             name: Some("Submit request".to_owned()),
             text: Some("Ignored visual label".to_owned()),
             attributes: BTreeMap::from([
+                ("aria-keyshortcuts".to_owned(), "Control+Enter".to_owned()),
                 ("aria-labelledby".to_owned(), "submit-name".to_owned()),
                 ("data-testid".to_owned(), "submit-request".to_owned()),
                 ("id".to_owned(), "submit".to_owned()),
