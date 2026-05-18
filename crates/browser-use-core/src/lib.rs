@@ -4883,6 +4883,8 @@ pub enum AgentRunError {
     Stopped { reason: String },
     #[error("agent paused before the next step")]
     Paused,
+    #[error("agent interrupted by external status callback")]
+    ExternalStatusInterrupted,
     #[error("agent callback {callback} failed: {message}")]
     Callback {
         callback: &'static str,
@@ -4939,6 +4941,8 @@ pub type AgentDoneCallback =
     Box<dyn for<'a> FnMut(&'a AgentHistory) -> AgentCallbackFuture<'a, ()> + Send + 'static>;
 pub type AgentShouldStopCallback =
     Box<dyn FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static>;
+pub type AgentExternalStatusCallback =
+    Box<dyn FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static>;
 
 pub struct Agent<M, S> {
     id: Uuid,
@@ -4957,6 +4961,7 @@ pub struct Agent<M, S> {
     step_callbacks: Vec<AgentStepCallback>,
     done_callbacks: Vec<AgentDoneCallback>,
     should_stop_callback: Option<AgentShouldStopCallback>,
+    external_status_callback: Option<AgentExternalStatusCallback>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5037,6 +5042,7 @@ where
             step_callbacks: Vec::new(),
             done_callbacks: Vec::new(),
             should_stop_callback: None,
+            external_status_callback: None,
         }
     }
 
@@ -5068,6 +5074,7 @@ where
             step_callbacks: Vec::new(),
             done_callbacks: Vec::new(),
             should_stop_callback: None,
+            external_status_callback: None,
         })
     }
 
@@ -5234,6 +5241,43 @@ where
         self.should_stop_callback = None;
     }
 
+    pub fn register_external_agent_status_callback<F, E>(&mut self, mut callback: F)
+    where
+        F: FnMut() -> Result<bool, E> + Send + 'static,
+        E: ToString + 'static,
+    {
+        self.register_external_agent_status_callback_async(move || {
+            let result = callback().map_err(|error| error.to_string());
+            Box::pin(async move { result })
+        });
+    }
+
+    pub fn register_external_agent_status_callback_async<F>(&mut self, callback: F)
+    where
+        F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
+    {
+        self.external_status_callback = Some(Box::new(callback));
+    }
+
+    pub fn register_external_agent_status_raise_error_callback<F, E>(&mut self, callback: F)
+    where
+        F: FnMut() -> Result<bool, E> + Send + 'static,
+        E: ToString + 'static,
+    {
+        self.register_external_agent_status_callback(callback);
+    }
+
+    pub fn register_external_agent_status_raise_error_callback_async<F>(&mut self, callback: F)
+    where
+        F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
+    {
+        self.register_external_agent_status_callback_async(callback);
+    }
+
+    pub fn clear_external_agent_status_callback(&mut self) {
+        self.external_status_callback = None;
+    }
+
     pub fn stop(&mut self) {
         self.stopped = true;
     }
@@ -5268,15 +5312,6 @@ where
     }
 
     async fn check_stop_requested(&mut self) -> Result<(), AgentRunError> {
-        if self.stopped {
-            return Err(AgentRunError::Stopped {
-                reason: "stop requested".to_owned(),
-            });
-        }
-        if self.paused {
-            return Err(AgentRunError::Paused);
-        }
-
         if let Some(callback) = self.should_stop_callback.as_mut() {
             let should_stop = callback()
                 .await
@@ -5290,6 +5325,27 @@ where
                     reason: "should_stop callback requested stop".to_owned(),
                 });
             }
+        }
+
+        if let Some(callback) = self.external_status_callback.as_mut() {
+            let interrupted = callback()
+                .await
+                .map_err(|message| AgentRunError::Callback {
+                    callback: "external_agent_status",
+                    message,
+                })?;
+            if interrupted {
+                return Err(AgentRunError::ExternalStatusInterrupted);
+            }
+        }
+
+        if self.stopped {
+            return Err(AgentRunError::Stopped {
+                reason: "stop requested".to_owned(),
+            });
+        }
+        if self.paused {
+            return Err(AgentRunError::Paused);
         }
 
         Ok(())
@@ -14837,6 +14893,49 @@ mod tests {
         assert!(agent.is_stopped());
         assert_eq!(*calls.lock().expect("calls lock"), 1);
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_run_interrupts_for_external_status_without_stopping() {
+        let calls = Arc::new(Mutex::new(0usize));
+        let mut agent = Agent::new("complete", QueueModel::new(vec![]), MockSession::new());
+        let callback_calls = Arc::clone(&calls);
+        agent.register_external_agent_status_callback(move || {
+            let mut calls = callback_calls.lock().expect("external status calls lock");
+            *calls += 1;
+            Ok::<_, String>(true)
+        });
+
+        let error = agent.run(1).await.expect_err("run should interrupt");
+
+        assert!(matches!(error, AgentRunError::ExternalStatusInterrupted));
+        assert!(!agent.is_stopped());
+        assert!(!agent.is_paused());
+        assert_eq!(*calls.lock().expect("calls lock"), 1);
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+        assert!(agent.executor.session().events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_run_reports_external_status_callback_errors_without_stop_state() {
+        let mut agent = Agent::new("complete", QueueModel::new(vec![]), MockSession::new());
+        agent.register_external_agent_status_raise_error_callback_async(|| {
+            Box::pin(async { Err::<bool, String>("status probe failed".to_owned()) })
+        });
+
+        let error = agent.run(1).await.expect_err("callback should fail");
+
+        assert!(matches!(
+            error,
+            AgentRunError::Callback {
+                callback: "external_agent_status",
+                message
+            } if message == "status probe failed"
+        ));
+        assert!(!agent.is_stopped());
+        assert!(!agent.is_paused());
+        assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+        assert!(agent.executor.session().events().is_empty());
     }
 
     #[tokio::test]
