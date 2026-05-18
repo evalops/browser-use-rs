@@ -166,7 +166,10 @@ pub fn mixed_interactive_state() -> SerializedDomState {
             text: Some("Draft body".to_owned()),
             attributes: BTreeMap::from([
                 ("contenteditable".to_owned(), "plaintext-only".to_owned()),
+                ("editable".to_owned(), "true".to_owned()),
+                ("focusable".to_owned(), "true".to_owned()),
                 ("id".to_owned(), "notes".to_owned()),
+                ("settable".to_owned(), "true".to_owned()),
             ]),
             bounds: Some(ElementBounds {
                 x: 12,
@@ -447,6 +450,37 @@ mod tests {
             Some(
                 "[1] <button description=Sends the completed form> Submit request Ignored visual label"
             )
+        );
+    }
+
+    #[test]
+    fn mixed_interactive_state_preserves_quiet_ax_clickability_metadata() {
+        let state = mixed_interactive_state();
+        let notes = state.selector_map.get(&5).expect("notes element");
+
+        assert_eq!(
+            notes.attributes.get("focusable").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            notes.attributes.get("editable").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            notes.attributes.get("settable").map(String::as_str),
+            Some("true")
+        );
+        assert!(!state.llm_representation().contains("focusable=true"));
+        assert!(
+            state
+                .llm_representation_with_attributes(&[
+                    "focusable".to_owned(),
+                    "editable".to_owned(),
+                    "settable".to_owned()
+                ])
+                .contains(
+                    "[5] <div focusable=true editable=true settable=true> Draft note Draft body"
+                )
         );
     }
 

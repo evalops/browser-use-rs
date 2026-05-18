@@ -107,7 +107,10 @@
       "text": "Draft body",
       "attributes": {
         "contenteditable": "plaintext-only",
-        "id": "notes"
+        "editable": "true",
+        "focusable": "true",
+        "id": "notes",
+        "settable": "true"
       },
       "bounds": {
         "x": 12,

@@ -173,8 +173,9 @@ Implemented:
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names,
-  state/value properties, top-level AX values, opt-in AX descriptions, and
-  backend/frontend node ids, carries image alt text into image-only control
+  state/value properties, top-level AX values, opt-in AX descriptions, AX
+  hidden/disabled suppression, quiet AX focusable/editable/settable metadata,
+  and backend/frontend node ids, carries image alt text into image-only control
   names, renders selected dropdown values, compound control metadata, and
   compact select option summaries, preserves
   automation-friendly data/ARIA/value attributes, native boolean/read-only

@@ -4448,7 +4448,10 @@ fn dom_state_from_interactive_value(
     let elements = element_values
         .iter()
         .map(|element| dom_element_from_value(target_id, element, accessibility))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|element| !is_ax_suppressed_interactive_element(element))
+        .collect::<Vec<_>>();
     let eval_root = value
         .get("eval_tree")
         .filter(|value| !value.is_null())
@@ -5001,6 +5004,22 @@ fn ax_value_to_string(value: &Value) -> Option<String> {
 
 fn nonempty_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn is_ax_suppressed_interactive_element(element: &DomElementRef) -> bool {
+    ["disabled", "hidden"].into_iter().any(|attribute| {
+        element
+            .attributes
+            .get(attribute)
+            .is_some_and(|value| is_truthy_accessibility_value(value))
+    })
+}
+
+fn is_truthy_accessibility_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    )
 }
 
 fn is_useful_ax_role(role: &str) -> bool {
@@ -8884,6 +8903,123 @@ mod tests {
         assert_eq!(
             element.attributes.get("expanded").map(String::as_str),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn dom_state_parser_applies_ax_hidden_disabled_veto_and_preserves_metadata() {
+        let accessibility = BTreeMap::from([
+            (
+                "browser-use-rs-hidden".to_owned(),
+                AccessibilityNodeInfo {
+                    backend_node_id: 41,
+                    node_id: Some(81),
+                    role: Some("button".to_owned()),
+                    name: Some("Hidden action".to_owned()),
+                    properties: BTreeMap::from([
+                        ("focusable".to_owned(), "true".to_owned()),
+                        ("hidden".to_owned(), "true".to_owned()),
+                    ]),
+                },
+            ),
+            (
+                "browser-use-rs-disabled".to_owned(),
+                AccessibilityNodeInfo {
+                    backend_node_id: 42,
+                    node_id: Some(82),
+                    role: Some("button".to_owned()),
+                    name: Some("Disabled action".to_owned()),
+                    properties: BTreeMap::from([
+                        ("disabled".to_owned(), "true".to_owned()),
+                        ("focusable".to_owned(), "true".to_owned()),
+                    ]),
+                },
+            ),
+            (
+                "browser-use-rs-editable".to_owned(),
+                AccessibilityNodeInfo {
+                    backend_node_id: 43,
+                    node_id: Some(83),
+                    role: Some("textbox".to_owned()),
+                    name: Some("Search".to_owned()),
+                    properties: BTreeMap::from([
+                        ("autocomplete".to_owned(), "list".to_owned()),
+                        ("editable".to_owned(), "true".to_owned()),
+                        ("focusable".to_owned(), "true".to_owned()),
+                        ("settable".to_owned(), "true".to_owned()),
+                    ]),
+                },
+            ),
+        ]);
+        let state = dom_state_from_interactive_value(
+            "target-1",
+            &json!({
+                "elements": [
+                    {
+                        "index": 1,
+                        "tag_name": "button",
+                        "attributes": { "id": "hidden-action" },
+                        "ax_ref": "browser-use-rs-hidden",
+                        "is_visible": true,
+                        "is_interactive": true
+                    },
+                    {
+                        "index": 2,
+                        "tag_name": "button",
+                        "attributes": { "id": "disabled-action" },
+                        "ax_ref": "browser-use-rs-disabled",
+                        "is_visible": true,
+                        "is_interactive": true
+                    },
+                    {
+                        "index": 3,
+                        "tag_name": "input",
+                        "attributes": { "id": "search", "type": "text" },
+                        "ax_ref": "browser-use-rs-editable",
+                        "is_visible": true,
+                        "is_interactive": true
+                    }
+                ]
+            }),
+            &accessibility,
+        )
+        .expect("dom state");
+
+        assert_eq!(state.selector_map.len(), 1);
+        assert!(!state.selector_map.contains_key(&1));
+        assert!(!state.selector_map.contains_key(&2));
+
+        let editable = state.selector_map.get(&3).expect("editable element");
+        assert_eq!(editable.backend_node_id, 43);
+        assert_eq!(editable.role.as_deref(), Some("textbox"));
+        assert_eq!(editable.name.as_deref(), Some("Search"));
+        assert_eq!(
+            editable.attributes.get("focusable").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            editable.attributes.get("editable").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            editable.attributes.get("settable").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            editable.attributes.get("autocomplete").map(String::as_str),
+            Some("list")
+        );
+        assert_eq!(
+            state.llm_representation(),
+            "[3] <input type=text id=search autocomplete=list> Search"
+        );
+        assert_eq!(
+            state.llm_representation_with_attributes(&[
+                "focusable".to_owned(),
+                "editable".to_owned(),
+                "settable".to_owned()
+            ]),
+            "[3] <input focusable=true editable=true settable=true> Search"
         );
     }
 

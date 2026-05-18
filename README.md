@@ -54,7 +54,7 @@ includes:
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and
   cached-node actions, accessibility-tree role/name/state/value enrichment,
-  top-level AX values, opt-in AX descriptions,
+  top-level AX values, opt-in AX descriptions, AX hidden/disabled suppression,
   backend and frontend node ids, accessible labels, image-alt control names,
   selected dropdown values, compound control metadata, compact select option
   summaries, bounds, automation-friendly data/ARIA/value attributes,
@@ -69,7 +69,8 @@ includes:
   plus href-less anchor tags, common ARIA widget roles, search affordance
   signals, tabindex-backed controls including `tabindex="-1"`, ARIA
   required/autocomplete/keyshortcut interactivity signals with prompt-visible
-  `keyshortcuts`, AX-shaped numeric value aliases,
+  `keyshortcuts`, quiet AX focusable/editable/settable metadata,
+  AX-shaped numeric value aliases,
   human-readable value text, contenteditable editor variants, media control
   compounds, small icon controls, cursor-pointer controls,
   decorative SVG child pruning, contained duplicate descendant pruning for
