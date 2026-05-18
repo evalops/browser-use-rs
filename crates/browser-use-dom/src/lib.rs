@@ -15,6 +15,9 @@ pub type BackendNodeId = u64;
 /// Node identifier scoped to a CDP session.
 pub type NodeId = u64;
 
+pub const EMPTY_DOM_TREE_MESSAGE: &str =
+    "Empty DOM tree (you might have to wait for the page to load)";
+
 /// Information about an open tab or page target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TabInfo {
@@ -169,13 +172,19 @@ impl SerializedDomState {
 
     #[must_use]
     pub fn llm_representation(&self) -> &str {
+        if self.text.is_empty() && self.selector_map.is_empty() {
+            return EMPTY_DOM_TREE_MESSAGE;
+        }
         self.text.as_str()
     }
 
     #[must_use]
     pub fn llm_representation_with_attributes(&self, include_attributes: &[String]) -> String {
+        if self.selector_map.is_empty() {
+            return EMPTY_DOM_TREE_MESSAGE.to_owned();
+        }
         if include_attributes.is_empty() {
-            return self.text.clone();
+            return self.llm_representation().to_owned();
         }
 
         self.selector_map
@@ -511,7 +520,11 @@ mod tests {
     fn empty_dom_state_has_zero_elements() {
         let dom = SerializedDomState::default();
         assert_eq!(dom.element_count(), 0);
-        assert_eq!(dom.llm_representation(), "");
+        assert_eq!(dom.llm_representation(), EMPTY_DOM_TREE_MESSAGE);
+        assert_eq!(
+            dom.llm_representation_with_attributes(&["data-testid".to_owned()]),
+            EMPTY_DOM_TREE_MESSAGE
+        );
     }
 
     #[test]

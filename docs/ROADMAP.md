@@ -79,8 +79,8 @@ Implemented:
   renders native input format hints, detects search affordance signals and
   small icon controls, detects JavaScript click/pointer listener-backed
   controls, detects pagination affordances, supports caller-selected prompt
-  attributes, and excludes hidden or disabled interactive elements from the
-  selector map.
+  attributes, renders the upstream empty-DOM load hint, and excludes hidden or
+  disabled interactive elements from the selector map.
 
 Next:
 
