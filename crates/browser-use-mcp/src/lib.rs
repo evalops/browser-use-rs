@@ -322,6 +322,7 @@ mod tests {
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("flash_mode"));
         assert!(schema_text.contains("max_clickable_elements_length"));
+        assert!(schema_text.contains("available_file_paths"));
     }
 
     #[test]

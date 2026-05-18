@@ -44,8 +44,8 @@ includes:
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, compact page-stat prompt context,
   one-time extraction replay handling, step/LLM timeouts, max-failure handling,
-  page-change guards, normalized
-  repeated-action loop detection, loop-awareness prompt nudges, an
+  page-change guards, normalized repeated-action loop detection,
+  loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
   flattened planning fields,
   configurable planning prompt nudges, thinking/flash output-schema controls,
@@ -53,11 +53,11 @@ includes:
   metadata, per-step timing metadata, upstream-style prompt-history inclusion
   and limits, clickable-element text limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
-  prompt sections, upstream-style prompt context and error truncation,
-  upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results, step-error,
-  model-output/action/thought, duration, action, and URL history accessors, and
-  history.
+  prompt sections, upstream-style available-file-path context, upstream-style
+  prompt context and error truncation, upstream-style last-result completion
+  helpers, upstream-compatible action-result success validation, judgement
+  results, step-error, model-output/action/thought, duration, action, and URL
+  history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional

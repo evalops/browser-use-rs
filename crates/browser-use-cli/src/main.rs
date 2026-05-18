@@ -133,6 +133,8 @@ enum Command {
         max_clickable_elements_length: Option<usize>,
         #[arg(long = "include-attribute")]
         include_attributes: Vec<String>,
+        #[arg(long = "available-file-path")]
+        available_file_paths: Vec<String>,
     },
 }
 
@@ -315,6 +317,7 @@ async fn main() -> anyhow::Result<()> {
             max_history_items,
             max_clickable_elements_length,
             include_attributes,
+            available_file_paths,
         }) => {
             let llm = configured_chat_model(provider, api_key, model, base_url)?;
             let session = launch_and_navigate(&url).await?;
@@ -335,6 +338,7 @@ async fn main() -> anyhow::Result<()> {
                 max_history_items,
                 max_clickable_elements_length,
                 include_attributes,
+                available_file_paths,
             });
             let mut agent = browser_use_core::Agent::with_settings(task, settings, llm, session);
             let history = agent.run(max_steps).await?;
@@ -380,6 +384,7 @@ struct CliAgentSettingsArgs {
     max_history_items: Option<usize>,
     max_clickable_elements_length: Option<usize>,
     include_attributes: Vec<String>,
+    available_file_paths: Vec<String>,
 }
 
 fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
@@ -429,6 +434,7 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
         settings.max_clickable_elements_length = value;
     }
     settings.include_attributes = args.include_attributes;
+    settings.available_file_paths = args.available_file_paths;
 
     settings
 }
@@ -1254,6 +1260,10 @@ mod tests {
             "data-testid",
             "--include-attribute",
             "aria-label",
+            "--available-file-path",
+            "/tmp/report.pdf",
+            "--available-file-path",
+            "/tmp/chart.png",
         ])
         .expect("agent settings flags should parse");
 
@@ -1277,6 +1287,7 @@ mod tests {
                 max_history_items,
                 max_clickable_elements_length,
                 include_attributes,
+                available_file_paths,
                 ..
             } => {
                 assert_eq!(provider, LlmProvider::OpenAiCompatible);
@@ -1297,6 +1308,7 @@ mod tests {
                 assert_eq!(max_history_items, Some(7));
                 assert_eq!(max_clickable_elements_length, Some(8000));
                 assert_eq!(include_attributes, ["data-testid", "aria-label"]);
+                assert_eq!(available_file_paths, ["/tmp/report.pdf", "/tmp/chart.png"]);
             }
             _ => panic!("expected agent command"),
         }
@@ -1321,6 +1333,7 @@ mod tests {
             max_history_items: Some(7),
             max_clickable_elements_length: Some(8000),
             include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
+            available_file_paths: vec!["/tmp/report.pdf".to_owned(), "/tmp/chart.png".to_owned()],
         });
 
         assert!(!settings.use_vision);
@@ -1339,6 +1352,10 @@ mod tests {
         assert_eq!(settings.max_history_items, Some(7));
         assert_eq!(settings.max_clickable_elements_length, 8000);
         assert_eq!(settings.include_attributes, ["data-testid", "aria-label"]);
+        assert_eq!(
+            settings.available_file_paths,
+            ["/tmp/report.pdf", "/tmp/chart.png"]
+        );
     }
 
     #[test]

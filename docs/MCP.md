@@ -45,7 +45,7 @@ optional and defaults to `http://localhost:11434`.
 `browser-use-core`'s `AgentSettings`, including vision, action limits,
 timeouts, final `done` responses after repeated failures, prompt-history
 limits, planning controls, thinking/flash output modes, and prompt-visible DOM
-attributes.
+attributes plus available file-path prompt context.
 
 Browser and agent tools support an optional `session_id` argument. When omitted,
 the tool call uses a fresh one-shot browser. When present, the stdio server

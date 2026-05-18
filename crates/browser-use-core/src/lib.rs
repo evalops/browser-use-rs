@@ -58,6 +58,8 @@ pub struct AgentSettings {
     pub flash_mode: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_file_paths: Vec<String>,
 }
 
 impl Default for AgentSettings {
@@ -79,6 +81,7 @@ impl Default for AgentSettings {
             use_thinking: default_use_thinking(),
             flash_mode: false,
             include_attributes: Vec::new(),
+            available_file_paths: Vec::new(),
         }
     }
 }
@@ -2440,6 +2443,12 @@ fn render_agent_state_description(
     if let Some(message) = render_loop_awareness(history, state, settings) {
         description.push_str(&format!("\n\nLoop awareness:\n{message}"));
     }
+    if !settings.available_file_paths.is_empty() {
+        description.push_str(&format!(
+            "\n\n<available_file_paths>{}\nUse with absolute paths</available_file_paths>",
+            settings.available_file_paths.join("\n")
+        ));
+    }
     description
 }
 
@@ -2959,6 +2968,7 @@ mod tests {
         assert!(settings.use_thinking);
         assert!(!settings.flash_mode);
         assert!(settings.include_attributes.is_empty());
+        assert!(settings.available_file_paths.is_empty());
     }
 
     #[test]
@@ -5415,6 +5425,37 @@ mod tests {
             build_step_request("recover", &state, &history, &flash_settings).expect("step request");
         let request_text = serde_json::to_string(&request.messages).expect("messages json");
         assert!(!request_text.contains("Planning"));
+    }
+
+    #[test]
+    fn step_request_includes_available_file_paths_like_upstream() {
+        let settings = AgentSettings {
+            available_file_paths: vec!["/tmp/report.pdf".to_owned(), "/tmp/chart.png".to_owned()],
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request(
+            "inspect files",
+            &blank_state(),
+            &AgentHistory::default(),
+            &settings,
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+        let user_text = match &user_message.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected first content part: {other:?}"),
+        };
+
+        assert!(user_text.contains(
+            "<available_file_paths>/tmp/report.pdf\n/tmp/chart.png\nUse with absolute paths</available_file_paths>"
+        ));
+        assert!(user_text.contains("<agent_state>"));
+        assert!(user_text.contains("</agent_state>"));
     }
 
     #[test]
