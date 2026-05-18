@@ -76,6 +76,8 @@ pub struct AgentSettings {
     pub use_judge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground_truth: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_message_compaction")]
+    pub message_compaction: MessageCompaction,
     #[serde(default)]
     pub calculate_cost: bool,
     #[serde(default)]
@@ -247,6 +249,7 @@ impl Default for AgentSettings {
             flash_mode: false,
             use_judge: default_use_judge(),
             ground_truth: None,
+            message_compaction: MessageCompaction::default(),
             calculate_cost: false,
             include_tool_call_examples: false,
             save_conversation_path: None,
@@ -260,6 +263,253 @@ impl Default for AgentSettings {
             extend_system_message: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct MessageCompactionSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_compact_every_n_steps")]
+    pub compact_every_n_steps: usize,
+    #[serde(
+        default = "default_trigger_char_count",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub trigger_char_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_token_count: Option<usize>,
+    #[serde(default = "default_chars_per_token")]
+    pub chars_per_token: f64,
+    #[serde(default = "default_keep_last_items")]
+    pub keep_last_items: usize,
+    #[serde(default = "default_summary_max_chars")]
+    pub summary_max_chars: usize,
+    #[serde(default)]
+    pub include_read_state: bool,
+}
+
+impl Default for MessageCompactionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            compact_every_n_steps: default_compact_every_n_steps(),
+            trigger_char_count: default_trigger_char_count(),
+            trigger_token_count: None,
+            chars_per_token: default_chars_per_token(),
+            keep_last_items: default_keep_last_items(),
+            summary_max_chars: default_summary_max_chars(),
+            include_read_state: false,
+        }
+    }
+}
+
+impl MessageCompactionSettings {
+    #[must_use]
+    pub fn effective_trigger_char_count(&self) -> usize {
+        self.trigger_char_count.unwrap_or(40_000)
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageCompactionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default = "default_true")]
+            enabled: bool,
+            #[serde(default = "default_compact_every_n_steps")]
+            compact_every_n_steps: usize,
+            #[serde(default)]
+            trigger_char_count: Option<usize>,
+            #[serde(default)]
+            trigger_token_count: Option<usize>,
+            #[serde(default = "default_chars_per_token")]
+            chars_per_token: f64,
+            #[serde(default = "default_keep_last_items")]
+            keep_last_items: usize,
+            #[serde(default = "default_summary_max_chars")]
+            summary_max_chars: usize,
+            #[serde(default)]
+            include_read_state: bool,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        if wire.trigger_char_count.is_some() && wire.trigger_token_count.is_some() {
+            return Err(de::Error::custom(
+                "set trigger_char_count or trigger_token_count, not both",
+            ));
+        }
+        let trigger_char_count = wire
+            .trigger_char_count
+            .or_else(|| {
+                wire.trigger_token_count
+                    .map(|tokens| (tokens as f64 * wire.chars_per_token).floor() as usize)
+            })
+            .or_else(default_trigger_char_count);
+
+        Ok(Self {
+            enabled: wire.enabled,
+            compact_every_n_steps: wire.compact_every_n_steps,
+            trigger_char_count,
+            trigger_token_count: wire.trigger_token_count,
+            chars_per_token: wire.chars_per_token,
+            keep_last_items: wire.keep_last_items,
+            summary_max_chars: wire.summary_max_chars,
+            include_read_state: wire.include_read_state,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MessageCompaction {
+    Disabled,
+    Enabled,
+    Settings(MessageCompactionSettings),
+}
+
+impl Default for MessageCompaction {
+    fn default() -> Self {
+        Self::Enabled
+    }
+}
+
+impl MessageCompaction {
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::Enabled => true,
+            Self::Settings(settings) => settings.enabled,
+        }
+    }
+
+    #[must_use]
+    pub fn resolved_settings(&self) -> Option<MessageCompactionSettings> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled => Some(MessageCompactionSettings::default()),
+            Self::Settings(settings) if settings.enabled => Some(settings.clone()),
+            Self::Settings(_) => None,
+        }
+    }
+}
+
+impl Serialize for MessageCompaction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Enabled => serializer.serialize_bool(true),
+            Self::Settings(settings) => settings.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageCompaction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(MessageCompactionVisitor)
+    }
+}
+
+struct MessageCompactionVisitor;
+
+impl<'de> de::Visitor<'de> for MessageCompactionVisitor {
+    type Value = MessageCompaction;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, null, or a MessageCompactionSettings object")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            MessageCompaction::Enabled
+        } else {
+            MessageCompaction::Disabled
+        })
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(MessageCompaction::Disabled)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(MessageCompaction::Disabled)
+    }
+
+    fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+    where
+        M: de::MapAccess<'de>,
+    {
+        let settings =
+            MessageCompactionSettings::deserialize(de::value::MapAccessDeserializer::new(map))?;
+        Ok(MessageCompaction::Settings(settings))
+    }
+}
+
+impl JsonSchema for MessageCompaction {
+    fn schema_name() -> String {
+        "MessageCompaction".to_owned()
+    }
+
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let settings_schema = r#gen.subschema_for::<MessageCompactionSettings>();
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                { "type": "null" },
+                settings_schema
+            ]
+        }))
+        .expect("valid MessageCompaction JSON schema")
+    }
+}
+
+fn is_default_message_compaction(value: &MessageCompaction) -> bool {
+    matches!(value, MessageCompaction::Enabled)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_compact_every_n_steps() -> usize {
+    25
+}
+
+fn default_trigger_char_count() -> Option<usize> {
+    Some(40_000)
+}
+
+fn default_chars_per_token() -> f64 {
+    4.0
+}
+
+fn default_keep_last_items() -> usize {
+    6
+}
+
+fn default_summary_max_chars() -> usize {
+    6_000
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 /// Upstream-compatible GIF generation setting.
@@ -704,6 +954,12 @@ impl StepMetadata {
 pub struct AgentHistory {
     #[serde(default)]
     pub items: Vec<AgentHistoryItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compacted_memory: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub compaction_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compaction_step: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -5867,11 +6123,13 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
         }
     };
 
-    let mut rendered = if history.items.is_empty() {
-        vec!["Agent initialized".to_owned()]
-    } else {
-        Vec::new()
-    };
+    let mut rendered = Vec::new();
+    if let Some(memory) = non_empty_prompt_text(history.compacted_memory.as_deref()) {
+        rendered.push(render_compacted_memory(memory));
+    }
+    if history.items.is_empty() {
+        rendered.push("Agent initialized".to_owned());
+    }
     for entry in entries {
         match entry {
             HistoryPromptEntry::Item(item) => {
@@ -5889,6 +6147,15 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
     }
 
     truncate_prompt_content(rendered.join("\n"))
+}
+
+fn render_compacted_memory(memory: &str) -> String {
+    format!(
+        "<compacted_memory>\n\
+         <!-- Summary of prior steps. Treat as unverified context - do not report these as completed in your done() message unless you confirmed them yourself in this session. -->\n\
+         {memory}\n\
+         </compacted_memory>"
+    )
 }
 
 fn render_history_item_for_prompt(item: &AgentHistoryItem) -> Option<String> {
@@ -6339,6 +6606,7 @@ mod tests {
         assert!(!settings.flash_mode);
         assert!(settings.use_judge);
         assert_eq!(settings.ground_truth, None);
+        assert_eq!(settings.message_compaction, MessageCompaction::Enabled);
         assert!(!settings.calculate_cost);
         assert!(!settings.include_tool_call_examples);
         assert_eq!(settings.save_conversation_path, None);
@@ -6386,6 +6654,74 @@ mod tests {
                 .expect("deserialize path"),
             GenerateGif::Path("trace.gif".to_owned())
         );
+    }
+
+    #[test]
+    fn message_compaction_preserves_upstream_json_shape() {
+        assert_eq!(
+            serde_json::to_value(MessageCompaction::Disabled).expect("serialize disabled"),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            serde_json::to_value(MessageCompaction::Enabled).expect("serialize enabled"),
+            serde_json::json!(true)
+        );
+
+        let settings = MessageCompactionSettings {
+            compact_every_n_steps: 3,
+            trigger_char_count: Some(1200),
+            keep_last_items: 2,
+            include_read_state: true,
+            ..MessageCompactionSettings::default()
+        };
+        let serialized = serde_json::to_value(MessageCompaction::Settings(settings.clone()))
+            .expect("serialize settings");
+        assert_eq!(serialized["compact_every_n_steps"], 3);
+        assert_eq!(serialized["trigger_char_count"], 1200);
+        assert_eq!(serialized["keep_last_items"], 2);
+        assert_eq!(serialized["include_read_state"], true);
+
+        assert_eq!(
+            serde_json::from_value::<MessageCompaction>(serde_json::json!(false))
+                .expect("deserialize false"),
+            MessageCompaction::Disabled
+        );
+        assert_eq!(
+            serde_json::from_value::<MessageCompaction>(serde_json::json!(true))
+                .expect("deserialize true"),
+            MessageCompaction::Enabled
+        );
+        assert_eq!(
+            serde_json::from_value::<MessageCompaction>(serde_json::Value::Null)
+                .expect("deserialize null"),
+            MessageCompaction::Disabled
+        );
+        assert_eq!(
+            serde_json::from_value::<MessageCompaction>(serde_json::json!({
+                "compact_every_n_steps": 3,
+                "trigger_char_count": 1200,
+                "keep_last_items": 2,
+                "include_read_state": true
+            }))
+            .expect("deserialize settings"),
+            MessageCompaction::Settings(settings)
+        );
+
+        let token_threshold =
+            serde_json::from_value::<MessageCompactionSettings>(serde_json::json!({
+                "trigger_token_count": 250,
+                "chars_per_token": 3.5
+            }))
+            .expect("deserialize token threshold");
+        assert_eq!(token_threshold.trigger_token_count, Some(250));
+        assert_eq!(token_threshold.trigger_char_count, Some(875));
+
+        let both_thresholds =
+            serde_json::from_value::<MessageCompactionSettings>(serde_json::json!({
+                "trigger_char_count": 100,
+                "trigger_token_count": 25
+            }));
+        assert!(both_thresholds.is_err());
     }
 
     #[test]
@@ -6706,6 +7042,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.final_result(), Some("finished"));
@@ -6732,6 +7069,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.final_result(), Some("could not finish"));
@@ -6769,6 +7107,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.judgement(), Some(&judgement));
@@ -6817,6 +7156,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.judgement(), None);
@@ -6841,6 +7181,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.final_result(), Some("latest non-terminal result"));
@@ -6942,6 +7283,7 @@ mod tests {
                     }),
                 },
             ],
+            ..AgentHistory::default()
         };
 
         assert_eq!(history.number_of_steps(), 2);
@@ -7047,6 +7389,7 @@ mod tests {
                 state,
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let action_history = history.action_history();
@@ -7258,6 +7601,7 @@ mod tests {
                     ],
                 ),
             ],
+            ..AgentHistory::default()
         };
         let current_dom = SerializedDomState::from_elements(vec![
             replay_dom_element(
@@ -7318,6 +7662,7 @@ mod tests {
                     clear: true,
                 })],
             )],
+            ..AgentHistory::default()
         };
         let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
             1,
@@ -7352,6 +7697,7 @@ mod tests {
                     coordinate_y: None,
                 })],
             )],
+            ..AgentHistory::default()
         };
         let mut first = replay_dom_element(2, "button", BTreeMap::new());
         first.name = Some("Duplicate".to_owned());
@@ -7385,6 +7731,7 @@ mod tests {
                     coordinate_y: None,
                 })],
             )],
+            ..AgentHistory::default()
         };
         let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
             9,
@@ -7432,6 +7779,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
 
         assert_eq!(
@@ -7477,6 +7825,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         assert!(history.is_judged());
@@ -8434,6 +8783,7 @@ mod tests {
                     coordinate_y: None,
                 })],
             )],
+            ..AgentHistory::default()
         };
         let mut current_state = blank_state();
         current_state.url = "https://example.com/current".to_owned();
@@ -8508,6 +8858,7 @@ mod tests {
                     })],
                 ),
             ],
+            ..AgentHistory::default()
         };
         let mut initial_state = blank_state();
         initial_state.url = "https://example.com/start".to_owned();
@@ -8594,6 +8945,7 @@ mod tests {
                     coordinate_y: None,
                 })],
             )],
+            ..AgentHistory::default()
         };
         let mut current_state = blank_state();
         current_state.dom_state = SerializedDomState::from_elements(vec![
@@ -11931,6 +12283,7 @@ mod tests {
                     },
                 )]),
             ],
+            ..AgentHistory::default()
         };
 
         assert!(repeated_action_loop(&history, 2));
@@ -11947,6 +12300,7 @@ mod tests {
                     browser_use_tools::WaitAction { seconds: 3 },
                 )]),
             ],
+            ..AgentHistory::default()
         };
 
         assert!(!repeated_action_loop(&history, 2));
@@ -12012,6 +12366,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let request = build_step_request("keep going", &state, &history, &AgentSettings::default())
@@ -12151,6 +12506,7 @@ mod tests {
                     metadata: None,
                 })
                 .collect(),
+            ..AgentHistory::default()
         };
 
         let request = build_step_request("unstick", &state, &history, &AgentSettings::default())
@@ -12183,6 +12539,7 @@ mod tests {
                     metadata: None,
                 })
                 .collect(),
+            ..AgentHistory::default()
         };
 
         let request = build_step_request("recover", &state, &history, &AgentSettings::default())
@@ -12511,6 +12868,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
         let settings = AgentSettings {
             sensitive_data: BTreeMap::from([
@@ -12614,6 +12972,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
         let settings = AgentSettings {
             use_vision: VisionMode::Never,
@@ -12792,6 +13151,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -12822,6 +13182,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -12894,6 +13255,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -12919,6 +13281,7 @@ mod tests {
                     metadata: None,
                 })
                 .collect(),
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -12926,6 +13289,30 @@ mod tests {
         assert!(rendered.contains("Result\nfirst"));
         assert!(rendered.contains("Result\nsixth"));
         assert!(!rendered.contains("previous steps omitted"));
+    }
+
+    #[test]
+    fn previous_results_prefix_compacted_memory_like_upstream() {
+        let history = AgentHistory {
+            compacted_memory: Some(
+                "Earlier summary; checkout was started but not confirmed.".to_owned(),
+            ),
+            compaction_count: 1,
+            last_compaction_step: Some(25),
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult::extracted("Latest verified step")],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        let rendered = render_previous_results(&history, Some(1));
+
+        assert!(rendered.starts_with("<compacted_memory>"));
+        assert!(rendered.contains("Treat as unverified context"));
+        assert!(rendered.contains("Earlier summary"));
+        assert!(rendered.contains("</compacted_memory>\n<step>\nResult\nLatest verified step"));
     }
 
     #[test]
@@ -12948,6 +13335,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -12970,6 +13358,7 @@ mod tests {
                     metadata: None,
                 })
                 .collect(),
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, Some(2));
@@ -12990,6 +13379,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
@@ -13009,6 +13399,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, None);
