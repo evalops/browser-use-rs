@@ -167,8 +167,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   current-target reattach after reconnect, direct navigation timeouts, and
   watchdog-style stuck HTTP(S) request timeouts. `subscribe_lifecycle_events`
   exposes those diagnostics as a stream without adding them to normal agent
-  replies. #31 tracks the remaining profile-wide storage discovery outside the
-  attached frame tree and richer upstream-style event-bus adapters.
+  replies. Profile-wide local/session storage discovery outside the current
+  page plus attached frame tree remains outside the safe CDP boundary documented
+  in `docs/CONFORMANCE.md`; #32 tracks richer upstream-style event-bus adapters
+  on top of the typed subscription stream.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

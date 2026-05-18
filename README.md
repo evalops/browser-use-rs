@@ -44,8 +44,8 @@ includes:
   and browser-level download lifecycle events, and `storage_state_path` to
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
-  the attached frame tree is tracked in
-  [#31](https://github.com/evalops/browser-use-rs/issues/31).
+  the attached frame tree is outside the safe CDP boundary documented in
+  [docs/CONFORMANCE.md](docs/CONFORMANCE.md).
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and

@@ -65,10 +65,9 @@ reattached automatically on the next session access when Chrome still exposes
 it.
 
 The bounded history and `subscribe_lifecycle_events` stream are both kept out of
-normal agent replies unless an integration explicitly reads them. Remaining
-lifecycle gaps are tracked in #31: profile-wide storage discovery outside the
-attached frame tree and richer upstream-style event-bus adapters are still
-lighter than upstream.
+normal agent replies unless an integration explicitly reads them. #32 tracks the
+next adapter layer that maps these diagnostics into richer upstream-style event
+concepts for CLI, MCP, daemon, and other subscriber surfaces.
 
 ## Profile-Wide Storage Boundary
 

@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
+- [#32 Add upstream-style lifecycle adapter taxonomy](https://github.com/evalops/browser-use-rs/issues/32)
 
 ## Completed Tracks
 
@@ -34,6 +34,7 @@ small pushed checkpoints as each surface becomes real.
 - [#28 Expose remaining browser lifecycle event hooks](https://github.com/evalops/browser-use-rs/issues/28)
 - [#29 Add reconnect recovery and deeper lifecycle watchdog automation](https://github.com/evalops/browser-use-rs/issues/29)
 - [#30 Add active CDP reconnect manager and multi-origin storage discovery](https://github.com/evalops/browser-use-rs/issues/30)
+- [#31 Add profile-wide storage inventory and full lifecycle event bus parity](https://github.com/evalops/browser-use-rs/issues/31)
 
 ## Current Checkpoint
 
@@ -198,7 +199,7 @@ Implemented:
 
 Next:
 
-1. Continue [#31](https://github.com/evalops/browser-use-rs/issues/31) by
-   investigating profile-wide storage discovery outside the attached frame tree
-   and richer upstream-style event-bus adapters.
+1. Continue [#32](https://github.com/evalops/browser-use-rs/issues/32) by
+   mapping the typed lifecycle subscription stream into upstream-style adapter
+   concepts for CLI/MCP/daemon consumers.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.
