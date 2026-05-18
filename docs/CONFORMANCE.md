@@ -64,8 +64,10 @@ commands fail locally with a clear reattach error, and the current target is
 reattached automatically on the next session access when Chrome still exposes
 it.
 
-Remaining lifecycle gaps are tracked in #31: profile-wide storage discovery
-outside the attached frame tree and a full general-purpose event bus are still
+The bounded history and `subscribe_lifecycle_events` stream are both kept out of
+normal agent replies unless an integration explicitly reads them. Remaining
+lifecycle gaps are tracked in #31: profile-wide storage discovery outside the
+attached frame tree and richer upstream-style event-bus adapters are still
 lighter than upstream.
 
 ## Profile-Wide Storage Boundary

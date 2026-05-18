@@ -96,7 +96,8 @@ Implemented:
   target sessions are invalidated after reconnect so stale session-scoped
   commands fail locally with a clear reattach error. The current target is
   reattached automatically on the next session access when Chrome still exposes
-  it.
+  it. `subscribe_lifecycle_events` exposes the lifecycle stream without adding
+  it to normal agent replies.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -198,6 +199,6 @@ Implemented:
 Next:
 
 1. Continue [#31](https://github.com/evalops/browser-use-rs/issues/31) by
-   wiring profile-wide storage discovery outside the attached frame tree into
-   live CDP/session behavior.
+   investigating profile-wide storage discovery outside the attached frame tree
+   and richer upstream-style event-bus adapters.
 2. Expand agent planning depth and replay coverage for longer multi-step tasks.

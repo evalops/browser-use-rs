@@ -27,7 +27,8 @@ includes:
   for browser connect/close, target create/switch/close, navigation
   start/complete/failure/timeout, target crash, URL-policy reset/popup
   diagnostics, reconnect, JavaScript dialog, download, and storage-state
-  diagnostics without adding that full event stream to normal agent replies.
+  diagnostics plus a `subscribe_lifecycle_events` stream without adding that
+  full event stream to normal agent replies.
   CDP websocket closure is recorded as a browser-stopped lifecycle diagnostic,
   and unexpected websocket drops trigger bounded actor-level reconnect attempts
   with reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP

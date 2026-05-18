@@ -2487,6 +2487,7 @@ pub struct CdpBrowserSession {
     pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
     security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
     lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
     url_policy: UrlAccessPolicy,
     storage_state_path: Option<PathBuf>,
     navigation_timeout_ms: u64,
@@ -2504,16 +2505,19 @@ impl CdpBrowserSession {
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
-            push_lifecycle_event(
+            push_lifecycle_event_and_publish(
                 &mut events,
+                &lifecycle_event_tx,
                 BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
         }
         let lifecycle_watchdog = BrowserLifecycleWatchdog::start(
             connection.clone(),
             lifecycle_events.clone(),
+            lifecycle_event_tx.clone(),
             default_network_request_timeout_ms(),
         );
 
@@ -2524,6 +2528,7 @@ impl CdpBrowserSession {
             pending_url_policy_error,
             security_events,
             lifecycle_events,
+            lifecycle_event_tx,
             url_policy: UrlAccessPolicy::default(),
             storage_state_path: None,
             navigation_timeout_ms: default_navigation_timeout_ms(),
@@ -2560,21 +2565,24 @@ impl CdpBrowserSession {
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
-            push_lifecycle_event(
+            push_lifecycle_event_and_publish(
                 &mut events,
+                &lifecycle_event_tx,
                 BrowserLifecycleEvent::browser_connected(
                     launched_browser.endpoint().http_url.clone(),
                 ),
             );
             if let Some(event) = storage_state_loaded_event {
-                push_lifecycle_event(&mut events, event);
+                push_lifecycle_event_and_publish(&mut events, &lifecycle_event_tx, event);
             }
         }
         let lifecycle_watchdog = BrowserLifecycleWatchdog::start(
             connection.clone(),
             lifecycle_events.clone(),
+            lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
         );
         let security_watchdog = BrowserSecurityWatchdog::start(
@@ -2583,7 +2591,10 @@ impl CdpBrowserSession {
             last_dom_state.clone(),
             pending_url_policy_error.clone(),
             security_events.clone(),
-            lifecycle_events.clone(),
+            LifecycleEventSink {
+                events: lifecycle_events.clone(),
+                event_tx: lifecycle_event_tx.clone(),
+            },
             url_policy.clone(),
         )
         .await?;
@@ -2595,6 +2606,7 @@ impl CdpBrowserSession {
             pending_url_policy_error,
             security_events,
             lifecycle_events,
+            lifecycle_event_tx,
             url_policy,
             storage_state_path: profile.storage_state_path.clone(),
             navigation_timeout_ms: profile.navigation_timeout_ms,
@@ -2723,11 +2735,15 @@ impl CdpBrowserSession {
 
     async fn record_lifecycle_event(&self, event: BrowserLifecycleEvent) {
         let mut events = self.lifecycle_events.lock().await;
-        push_lifecycle_event(&mut events, event);
+        push_lifecycle_event_and_publish(&mut events, &self.lifecycle_event_tx, event);
     }
 
     pub async fn lifecycle_events(&self) -> Vec<BrowserLifecycleEvent> {
         self.lifecycle_events.lock().await.iter().cloned().collect()
+    }
+
+    pub fn subscribe_lifecycle_events(&self) -> broadcast::Receiver<BrowserLifecycleEvent> {
+        self.lifecycle_event_tx.subscribe()
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -3237,6 +3253,7 @@ impl BrowserLifecycleWatchdog {
     fn start(
         connection: Arc<CdpConnection>,
         lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+        lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
         network_request_timeout_ms: u64,
     ) -> Self {
         let mut events = connection.subscribe_events();
@@ -3254,6 +3271,7 @@ impl BrowserLifecycleWatchdog {
                                 handle_lifecycle_cdp_event(
                                     &connection,
                                     &lifecycle_events,
+                                    &lifecycle_event_tx,
                                     &mut active_network_requests,
                                     event,
                                 )
@@ -3270,7 +3288,7 @@ impl BrowserLifecycleWatchdog {
                             Instant::now(),
                             timeout,
                         );
-                        record_lifecycle_events(&lifecycle_events, events).await;
+                        record_lifecycle_events(&lifecycle_events, &lifecycle_event_tx, events).await;
                     }
                 }
             }
@@ -3298,6 +3316,7 @@ struct ActiveNetworkRequest {
 async fn handle_lifecycle_cdp_event(
     connection: &CdpConnection,
     lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     event: CdpEvent,
 ) {
@@ -3311,43 +3330,50 @@ async fn handle_lifecycle_cdp_event(
         "browser-use-rs.websocket-closed" => {
             record_lifecycle_event_in_buffer(
                 lifecycle_events,
+                lifecycle_event_tx,
                 lifecycle_event_for_websocket_closed(&event),
             )
             .await;
         }
         "browser-use-rs.websocket-reconnecting" => {
             if let Some(event) = lifecycle_event_for_websocket_reconnecting(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
             }
         }
         "browser-use-rs.websocket-reconnected" => {
             if let Some(event) = lifecycle_event_for_websocket_reconnected(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
             }
         }
         "browser-use-rs.websocket-reconnect-failed" => {
             record_lifecycle_event_in_buffer(
                 lifecycle_events,
+                lifecycle_event_tx,
                 lifecycle_event_for_websocket_reconnect_failed(&event),
             )
             .await;
         }
         "Target.targetCrashed" | "Inspector.targetCrashed" => {
-            record_lifecycle_events(lifecycle_events, lifecycle_events_for_target_crash(&event))
-                .await;
+            record_lifecycle_events(
+                lifecycle_events,
+                lifecycle_event_tx,
+                lifecycle_events_for_target_crash(&event),
+            )
+            .await;
         }
         "Page.javascriptDialogOpening" => {
             let event = lifecycle_event_for_javascript_dialog(connection, &event).await;
-            record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+            record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
         }
         "Browser.downloadWillBegin" => {
             if let Some(event) = lifecycle_event_for_download_start(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
             }
         }
         "Browser.downloadProgress" => {
             record_lifecycle_events(
                 lifecycle_events,
+                lifecycle_event_tx,
                 lifecycle_events_for_download_progress(&event),
             )
             .await;
@@ -3552,6 +3578,7 @@ fn lifecycle_event_for_websocket_reconnect_failed(event: &CdpEvent) -> BrowserLi
 
 async fn record_lifecycle_events(
     lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
     events: Vec<BrowserLifecycleEvent>,
 ) {
     if events.is_empty() {
@@ -3560,16 +3587,17 @@ async fn record_lifecycle_events(
 
     let mut queue = lifecycle_events.lock().await;
     for event in events {
-        push_lifecycle_event(&mut queue, event);
+        push_lifecycle_event_and_publish(&mut queue, lifecycle_event_tx, event);
     }
 }
 
 async fn record_lifecycle_event_in_buffer(
     lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
     event: BrowserLifecycleEvent,
 ) {
     let mut queue = lifecycle_events.lock().await;
-    push_lifecycle_event(&mut queue, event);
+    push_lifecycle_event_and_publish(&mut queue, lifecycle_event_tx, event);
 }
 
 fn lifecycle_events_for_target_crash(event: &CdpEvent) -> Vec<BrowserLifecycleEvent> {
@@ -3766,6 +3794,19 @@ struct BrowserSecurityWatchdog {
     handle: tokio::task::JoinHandle<()>,
 }
 
+#[derive(Clone)]
+struct LifecycleEventSink {
+    events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    event_tx: broadcast::Sender<BrowserLifecycleEvent>,
+}
+
+impl LifecycleEventSink {
+    async fn push(&self, event: BrowserLifecycleEvent) {
+        let mut events = self.events.lock().await;
+        push_lifecycle_event_and_publish(&mut events, &self.event_tx, event);
+    }
+}
+
 impl BrowserSecurityWatchdog {
     async fn start(
         connection: Arc<CdpConnection>,
@@ -3773,7 +3814,7 @@ impl BrowserSecurityWatchdog {
         last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
         pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
         security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
-        lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+        lifecycle_event_sink: LifecycleEventSink,
         url_policy: UrlAccessPolicy,
     ) -> Result<Option<Self>, BrowserError> {
         if url_policy.is_unrestricted() {
@@ -3802,7 +3843,7 @@ impl BrowserSecurityWatchdog {
                     &last_dom_state,
                     &pending_url_policy_error,
                     &security_events,
-                    &lifecycle_events,
+                    &lifecycle_event_sink,
                     action,
                 )
                 .await;
@@ -4019,7 +4060,7 @@ async fn apply_url_policy_watchdog_action(
     last_dom_state: &Arc<Mutex<Option<SerializedDomState>>>,
     pending_url_policy_error: &Arc<Mutex<Option<BrowserError>>>,
     security_events: &Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
-    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
+    lifecycle_event_sink: &LifecycleEventSink,
     action: UrlPolicyWatchdogAction,
 ) {
     let event = BrowserSecurityEvent::from_watchdog_action(&action);
@@ -4065,8 +4106,7 @@ async fn apply_url_policy_watchdog_action(
         let mut events = security_events.lock().await;
         push_security_event(&mut events, failure_event);
         drop(events);
-        let mut events = lifecycle_events.lock().await;
-        push_lifecycle_event(&mut events, lifecycle_event);
+        lifecycle_event_sink.push(lifecycle_event).await;
         return;
     }
 
@@ -4076,8 +4116,7 @@ async fn apply_url_policy_watchdog_action(
         let mut events = security_events.lock().await;
         push_security_event(&mut events, event);
         drop(events);
-        let mut events = lifecycle_events.lock().await;
-        push_lifecycle_event(&mut events, lifecycle_event);
+        lifecycle_event_sink.push(lifecycle_event).await;
     }
     let mut pending = pending_url_policy_error.lock().await;
     if pending.is_none() {
@@ -4100,6 +4139,15 @@ fn push_lifecycle_event(
         events.pop_front();
     }
     events.push_back(event);
+}
+
+fn push_lifecycle_event_and_publish(
+    events: &mut VecDeque<BrowserLifecycleEvent>,
+    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
+    event: BrowserLifecycleEvent,
+) {
+    push_lifecycle_event(events, event.clone());
+    let _ = lifecycle_event_tx.send(event);
 }
 
 fn security_event_state_fields(
@@ -7519,6 +7567,22 @@ mod tests {
         assert_eq!(
             events.back().and_then(|event| event.target_id.as_deref()),
             Some("target-33")
+        );
+    }
+
+    #[test]
+    fn lifecycle_event_bus_publishes_without_expanding_history() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let mut events = VecDeque::new();
+        let event = BrowserLifecycleEvent::navigation_started("target-1", "https://example.test");
+
+        push_lifecycle_event_and_publish(&mut events, &event_tx, event.clone());
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event);
+        assert_eq!(
+            event_rx.try_recv().expect("published lifecycle event"),
+            event
         );
     }
 
