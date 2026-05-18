@@ -885,6 +885,9 @@ fn element_function_js(body: &str) -> String {
     format!(
         r#"function() {{
   const el = this;
+  if (!el.isConnected) {{
+    throw new Error('cached element is detached from DOM');
+  }}
   el.scrollIntoView({{ block: 'center', inline: 'center' }});
   {body}
 }}"#
@@ -3131,7 +3134,7 @@ impl CdpBrowserSession {
                 Some(&page.session_id),
             )
             .await?;
-        runtime_evaluate_value(result)
+        runtime_command_value(result, "Runtime.callFunctionOn")
     }
 
     async fn page_location(&self) -> Result<(String, String), BrowserError> {
@@ -4994,10 +4997,12 @@ fn should_fallback_to_index_traversal(error: &BrowserError) -> bool {
     match error {
         BrowserError::MissingResponseData(message) => message.contains("cached element node id"),
         BrowserError::CommandFailed { method, message } => {
-            method == "DOM.resolveNode"
+            (method == "DOM.resolveNode"
                 && (message.contains("No node")
                     || message.contains("Could not find")
-                    || message.contains("Invalid remote object id"))
+                    || message.contains("Invalid remote object id")))
+                || (method == "Runtime.callFunctionOn"
+                    && message.contains("cached element is detached from DOM"))
         }
         _ => false,
     }
@@ -5361,15 +5366,14 @@ fn runtime_evaluate_params(expression: &str, include_command_line_api: bool) -> 
 }
 
 fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
+    runtime_command_value(result, "Runtime.evaluate")
+}
+
+fn runtime_command_value(result: Value, method: &str) -> Result<Value, BrowserError> {
     if let Some(exception) = result.get("exceptionDetails") {
-        let message = exception
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("Runtime.evaluate exception")
-            .to_owned();
         return Err(BrowserError::CommandFailed {
-            method: "Runtime.evaluate".to_owned(),
-            message,
+            method: method.to_owned(),
+            message: runtime_exception_message(exception, "runtime command exception"),
         });
     }
 
@@ -5377,18 +5381,30 @@ fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
         .get("result")
         .and_then(|result| result.get("value"))
         .cloned()
-        .ok_or_else(|| BrowserError::MissingResponseData("Runtime.evaluate value".to_owned()))
+        .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} value")))
+}
+
+fn runtime_exception_message(exception: &Value, fallback: &str) -> String {
+    exception
+        .get("exception")
+        .and_then(|exception| exception.get("description"))
+        .and_then(Value::as_str)
+        .or_else(|| exception.get("text").and_then(Value::as_str))
+        .or_else(|| {
+            exception
+                .get("exception")
+                .and_then(|exception| exception.get("value"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or(fallback)
+        .to_owned()
 }
 
 fn render_runtime_evaluate_result(result: &Value) -> Result<String, BrowserError> {
     if let Some(exception) = result.get("exceptionDetails") {
         return Err(BrowserError::CommandFailed {
             method: "Runtime.evaluate".to_owned(),
-            message: exception
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or("Runtime.evaluate exception")
-                .to_owned(),
+            message: runtime_exception_message(exception, "Runtime.evaluate exception"),
         });
     }
 
@@ -9638,6 +9654,85 @@ mod tests {
         assert_eq!(values["clicked"].as_str(), Some("replacement"));
         assert_eq!(values["input"].as_str(), Some("EvalOps"));
 
+        child_server.abort();
+        parent_server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_detached_cached_node_falls_back_inside_cross_origin_iframe_target() {
+        let child_html = r#"<html><body><button id='child-button' onclick="document.body.dataset.clicked='old'">Cross stale</button><script>
+function replaceChildButton() {
+  const next = document.createElement('button');
+  next.id = 'child-button';
+  next.textContent = 'Cross stale';
+  next.onclick = () => { document.body.dataset.clicked = 'replacement'; };
+  document.getElementById('child-button').replaceWith(next);
+}
+</script></body></html>"#;
+        let (child_addr, child_server) = spawn_static_html_server(child_html.to_owned()).await;
+        let child_url = format!("http://127.0.0.1:{}/child", child_addr.port());
+        let parent_html = format!(
+            "<html><head><title>cross iframe detached fallback</title></head><body><iframe src='{child_url}' style='width:420px;height:180px;border:0'></iframe></body></html>"
+        );
+        let (parent_addr, parent_server) = spawn_static_html_server(parent_html).await;
+        let parent_url = format!("http://localhost:{}/parent", parent_addr.port());
+        let profile = BrowserProfile {
+            args: vec!["--site-per-process".to_owned()],
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(&parent_url, false)
+            .await
+            .expect("navigate cross-origin parent");
+        let mut initial_state = None;
+        for _ in 0..20 {
+            let state = session.state(false).await.expect("cross-origin state");
+            if state.dom_state.llm_representation().contains("Cross stale") {
+                initial_state = Some(state);
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        let initial_state = initial_state.expect("cross-origin iframe element state");
+        let child_button = initial_state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| element.name.as_deref() == Some("Cross stale"))
+            .expect("child button");
+        let page = session.current_page().await;
+        let frame_infos = session
+            .frame_element_infos(&page)
+            .await
+            .expect("frame element infos");
+        let child_page = session
+            .iframe_target_pages(&page, &frame_infos)
+            .await
+            .expect("iframe target pages")
+            .into_iter()
+            .find(|frame| frame.page.target_id == child_button.target_id)
+            .expect("child target page");
+
+        session
+            .evaluate_json_for_page(&child_page.page, "replaceChildButton(); true", false)
+            .await
+            .expect("replace cached child button");
+        session
+            .click(child_button.index)
+            .await
+            .expect("fallback child click");
+        let clicked = session
+            .evaluate_json_for_page(&child_page.page, "document.body.dataset.clicked", false)
+            .await
+            .expect("child clicked flag");
+
+        assert_eq!(clicked.as_str(), Some("replacement"));
         child_server.abort();
         parent_server.abort();
     }

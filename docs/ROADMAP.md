@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next parity track will be selected from fresh upstream drift after this
-  checkpoint.
+- [#35 Expand accessibility snapshot parity](https://github.com/evalops/browser-use-rs/issues/35)
 
 ## Completed Tracks
 
@@ -209,5 +208,6 @@ Implemented:
 
 Next:
 
-1. Select the next highest-value upstream drift gap and open a tracked issue
-   with fixture-backed acceptance criteria.
+1. Continue [#35](https://github.com/evalops/browser-use-rs/issues/35) by
+   expanding accessibility snapshot parity without bloating the compact prompt
+   representation.

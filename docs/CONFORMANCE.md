@@ -74,6 +74,21 @@ changed, navigation started/complete, browser errors, storage state, downloads,
 dialogs, reconnects, and browser diagnostics; its JSON shape is locked by a
 conformance fixture.
 
+## OOPIF Stale-Node Fallback Boundary
+
+Cached observed-node actions first resolve the original backend/frontend node
+inside its recorded CDP target session. If Chrome reports that cached node as
+stale or detached, click, input, scroll, dropdown, and upload fallback
+traversal runs in the cached element's target session rather than the current
+main-frame session. Merged DOM indexes are translated back to the target-local
+interactive index before running fallback JavaScript, so Chrome OOPIF iframe
+actions do not drift onto main-frame elements after a child-frame node is
+replaced.
+
+The fallback remains bounded to attached page and iframe target sessions that
+Chrome exposes through CDP. It does not use browser profile internals or unsafe
+cross-origin DOM reads outside those target sessions.
+
 ## Profile-Wide Storage Boundary
 
 The supported storage-state boundary is intentionally the current page plus
