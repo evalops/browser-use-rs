@@ -218,7 +218,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   covering all tarballs, and a generated Homebrew formula artifact pinned to
   the Linux and macOS tarball checksums. When `HOMEBREW_TAP_TOKEN` is
   configured, tagged releases also publish `Formula/browser-use-rs.rb` to the
-  EvalOps Homebrew tap.
+  EvalOps Homebrew tap. The `Release` workflow can be manually dispatched to
+  cut `patch`, `minor`, or `major` Cargo workspace versions before publishing
+  those tagged artifacts.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
