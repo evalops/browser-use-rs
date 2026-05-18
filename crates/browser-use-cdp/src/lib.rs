@@ -1132,6 +1132,8 @@ pub struct BrowserProfile {
     pub viewport: BrowserViewport,
     #[serde(default = "default_browser_start_timeout_ms")]
     pub browser_start_timeout_ms: u64,
+    #[serde(default = "default_navigation_timeout_ms")]
+    pub navigation_timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxySettings>,
 }
@@ -1152,6 +1154,7 @@ impl Default for BrowserProfile {
             block_ip_addresses: false,
             viewport: BrowserViewport::default(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
+            navigation_timeout_ms: default_navigation_timeout_ms(),
             proxy: None,
         }
     }
@@ -1163,6 +1166,10 @@ fn default_headless() -> bool {
 
 fn default_browser_start_timeout_ms() -> u64 {
     10_000
+}
+
+fn default_navigation_timeout_ms() -> u64 {
+    20_000
 }
 
 impl BrowserProfile {
@@ -2251,6 +2258,7 @@ pub struct CdpBrowserSession {
     lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     url_policy: UrlAccessPolicy,
     storage_state_path: Option<PathBuf>,
+    navigation_timeout_ms: u64,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
@@ -2284,6 +2292,7 @@ impl CdpBrowserSession {
             lifecycle_events,
             url_policy: UrlAccessPolicy::default(),
             storage_state_path: None,
+            navigation_timeout_ms: default_navigation_timeout_ms(),
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: None,
             _launched_browser: None,
@@ -2351,6 +2360,7 @@ impl CdpBrowserSession {
             lifecycle_events,
             url_policy,
             storage_state_path: profile.storage_state_path.clone(),
+            navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
@@ -5096,16 +5106,36 @@ impl BrowserSession for CdpBrowserSession {
             url.to_owned(),
         ))
         .await;
-        let navigate_result = self
-            .connection
-            .command(
-                "Page.navigate",
-                json!({
-                    "url": url,
-                }),
-                Some(&page.session_id),
-            )
-            .await;
+        let navigate = self.connection.command(
+            "Page.navigate",
+            json!({
+                "url": url,
+            }),
+            Some(&page.session_id),
+        );
+        let navigate_result = if self.navigation_timeout_ms == 0 {
+            navigate.await
+        } else {
+            match tokio::time::timeout(Duration::from_millis(self.navigation_timeout_ms), navigate)
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    let timeout_seconds =
+                        format!("{:.3}", self.navigation_timeout_ms as f64 / 1000.0);
+                    self.record_lifecycle_event(BrowserLifecycleEvent::network_timeout(
+                        page.target_id.clone(),
+                        url.to_owned(),
+                        timeout_seconds,
+                    ))
+                    .await;
+                    return Err(BrowserError::NavigationFailed(format!(
+                        "Page.navigate timed out after {}ms for {url}",
+                        self.navigation_timeout_ms
+                    )));
+                }
+            }
+        };
         if let Err(error) = navigate_result {
             self.record_lifecycle_event(BrowserLifecycleEvent::navigation_failed(
                 page.target_id.clone(),
@@ -5878,11 +5908,13 @@ mod tests {
 
     #[test]
     fn default_profile_uses_headless_chrome_args() {
-        let plan = BrowserProfile::default().launch_plan();
+        let profile = BrowserProfile::default();
+        let plan = profile.launch_plan();
 
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert_eq!(profile.navigation_timeout_ms, 20_000);
     }
 
     #[test]

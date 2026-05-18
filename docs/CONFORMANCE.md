@@ -55,12 +55,13 @@ closed-popup messages. The public JSON shape is locked by normal and
 exceptional lifecycle fixtures. Live CDP wiring records target crash,
 JavaScript dialog, navigation failure, configured download events, and cookie
 plus current-origin storage-state save/load events. CDP websocket closure
-records a browser-stopped lifecycle diagnostic.
+records a browser-stopped lifecycle diagnostic, and direct `Page.navigate`
+timeouts record network-timeout lifecycle diagnostics.
 
 Remaining lifecycle gaps: live CDP/watchdog wiring for reconnect recovery beyond
-explicit websocket-closure diagnostics, network-timeout monitoring beyond direct
-navigation failures, multi-origin storage discovery, and a full general-purpose
-event bus are still lighter than upstream.
+explicit websocket-closure diagnostics, request-level timeout monitoring beyond
+direct navigation calls, multi-origin storage discovery, and a full
+general-purpose event bus are still lighter than upstream.
 
 ## Drift Policy
 
