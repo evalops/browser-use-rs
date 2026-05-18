@@ -96,9 +96,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   including DeepSeek JSON-object, Cerebras prompt-only, and OpenAI-wire strict
   tool-call schema payload/parser modes.
 - CLI one-shot commands plus `actions`, `agent` with typed settings flags
-  including available-file-path and sensitive-data placeholder context plus
-  system-message control, `mcp-tools`, `mcp-stdio`, and local persistent
-  `session` commands.
+  including available-file-path and sensitive-data placeholder context,
+  OpenAI-wire structured-output mode overrides, system-message control,
+  `mcp-tools`, `mcp-stdio`, and local persistent `session` commands.
 - MCP stdio tools for state, actions, and agent runs, including typed
   `AgentSettings`, in-process session reuse by `session_id`, and reconnection
   to persistent CLI session records.

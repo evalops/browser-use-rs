@@ -104,6 +104,8 @@ enum Command {
         model: Option<String>,
         #[arg(long)]
         base_url: Option<String>,
+        #[arg(long = "structured-output-mode", value_enum)]
+        structured_output_mode: Option<StructuredOutputMode>,
         #[arg(long = "allowed-domain")]
         allowed_domains: Vec<String>,
         #[arg(long = "prohibited-domain")]
@@ -181,6 +183,25 @@ enum LlmProvider {
 enum DaemonTransport {
     Tcp,
     Http,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum StructuredOutputMode {
+    JsonSchema,
+    JsonObject,
+    PromptOnly,
+    ToolCall,
+}
+
+impl StructuredOutputMode {
+    fn into_openai_mode(self) -> OpenAiStructuredOutputMode {
+        match self {
+            Self::JsonSchema => OpenAiStructuredOutputMode::JsonSchema,
+            Self::JsonObject => OpenAiStructuredOutputMode::JsonObject,
+            Self::PromptOnly => OpenAiStructuredOutputMode::PromptOnly,
+            Self::ToolCall => OpenAiStructuredOutputMode::ToolCall,
+        }
+    }
 }
 
 impl DaemonTransport {
@@ -354,6 +375,7 @@ async fn main() -> anyhow::Result<()> {
             api_key,
             model,
             base_url,
+            structured_output_mode,
             allowed_domains,
             prohibited_domains,
             block_ip_addresses,
@@ -380,7 +402,13 @@ async fn main() -> anyhow::Result<()> {
             override_system_message,
             extend_system_message,
         }) => {
-            let llm = configured_chat_model(provider, api_key, model, base_url)?;
+            let llm = configured_chat_model(
+                provider,
+                api_key,
+                model,
+                base_url,
+                structured_output_mode.map(StructuredOutputMode::into_openai_mode),
+            )?;
             let session = launch_and_navigate_with_profile(
                 &url,
                 BrowserProfile {
@@ -1360,7 +1388,7 @@ async fn execute_mcp_tool(
         browser_use_mcp::AGENT_TOOL_NAME => {
             let input: browser_use_mcp::AgentToolInput = serde_json::from_value(arguments)?;
             let provider = LlmProvider::from_mcp(input.provider);
-            let llm = configured_chat_model(provider, None, input.model, input.base_url)?;
+            let llm = configured_chat_model(provider, None, input.model, input.base_url, None)?;
             let session = if let Some(session_id) = input.session_id {
                 runtime.session(&session_id, input.url).await?
             } else {
@@ -1428,6 +1456,7 @@ fn configured_chat_model(
     api_key: Option<String>,
     model: Option<String>,
     base_url: Option<String>,
+    structured_output_mode_override: Option<OpenAiStructuredOutputMode>,
 ) -> anyhow::Result<Box<dyn ChatModel>> {
     match provider {
         LlmProvider::OpenAiCompatible
@@ -1441,6 +1470,7 @@ fn configured_chat_model(
             api_key,
             model,
             base_url,
+            structured_output_mode_override,
         ),
         LlmProvider::Anthropic => {
             let api_key = api_key
@@ -1506,6 +1536,7 @@ fn configured_openai_wire_chat_model(
     api_key: Option<String>,
     model: Option<String>,
     base_url: Option<String>,
+    structured_output_mode_override: Option<OpenAiStructuredOutputMode>,
 ) -> anyhow::Result<Box<dyn ChatModel>> {
     let api_key = api_key
         .or_else(|| first_nonempty_env(config.api_key_env))
@@ -1532,7 +1563,9 @@ fn configured_openai_wire_chat_model(
         OpenAiCompatibleChatModel::new(api_key, model)
             .with_base_url(base_url)
             .with_provider_name(config.provider_name)
-            .with_structured_output_mode(config.structured_output_mode),
+            .with_structured_output_mode(
+                structured_output_mode_override.unwrap_or(config.structured_output_mode),
+            ),
     ))
 }
 
@@ -1807,8 +1840,9 @@ mod tests {
             (LlmProvider::Cerebras, "cerebras", "llama3.1-8b"),
             (LlmProvider::Mistral, "mistral", "mistral-medium-latest"),
         ] {
-            let llm = configured_chat_model(provider, Some("test-key".to_owned()), None, None)
-                .expect("provider should use default model");
+            let llm =
+                configured_chat_model(provider, Some("test-key".to_owned()), None, None, None)
+                    .expect("provider should use default model");
 
             assert_eq!(llm.provider(), expected_name);
             assert_eq!(llm.model(), expected_model);
@@ -1818,6 +1852,7 @@ mod tests {
             LlmProvider::OpenRouter,
             Some("test-key".to_owned()),
             Some("openai/gpt-4o-mini".to_owned()),
+            None,
             None,
         )
         .expect("openrouter with explicit model");
@@ -1832,6 +1867,29 @@ mod tests {
             openai_wire_provider_config(LlmProvider::Cerebras).structured_output_mode,
             OpenAiStructuredOutputMode::PromptOnly
         );
+    }
+
+    #[test]
+    fn parses_structured_output_mode_override() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "agent",
+            "https://example.com",
+            "test task",
+            "--provider",
+            "openrouter",
+            "--structured-output-mode",
+            "tool-call",
+        ])
+        .expect("structured output mode should parse");
+
+        match cli.command.expect("agent command") {
+            Command::Agent {
+                structured_output_mode,
+                ..
+            } => assert_eq!(structured_output_mode, Some(StructuredOutputMode::ToolCall)),
+            _ => panic!("expected agent command"),
+        }
     }
 
     #[test]

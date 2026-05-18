@@ -40,6 +40,7 @@ browser-use-rs agent <url> <task> --provider ollama \
 browser-use-rs agent <url> <task> \
   --provider deepseek|groq|cerebras|mistral|openrouter|vercel \
   [--api-key <key>] [--model <model>] [--base-url <openai-compatible-url>] \
+  [--structured-output-mode json-schema|json-object|prompt-only|tool-call] \
   [--max-steps 10]
 browser-use-rs session start <id> <url> [--screenshot]
 browser-use-rs session state <id> [--screenshot]
@@ -95,7 +96,8 @@ Mistral, OpenRouter, and Vercel AI Gateway, JSON-object mode with an embedded
 schema instruction for DeepSeek, and prompt-only schema guidance for Cerebras.
 The OpenAI-compatible adapter also supports a strict tool-call schema mode for
 provider-specific fallbacks that need function-call arguments instead of message
-content.
+content; pass `--structured-output-mode tool-call` to force it for an
+OpenAI-wire provider when the default mode does not fit the selected model.
 
 Agent runs accept repeated `--allowed-domain <pattern>` and
 `--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce
