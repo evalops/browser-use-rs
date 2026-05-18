@@ -394,7 +394,10 @@ pub fn rich_browser_state_summary() -> BrowserStateSummary {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use browser_use_cdp::{BrowserError, BrowserSession, FoundElement, Pdf, Screenshot};
+    use browser_use_cdp::{
+        BrowserError, BrowserLifecycleEvent, BrowserLifecycleEventKind, BrowserSession,
+        FoundElement, Pdf, Screenshot,
+    };
     use browser_use_core::{
         ActionExecutor, ActionResult, Agent, AgentRunError, AgentSettings, ChatCompletion,
         ChatModel, ChatRequest, ContentPart, FileSystemState, LlmError, ManagedFileSystem,
@@ -476,6 +479,54 @@ mod tests {
         assert_matches_fixture(
             actual,
             include_str!("../fixtures/rich_browser_state_summary.json"),
+        );
+    }
+
+    #[test]
+    fn browser_lifecycle_events_match_golden_fixture() {
+        let actual = serde_json::to_value(vec![
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::BrowserConnected,
+                target_id: None,
+                url: Some("http://127.0.0.1:9222".to_owned()),
+                reason: None,
+                error: None,
+                message: "Browser connected at http://127.0.0.1:9222".to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::TargetCreated,
+                target_id: Some("target-1".to_owned()),
+                url: Some("https://example.test/report".to_owned()),
+                reason: None,
+                error: None,
+                message: "Target target-1 created for https://example.test/report".to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::NavigationCompleted,
+                target_id: Some("target-1".to_owned()),
+                url: Some("https://example.test/report".to_owned()),
+                reason: None,
+                error: None,
+                message:
+                    "Navigation completed on target target-1 to https://example.test/report"
+                        .to_owned(),
+            },
+            BrowserLifecycleEvent {
+                kind: BrowserLifecycleEventKind::PopupCloseFailed,
+                target_id: None,
+                url: Some("https://blocked.test/popup".to_owned()),
+                reason: Some("in_prohibited_domains".to_owned()),
+                error: Some("No target with given id found".to_owned()),
+                message:
+                    "Failed to close popup https://blocked.test/popup (in_prohibited_domains): No target with given id found"
+                        .to_owned(),
+            },
+        ])
+        .expect("serialize lifecycle events");
+
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/browser_lifecycle_events.json"),
         );
     }
 
