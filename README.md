@@ -109,7 +109,10 @@ includes:
   extract results can spill into managed `extracted_content_N.md` files.
   Restored agents can continue prompt and tool execution from serialized
   `FileSystemState`, including preserved todo/report context and incrementing
-  extracted-content numbering.
+  extracted-content numbering. `AgentSettings.file_system_path` and the CLI
+  `--file-system-path` flag place the managed filesystem under a
+  caller-selected base directory while preserving the `browseruse_agent_data`
+  subdirectory contract.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, upstream-style `sample_images` prompt
   parts, screenshot action next-observation image prompts, action-result image

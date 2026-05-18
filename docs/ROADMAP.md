@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
+- Next upstream parity slice after #91 lands and CI is green.
 
 ## Completed Tracks
 
+- [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
 - [#90 Add upstream long-URL shortening and output restoration](https://github.com/evalops/browser-use-rs/issues/90)
 - [#89 Add upstream llm_screenshot_size resizing and coordinate scaling](https://github.com/evalops/browser-use-rs/issues/89)
 - [#88 Add upstream agent callback and stop-control hooks](https://github.com/evalops/browser-use-rs/issues/88)
@@ -129,7 +130,10 @@ Implemented:
   and large extract results can spill into managed `extracted_content_N.md`
   files. Restored agents can continue prompt and tool execution from serialized
   `FileSystemState`, including restored `read_file` behavior, todo/report
-  context, and extracted-content numbering that survives replay.
+  context, and extracted-content numbering that survives replay. Agents can use
+  upstream-style `file_system_path` to place the managed filesystem under a
+  caller-selected base directory while preserving the `browseruse_agent_data`
+  subdirectory contract.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
 - Browser profile launch planning, including upstream-style proxy-server and

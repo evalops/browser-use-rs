@@ -111,7 +111,10 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   and large extract results can spill into managed `extracted_content_N.md`
   files. Restored agents can continue from serialized `FileSystemState` with
   prompt-visible todo/file context, restored `read_file` behavior, and
-  extracted-content numbering that survives replay.
+  extracted-content numbering that survives replay. `AgentSettings.file_system_path`
+  and the CLI `--file-system-path` flag place the managed filesystem under a
+  caller-selected base directory while preserving the `browseruse_agent_data`
+  subdirectory contract.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
