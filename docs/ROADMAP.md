@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- No active tracked slice. The next compatibility gap should be opened as a
-  GitHub issue before implementation starts.
+- [#67 Add upstream-style auto vision mode and screenshot action gating](https://github.com/evalops/browser-use-rs/issues/67)
 
 ## Completed Tracks
 
