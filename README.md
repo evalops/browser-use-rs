@@ -131,6 +131,7 @@ includes:
   checkpoint restore continuity and follow-up task reuse, upstream-style
   max-action truncation,
   sync and async new-step/done callbacks, callback-driven stop checks,
+  external-status interruption callbacks that do not mark the agent stopped,
   reasoned programmatic stop errors, pause/resume control state with checkpoint
   preservation, continuous follow-up task updates via `add_new_task`,
   page-change guards, normalized

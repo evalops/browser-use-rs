@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#102 Add upstream external agent status interruption callback](https://github.com/evalops/browser-use-rs/issues/102)
+- Next upstream parity slice after #102 lands and CI is green.
 
 ## Completed Tracks
 
+- [#102 Add upstream external agent status interruption callback](https://github.com/evalops/browser-use-rs/issues/102)
 - [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
 - [#98 Add upstream add_new_task follow-up control](https://github.com/evalops/browser-use-rs/issues/98)
 - [#96 Add upstream pause/resume agent state](https://github.com/evalops/browser-use-rs/issues/96)
@@ -205,7 +206,8 @@ Implemented:
 - Single-step and bounded agent loops with schema-guided model output, history,
   upstream-style initial actions, `directly_open_url` task URL extraction and
   step-zero navigation, sync and async new-step/done callbacks,
-  callback-driven stop checks, explicit programmatic stop with reasoned stop
+  callback-driven stop checks, external-status interruption callbacks that do
+  not mark the agent stopped, explicit programmatic stop with reasoned stop
   errors, upstream-style pause/resume control state with checkpoint
   preservation, upstream-style continuous follow-up task updates via
   `add_new_task`, max-step, max-failure handling,

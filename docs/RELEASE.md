@@ -175,7 +175,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   filesystem state across a new model/session. Agents expose pause/resume
   control that returns an explicit paused error before model or browser work
   until resumed, and `add_new_task` appends upstream-style follow-up user
-  requests while clearing pause/stop control state.
+  requests while clearing pause/stop control state. Host runtimes can also
+  register external-status interruption callbacks that abort before model or
+  browser work without setting durable stopped state.
 - Schema-guided agent extraction passes the requested schema to the extraction
   LLM, returns upstream-style `<structured_result>` content, and records
   structured metadata with schema, partial status, and content statistics.
