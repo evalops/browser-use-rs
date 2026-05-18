@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#84 Add upstream step-budget warning prompt](https://github.com/evalops/browser-use-rs/issues/84)
+- None at the moment. The next parity slice should be selected from upstream
+  drift after #84 lands and CI is green.
 
 ## Completed Tracks
 
+- [#84 Add upstream step-budget warning prompt](https://github.com/evalops/browser-use-rs/issues/84)
 - [#83 Add upstream max_steps final done guard](https://github.com/evalops/browser-use-rs/issues/83)
 - [#82 Add upstream-style per-action timeout guard](https://github.com/evalops/browser-use-rs/issues/82)
 - [#81 Add Browser Use Cloud error context parity](https://github.com/evalops/browser-use-rs/issues/81)
