@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#66 Add display_files_in_done_text setting](https://github.com/evalops/browser-use-rs/issues/66)
+- No active tracked slice. The next compatibility gap should be opened as a
+  GitHub issue before implementation starts.
 
 ## Completed Tracks
 
+- [#66 Add display_files_in_done_text setting](https://github.com/evalops/browser-use-rs/issues/66)
 - [#65 Add upstream-style vision detail level controls](https://github.com/evalops/browser-use-rs/issues/65)
 - [#64 Add upstream-style include_recent_events prompt control](https://github.com/evalops/browser-use-rs/issues/64)
 - [#63 Reject excluded model actions before execution](https://github.com/evalops/browser-use-rs/issues/63)
