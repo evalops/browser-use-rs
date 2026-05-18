@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next parity track to be opened from the remaining gaps below.
+- [#13 Expand browser-profile watchdog diagnostics](https://github.com/evalops/browser-use-rs/issues/13)
 
 ## Completed Tracks
 
@@ -48,7 +48,7 @@ Implemented:
   resistance, optional IP-address blocking, post-navigation redirect reset to
   `about:blank`, navigation-capable action-boundary checks, newly observed
   disallowed tab closure, and event-driven target/frame navigation watchdog
-  enforcement while a session is active.
+  enforcement with bounded diagnostics while a session is active.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -146,5 +146,5 @@ Next:
 1. Expand agent planning depth, replay coverage, and deeper provider-specific
    structured-output fallbacks beyond the DeepSeek forced tool-call path for
    model families that need provider-routing hints.
-2. Expand browser-profile security parity with deeper watchdog diagnostics and
-   more provider-style lifecycle hooks.
+2. Expand browser-profile security parity with more provider-style lifecycle
+   hooks.

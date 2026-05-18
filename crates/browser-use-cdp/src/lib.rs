@@ -29,6 +29,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
 const URL_POLICY_SETTLE_MS: u64 = 200;
+const MAX_SECURITY_EVENTS: usize = 8;
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -1815,6 +1816,7 @@ pub struct CdpBrowserSession {
     page: Arc<Mutex<AttachedPage>>,
     last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
     pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
+    security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
     url_policy: UrlAccessPolicy,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
@@ -1827,12 +1829,14 @@ impl CdpBrowserSession {
         let page = Arc::new(Mutex::new(page));
         let last_dom_state = Arc::new(Mutex::new(None));
         let pending_url_policy_error = Arc::new(Mutex::new(None));
+        let security_events = Arc::new(Mutex::new(VecDeque::new()));
 
         Ok(Self {
             connection,
             page,
             last_dom_state,
             pending_url_policy_error,
+            security_events,
             url_policy: UrlAccessPolicy::default(),
             _security_watchdog: None,
             _launched_browser: None,
@@ -1847,11 +1851,13 @@ impl CdpBrowserSession {
         let page = Arc::new(Mutex::new(page));
         let last_dom_state = Arc::new(Mutex::new(None));
         let pending_url_policy_error = Arc::new(Mutex::new(None));
+        let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
             page.clone(),
             last_dom_state.clone(),
             pending_url_policy_error.clone(),
+            security_events.clone(),
             url_policy.clone(),
         )
         .await?;
@@ -1861,6 +1867,7 @@ impl CdpBrowserSession {
             page,
             last_dom_state,
             pending_url_policy_error,
+            security_events,
             url_policy,
             _security_watchdog: security_watchdog,
             _launched_browser: Some(launched_browser),
@@ -1895,6 +1902,11 @@ impl CdpBrowserSession {
             return Err(error);
         }
         Ok(())
+    }
+
+    async fn record_security_event(&self, event: BrowserSecurityEvent) {
+        let mut events = self.security_events.lock().await;
+        push_security_event(&mut events, event);
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -2341,6 +2353,11 @@ JSON.stringify((() => {{
                         Some(&current_page.session_id),
                     )
                     .await;
+                self.record_security_event(BrowserSecurityEvent::reset_current(
+                    tab.url.clone(),
+                    reason.clone(),
+                ))
+                .await;
             } else {
                 self.connection
                     .command(
@@ -2349,6 +2366,11 @@ JSON.stringify((() => {{
                         None,
                     )
                     .await?;
+                self.record_security_event(BrowserSecurityEvent::closed_popup(
+                    tab.url.clone(),
+                    reason.clone(),
+                ))
+                .await;
             }
             self.clear_cached_dom_state().await;
 
@@ -2378,6 +2400,7 @@ impl BrowserSecurityWatchdog {
         page: Arc<Mutex<AttachedPage>>,
         last_dom_state: Arc<Mutex<Option<SerializedDomState>>>,
         pending_url_policy_error: Arc<Mutex<Option<BrowserError>>>,
+        security_events: Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
         url_policy: UrlAccessPolicy,
     ) -> Result<Option<Self>, BrowserError> {
         if url_policy.is_unrestricted() {
@@ -2405,6 +2428,7 @@ impl BrowserSecurityWatchdog {
                     &connection,
                     &last_dom_state,
                     &pending_url_policy_error,
+                    &security_events,
                     action,
                 )
                 .await;
@@ -2433,6 +2457,42 @@ enum UrlPolicyWatchdogAction {
         url: String,
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserSecurityEvent {
+    message: String,
+    closed_popup_message: Option<String>,
+}
+
+impl BrowserSecurityEvent {
+    fn reset_current(url: String, reason: String) -> Self {
+        Self {
+            message: format!(
+                "Blocked navigation to {url} ({reason}); reset current tab to about:blank"
+            ),
+            closed_popup_message: None,
+        }
+    }
+
+    fn closed_popup(url: String, reason: String) -> Self {
+        let message = format!("Closed popup {url} ({reason})");
+        Self {
+            closed_popup_message: Some(message.clone()),
+            message,
+        }
+    }
+
+    fn from_watchdog_action(action: &UrlPolicyWatchdogAction) -> Self {
+        match action {
+            UrlPolicyWatchdogAction::ResetCurrent { url, reason, .. } => {
+                Self::reset_current(url.clone(), reason.clone())
+            }
+            UrlPolicyWatchdogAction::CloseTarget { url, reason, .. } => {
+                Self::closed_popup(url.clone(), reason.clone())
+            }
+        }
+    }
 }
 
 fn url_policy_watchdog_action_for_event(
@@ -2505,8 +2565,10 @@ async fn apply_url_policy_watchdog_action(
     connection: &CdpConnection,
     last_dom_state: &Arc<Mutex<Option<SerializedDomState>>>,
     pending_url_policy_error: &Arc<Mutex<Option<BrowserError>>>,
+    security_events: &Arc<Mutex<VecDeque<BrowserSecurityEvent>>>,
     action: UrlPolicyWatchdogAction,
 ) {
+    let event = BrowserSecurityEvent::from_watchdog_action(&action);
     let (url, reason, outcome) = match &action {
         UrlPolicyWatchdogAction::ResetCurrent {
             session_id,
@@ -2541,10 +2603,38 @@ async fn apply_url_policy_watchdog_action(
     }
 
     *last_dom_state.lock().await = None;
+    {
+        let mut events = security_events.lock().await;
+        push_security_event(&mut events, event);
+    }
     let mut pending = pending_url_policy_error.lock().await;
     if pending.is_none() {
         *pending = Some(BrowserError::NavigationBlocked { url, reason });
     }
+}
+
+fn push_security_event(events: &mut VecDeque<BrowserSecurityEvent>, event: BrowserSecurityEvent) {
+    while events.len() >= MAX_SECURITY_EVENTS {
+        events.pop_front();
+    }
+    events.push_back(event);
+}
+
+fn security_event_state_fields(
+    events: &VecDeque<BrowserSecurityEvent>,
+) -> (Option<String>, Vec<String>) {
+    let recent_events = (!events.is_empty()).then(|| {
+        events
+            .iter()
+            .map(|event| event.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    let closed_popup_messages = events
+        .iter()
+        .filter_map(|event| event.closed_popup_message.clone())
+        .collect();
+    (recent_events, closed_popup_messages)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3707,6 +3797,10 @@ impl BrowserSession for CdpBrowserSession {
         let pagination_buttons = detect_pagination_buttons(&dom_state);
         let current_page = self.current_page().await;
         let tabs = page_tabs(&self.connection).await?;
+        let (recent_events, closed_popup_messages) = {
+            let events = self.security_events.lock().await;
+            security_event_state_fields(&events)
+        };
         let screenshot = if include_screenshot {
             Some(self.screenshot().await?.base64_png)
         } else {
@@ -3734,10 +3828,10 @@ impl BrowserSession for CdpBrowserSession {
             pixels_below: page_info.pixels_below,
             browser_errors: vec![],
             is_pdf_viewer: false,
-            recent_events: None,
+            recent_events,
             pending_network_requests: vec![],
             pagination_buttons,
-            closed_popup_messages: vec![],
+            closed_popup_messages,
         })
     }
 
@@ -4837,6 +4931,59 @@ mod tests {
                 reason: "not_in_allowed_domains".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn browser_security_events_format_state_diagnostics() {
+        let mut events = VecDeque::new();
+        push_security_event(
+            &mut events,
+            BrowserSecurityEvent::closed_popup(
+                "https://evil.test/popup".to_owned(),
+                "in_prohibited_domains".to_owned(),
+            ),
+        );
+        push_security_event(
+            &mut events,
+            BrowserSecurityEvent::reset_current(
+                "https://blocked.test/redirect".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+            ),
+        );
+
+        let (recent_events, closed_popup_messages) = security_event_state_fields(&events);
+        let recent_events = recent_events.expect("recent security events");
+
+        assert!(recent_events.contains("Closed popup https://evil.test/popup"));
+        assert!(recent_events.contains("reset current tab to about:blank"));
+        assert_eq!(
+            closed_popup_messages,
+            vec!["Closed popup https://evil.test/popup (in_prohibited_domains)"]
+        );
+    }
+
+    #[test]
+    fn browser_security_events_are_bounded() {
+        let mut events = VecDeque::new();
+        for index in 0..(MAX_SECURITY_EVENTS + 2) {
+            push_security_event(
+                &mut events,
+                BrowserSecurityEvent::closed_popup(
+                    format!("https://blocked-{index}.test/popup"),
+                    "in_prohibited_domains".to_owned(),
+                ),
+            );
+        }
+
+        let (recent_events, closed_popup_messages) = security_event_state_fields(&events);
+        let recent_events = recent_events.expect("recent security events");
+
+        assert_eq!(events.len(), MAX_SECURITY_EVENTS);
+        assert_eq!(closed_popup_messages.len(), MAX_SECURITY_EVENTS);
+        assert!(!recent_events.contains("blocked-0.test"));
+        assert!(!recent_events.contains("blocked-1.test"));
+        assert!(recent_events.contains("blocked-2.test"));
+        assert!(recent_events.contains("blocked-9.test"));
     }
 
     #[test]
@@ -7513,6 +7660,25 @@ mod tests {
                         && reason == "ip_address_blocked"
             ),
             "unexpected blocked popup policy error: {error:?}"
+        );
+
+        let state = session
+            .state(false)
+            .await
+            .expect("state after watchdog policy error was reported");
+        assert!(
+            state
+                .closed_popup_messages
+                .iter()
+                .any(|message| message.contains("http://127.0.0.1:1/popup")),
+            "closed popup diagnostics missing from state: {state:?}"
+        );
+        assert!(
+            state
+                .recent_events
+                .as_deref()
+                .is_some_and(|events| events.contains("Closed popup")),
+            "recent security events missing from state: {state:?}"
         );
     }
 
