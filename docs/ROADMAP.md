@@ -55,7 +55,8 @@ Implemented:
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.
-- One-shot CLI agent command backed by explicit provider selection.
+- One-shot CLI agent command backed by explicit provider selection and typed
+  agent settings flags.
 - MCP tool contract schemas and stdio JSON-RPC tool execution for state,
   actions, and provider-selectable agent runs with typed agent settings.
 - Local TCP JSON-RPC daemon exposing the same MCP tools as stdio.

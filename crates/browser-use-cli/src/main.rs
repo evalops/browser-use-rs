@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
-use browser_use_core::BrowserActionExecutor;
+use browser_use_core::{AgentSettings, BrowserActionExecutor};
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
 };
@@ -28,6 +28,7 @@ struct Cli {
 }
 
 #[derive(Debug, clap::Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Print the frozen upstream browser-use commit target.
     VersionTarget,
@@ -96,6 +97,36 @@ enum Command {
         base_url: Option<String>,
         #[arg(long, default_value_t = 10)]
         max_steps: usize,
+        #[arg(long, default_value_t = false)]
+        no_vision: bool,
+        #[arg(long)]
+        max_failures: Option<u32>,
+        #[arg(long)]
+        max_actions_per_step: Option<usize>,
+        #[arg(long)]
+        llm_timeout_seconds: Option<u64>,
+        #[arg(long)]
+        step_timeout_seconds: Option<u64>,
+        #[arg(long, default_value_t = false)]
+        no_loop_detection: bool,
+        #[arg(long)]
+        loop_detection_window: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        no_thinking: bool,
+        #[arg(long, default_value_t = false)]
+        flash_mode: bool,
+        #[arg(long, default_value_t = false)]
+        no_planning: bool,
+        #[arg(long)]
+        planning_replan_on_stall: Option<usize>,
+        #[arg(long)]
+        planning_exploration_limit: Option<usize>,
+        #[arg(long)]
+        max_history_items: Option<usize>,
+        #[arg(long)]
+        max_clickable_elements_length: Option<usize>,
+        #[arg(long = "include-attribute")]
+        include_attributes: Vec<String>,
     },
 }
 
@@ -252,10 +283,42 @@ async fn main() -> anyhow::Result<()> {
             model,
             base_url,
             max_steps,
+            no_vision,
+            max_failures,
+            max_actions_per_step,
+            llm_timeout_seconds,
+            step_timeout_seconds,
+            no_loop_detection,
+            loop_detection_window,
+            no_thinking,
+            flash_mode,
+            no_planning,
+            planning_replan_on_stall,
+            planning_exploration_limit,
+            max_history_items,
+            max_clickable_elements_length,
+            include_attributes,
         }) => {
             let llm = configured_chat_model(provider, api_key, model, base_url)?;
             let session = launch_and_navigate(&url).await?;
-            let mut agent = browser_use_core::Agent::new(task, llm, session);
+            let settings = cli_agent_settings(CliAgentSettingsArgs {
+                no_vision,
+                max_failures,
+                max_actions_per_step,
+                llm_timeout_seconds,
+                step_timeout_seconds,
+                no_loop_detection,
+                loop_detection_window,
+                no_thinking,
+                flash_mode,
+                no_planning,
+                planning_replan_on_stall,
+                planning_exploration_limit,
+                max_history_items,
+                max_clickable_elements_length,
+                include_attributes,
+            });
+            let mut agent = browser_use_core::Agent::with_settings(task, settings, llm, session);
             let history = agent.run(max_steps).await?;
             println!("{}", serde_json::to_string_pretty(history)?);
         }
@@ -279,6 +342,73 @@ async fn print_state(session: &CdpBrowserSession, include_screenshot: bool) -> a
     let state = session.state(include_screenshot).await?;
     println!("{}", serde_json::to_string_pretty(&state)?);
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct CliAgentSettingsArgs {
+    no_vision: bool,
+    max_failures: Option<u32>,
+    max_actions_per_step: Option<usize>,
+    llm_timeout_seconds: Option<u64>,
+    step_timeout_seconds: Option<u64>,
+    no_loop_detection: bool,
+    loop_detection_window: Option<usize>,
+    no_thinking: bool,
+    flash_mode: bool,
+    no_planning: bool,
+    planning_replan_on_stall: Option<usize>,
+    planning_exploration_limit: Option<usize>,
+    max_history_items: Option<usize>,
+    max_clickable_elements_length: Option<usize>,
+    include_attributes: Vec<String>,
+}
+
+fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
+    let mut settings = AgentSettings::default();
+
+    if args.no_vision {
+        settings.use_vision = false;
+    }
+    if let Some(value) = args.max_failures {
+        settings.max_failures = value;
+    }
+    if let Some(value) = args.max_actions_per_step {
+        settings.max_actions_per_step = value;
+    }
+    if let Some(value) = args.llm_timeout_seconds {
+        settings.llm_timeout_seconds = value;
+    }
+    if let Some(value) = args.step_timeout_seconds {
+        settings.step_timeout_seconds = value;
+    }
+    if args.no_loop_detection {
+        settings.loop_detection_enabled = false;
+    }
+    if let Some(value) = args.loop_detection_window {
+        settings.loop_detection_window = value;
+    }
+    if args.no_thinking {
+        settings.use_thinking = false;
+    }
+    if args.flash_mode {
+        settings.flash_mode = true;
+    }
+    if args.no_planning {
+        settings.enable_planning = false;
+    }
+    if let Some(value) = args.planning_replan_on_stall {
+        settings.planning_replan_on_stall = value;
+    }
+    if let Some(value) = args.planning_exploration_limit {
+        settings.planning_exploration_limit = value;
+    }
+    settings.max_history_items = args.max_history_items;
+    if let Some(value) = args.max_clickable_elements_length {
+        settings.max_clickable_elements_length = value;
+    }
+    settings.include_attributes = args.include_attributes;
+
+    settings
 }
 
 async fn start_persistent_session(
@@ -843,4 +973,130 @@ fn configured_chat_model(
 
 fn nonempty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_agent_settings_flags() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "agent",
+            "https://example.com",
+            "test task",
+            "--provider",
+            "openai",
+            "--max-steps",
+            "3",
+            "--no-vision",
+            "--max-failures",
+            "2",
+            "--max-actions-per-step",
+            "1",
+            "--llm-timeout-seconds",
+            "11",
+            "--step-timeout-seconds",
+            "22",
+            "--no-loop-detection",
+            "--loop-detection-window",
+            "4",
+            "--no-thinking",
+            "--flash-mode",
+            "--no-planning",
+            "--planning-replan-on-stall",
+            "5",
+            "--planning-exploration-limit",
+            "6",
+            "--max-history-items",
+            "7",
+            "--max-clickable-elements-length",
+            "8000",
+            "--include-attribute",
+            "data-testid",
+            "--include-attribute",
+            "aria-label",
+        ])
+        .expect("agent settings flags should parse");
+
+        match cli.command.expect("agent command") {
+            Command::Agent {
+                provider,
+                max_steps,
+                no_vision,
+                max_failures,
+                max_actions_per_step,
+                llm_timeout_seconds,
+                step_timeout_seconds,
+                no_loop_detection,
+                loop_detection_window,
+                no_thinking,
+                flash_mode,
+                no_planning,
+                planning_replan_on_stall,
+                planning_exploration_limit,
+                max_history_items,
+                max_clickable_elements_length,
+                include_attributes,
+                ..
+            } => {
+                assert_eq!(provider, LlmProvider::OpenAiCompatible);
+                assert_eq!(max_steps, 3);
+                assert!(no_vision);
+                assert_eq!(max_failures, Some(2));
+                assert_eq!(max_actions_per_step, Some(1));
+                assert_eq!(llm_timeout_seconds, Some(11));
+                assert_eq!(step_timeout_seconds, Some(22));
+                assert!(no_loop_detection);
+                assert_eq!(loop_detection_window, Some(4));
+                assert!(no_thinking);
+                assert!(flash_mode);
+                assert!(no_planning);
+                assert_eq!(planning_replan_on_stall, Some(5));
+                assert_eq!(planning_exploration_limit, Some(6));
+                assert_eq!(max_history_items, Some(7));
+                assert_eq!(max_clickable_elements_length, Some(8000));
+                assert_eq!(include_attributes, ["data-testid", "aria-label"]);
+            }
+            _ => panic!("expected agent command"),
+        }
+    }
+
+    #[test]
+    fn builds_agent_settings_from_cli_flags() {
+        let settings = cli_agent_settings(CliAgentSettingsArgs {
+            no_vision: true,
+            max_failures: Some(2),
+            max_actions_per_step: Some(1),
+            llm_timeout_seconds: Some(11),
+            step_timeout_seconds: Some(22),
+            no_loop_detection: true,
+            loop_detection_window: Some(4),
+            no_thinking: true,
+            flash_mode: true,
+            no_planning: true,
+            planning_replan_on_stall: Some(5),
+            planning_exploration_limit: Some(6),
+            max_history_items: Some(7),
+            max_clickable_elements_length: Some(8000),
+            include_attributes: vec!["data-testid".to_owned(), "aria-label".to_owned()],
+        });
+
+        assert!(!settings.use_vision);
+        assert_eq!(settings.max_failures, 2);
+        assert_eq!(settings.max_actions_per_step, 1);
+        assert_eq!(settings.llm_timeout_seconds, 11);
+        assert_eq!(settings.step_timeout_seconds, 22);
+        assert!(!settings.loop_detection_enabled);
+        assert_eq!(settings.loop_detection_window, 4);
+        assert!(!settings.use_thinking);
+        assert!(settings.flash_mode);
+        assert!(!settings.enable_planning);
+        assert_eq!(settings.planning_replan_on_stall, 5);
+        assert_eq!(settings.planning_exploration_limit, 6);
+        assert_eq!(settings.max_history_items, Some(7));
+        assert_eq!(settings.max_clickable_elements_length, 8000);
+        assert_eq!(settings.include_attributes, ["data-testid", "aria-label"]);
+    }
 }
