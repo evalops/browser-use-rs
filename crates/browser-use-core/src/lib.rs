@@ -14,6 +14,7 @@ use uuid::Uuid;
 use async_trait::async_trait;
 use base64::Engine;
 use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
+use encoding_rs::Encoding;
 use url::form_urlencoded;
 
 pub use browser_use_dom::{
@@ -4209,6 +4210,10 @@ pub enum AgentRunError {
         #[source]
         source: std::io::Error,
     },
+    #[error("unsupported conversation transcript encoding {encoding:?}")]
+    ConversationEncoding { encoding: String },
+    #[error("conversation transcript encoding {encoding:?} cannot represent the transcript text")]
+    ConversationEncodingLossy { encoding: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -4646,12 +4651,15 @@ where
             self.id,
             self.next_step_number()
         ));
-        std::fs::write(&target, format_conversation_snapshot(request, model_output)).map_err(
-            |source| AgentRunError::ConversationSave {
-                path: target.display().to_string(),
-                source,
-            },
-        )
+        let snapshot = format_conversation_snapshot(request, model_output);
+        let bytes = encode_conversation_snapshot(
+            &snapshot,
+            self.settings.save_conversation_path_encoding.as_deref(),
+        )?;
+        std::fs::write(&target, bytes).map_err(|source| AgentRunError::ConversationSave {
+            path: target.display().to_string(),
+            source,
+        })
     }
 
     fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
@@ -4690,6 +4698,25 @@ where
             .use_vision
             .should_include_screenshot(action_requested_screenshot)
     }
+}
+
+fn encode_conversation_snapshot(
+    snapshot: &str,
+    encoding: Option<&str>,
+) -> Result<Vec<u8>, AgentRunError> {
+    let encoding = encoding.unwrap_or("utf-8");
+    let Some(encoding_impl) = Encoding::for_label(encoding.as_bytes()) else {
+        return Err(AgentRunError::ConversationEncoding {
+            encoding: encoding.to_owned(),
+        });
+    };
+    let (bytes, _, had_errors) = encoding_impl.encode(snapshot);
+    if had_errors {
+        return Err(AgentRunError::ConversationEncodingLossy {
+            encoding: encoding.to_owned(),
+        });
+    }
+    Ok(bytes.into_owned())
 }
 
 fn result_requests_screenshot(result: &ActionResult) -> bool {
@@ -4752,8 +4779,8 @@ fn expand_user_path(path: &str) -> std::path::PathBuf {
 fn now_seconds() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn is_single_done_output(output: &AgentOutput) -> bool {
@@ -10709,6 +10736,33 @@ mod tests {
         assert!(transcript.contains("data:image/png;base64,abc123"));
         assert!(transcript.contains("\"done\""));
         assert!(transcript.contains("\"text\": \"complete\""));
+    }
+
+    #[test]
+    fn conversation_snapshot_encoding_honors_labels() {
+        assert_eq!(
+            encode_conversation_snapshot("hello", Some("utf8")).expect("utf8 bytes"),
+            b"hello"
+        );
+        assert_eq!(
+            encode_conversation_snapshot("£", Some("windows-1252")).expect("windows bytes"),
+            vec![0xa3]
+        );
+    }
+
+    #[test]
+    fn conversation_snapshot_encoding_rejects_invalid_or_lossy_labels() {
+        let invalid = encode_conversation_snapshot("hello", Some("not-real")).expect_err("invalid");
+        assert!(matches!(
+            invalid,
+            AgentRunError::ConversationEncoding { encoding } if encoding == "not-real"
+        ));
+
+        let lossy = encode_conversation_snapshot("😀", Some("windows-1252")).expect_err("lossy");
+        assert!(matches!(
+            lossy,
+            AgentRunError::ConversationEncodingLossy { encoding } if encoding == "windows-1252"
+        ));
     }
 
     #[tokio::test]

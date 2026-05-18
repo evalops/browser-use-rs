@@ -16,6 +16,7 @@ browser-use-tools = { path = "../browser-use-tools" }
 async-trait.workspace = true
 csv.workspace = true
 data-encoding.workspace = true
+encoding_rs.workspace = true
 pdf-extract.workspace = true
 quick-xml.workspace = true
 regex.workspace = true

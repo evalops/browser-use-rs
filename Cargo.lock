@@ -218,6 +218,7 @@ dependencies = [
  "browser-use-tools",
  "csv",
  "data-encoding",
+ "encoding_rs",
  "pdf-extract",
  "quick-xml",
  "regex",
