@@ -5206,7 +5206,7 @@ fn generate_gif_output_path(generate_gif: &GenerateGif) -> Option<std::path::Pat
 fn write_history_gif(history: &AgentHistory, path: &std::path::Path) -> Result<(), String> {
     let mut frames = Vec::new();
     for screenshot in history.screenshots(None, false).into_iter().flatten() {
-        if let Some(frame) = decode_gif_frame(&screenshot)? {
+        if let Some(frame) = decode_gif_frame(screenshot)? {
             frames.push(frame);
         }
     }
