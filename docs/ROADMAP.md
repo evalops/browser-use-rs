@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#10 Expand provider-specific structured output fallbacks](https://github.com/evalops/browser-use-rs/issues/10)
+- Next parity track to be opened from the remaining gaps below.
 
 ## Completed Tracks
 
@@ -15,6 +15,7 @@ small pushed checkpoints as each surface becomes real.
 - [#4 Implement agent loop and LLM provider contracts](https://github.com/evalops/browser-use-rs/issues/4)
 - [#8 Cut first public conformance release](https://github.com/evalops/browser-use-rs/issues/8)
 - [#9 Add event-driven browser security watchdog](https://github.com/evalops/browser-use-rs/issues/9)
+- [#10 Expand provider-specific structured output fallbacks](https://github.com/evalops/browser-use-rs/issues/10)
 
 ## Current Checkpoint
 
