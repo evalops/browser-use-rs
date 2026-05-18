@@ -107,8 +107,8 @@ Implemented:
   control metadata, and compact select option summaries, preserves
   automation-friendly data/ARIA/value attributes, native boolean/read-only
   state, validation patterns, `data-state`,
-  input mask/autocomplete/date-format hints, live-region and hierarchy
-  metadata, and static
+  input mask/autocomplete/date-format and `data-provide` datepicker hints,
+  live-region and hierarchy metadata, and static
   history-matching attributes, renders native and text datepicker input format
   hints, indexes ARIA required/autocomplete/keyshortcut interactivity signals,
   renders keyboard shortcuts as `keyshortcuts`, detects search affordance

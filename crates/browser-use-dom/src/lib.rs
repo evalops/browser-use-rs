@@ -328,6 +328,7 @@ const DEFAULT_RENDER_ATTRIBUTES: &[&str] = &[
     "data-mask",
     "data-inputmask",
     "data-datepicker",
+    "data-provide",
     "format",
     "expected_format",
     "contenteditable",
@@ -585,6 +586,8 @@ fn has_text_datepicker_signal(attributes: &BTreeMap<String, String>) -> bool {
         })
         .unwrap_or(false)
         || attributes.contains_key("data-datepicker")
+        || nonempty_attribute(attributes, "data-provide")
+            .is_some_and(|value| value.to_ascii_lowercase().contains("datepicker"))
 }
 
 fn nonempty_attribute<'a>(attributes: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
@@ -1148,11 +1151,30 @@ mod tests {
             is_interactive: true,
             is_scrollable: false,
         };
+        let bootstrap_datepicker = DomElementRef {
+            index: 4,
+            target_id: "target".to_owned(),
+            backend_node_id: 0,
+            node_id: None,
+            tag_name: "input".to_owned(),
+            role: None,
+            name: Some("Return".to_owned()),
+            text: None,
+            attributes: BTreeMap::from([
+                ("data-date-format".to_owned(), "yyyy-mm-dd".to_owned()),
+                ("data-provide".to_owned(), "datepicker".to_owned()),
+            ]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
 
         let state = SerializedDomState::from_elements(vec![
             jquery_datepicker,
             angular_datepicker,
             default_datepicker,
+            bootstrap_datepicker,
         ]);
 
         assert!(state.llm_representation().contains(
@@ -1165,6 +1187,9 @@ mod tests {
         );
         assert!(state.llm_representation().contains(
             "[3] <input placeholder=mm/dd/yyyy data-datepicker=true format=mm/dd/yyyy> Fallback"
+        ));
+        assert!(state.llm_representation().contains(
+            "[4] <input placeholder=yyyy-mm-dd data-provide=datepicker format=yyyy-mm-dd> Return"
         ));
     }
 
