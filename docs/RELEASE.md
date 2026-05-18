@@ -166,11 +166,12 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   actor-level reconnect attempts, deliberate stale-session invalidation and
   current-target reattach after reconnect, direct navigation timeouts, and
   watchdog-style stuck HTTP(S) request timeouts. `subscribe_lifecycle_events`
-  exposes those diagnostics as a stream without adding them to normal agent
+  exposes those diagnostics through `BrowserLifecycleEventSubscription` with
+  typed lag and closed-stream errors, without adding them to normal agent
   replies. Profile-wide local/session storage discovery outside the current
   page plus attached frame tree remains outside the safe CDP boundary documented
   in `docs/CONFORMANCE.md`; #32 tracks richer upstream-style event-bus adapters
-  on top of the typed subscription stream.
+  on top of the typed subscription facade.
 - Accessibility-tree parity is partial; the DOM serializer now carries common
   AX role/name/state/value properties but still uses a pragmatic compact
   representation rather than full browser-use AX snapshots.

@@ -1674,6 +1674,64 @@ impl BrowserLifecycleEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum BrowserLifecycleEventStreamError {
+    #[error("lifecycle event stream closed")]
+    Closed,
+    #[error("lifecycle event stream lagged by {0} events")]
+    Lagged(u64),
+}
+
+#[derive(Debug)]
+pub struct BrowserLifecycleEventSubscription {
+    receiver: broadcast::Receiver<BrowserLifecycleEvent>,
+}
+
+impl BrowserLifecycleEventSubscription {
+    fn new(receiver: broadcast::Receiver<BrowserLifecycleEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub fn closed() -> Self {
+        let (sender, receiver) = broadcast::channel(1);
+        drop(sender);
+        Self::new(receiver)
+    }
+
+    pub async fn recv(
+        &mut self,
+    ) -> Result<BrowserLifecycleEvent, BrowserLifecycleEventStreamError> {
+        match self.receiver.recv().await {
+            Ok(event) => Ok(event),
+            Err(broadcast::error::RecvError::Closed) => {
+                Err(BrowserLifecycleEventStreamError::Closed)
+            }
+            Err(broadcast::error::RecvError::Lagged(count)) => {
+                Err(BrowserLifecycleEventStreamError::Lagged(count))
+            }
+        }
+    }
+
+    pub fn try_recv(
+        &mut self,
+    ) -> Result<Option<BrowserLifecycleEvent>, BrowserLifecycleEventStreamError> {
+        match self.receiver.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(broadcast::error::TryRecvError::Empty) => Ok(None),
+            Err(broadcast::error::TryRecvError::Closed) => {
+                Err(BrowserLifecycleEventStreamError::Closed)
+            }
+            Err(broadcast::error::TryRecvError::Lagged(count)) => {
+                Err(BrowserLifecycleEventStreamError::Lagged(count))
+            }
+        }
+    }
+
+    pub fn resubscribe(&self) -> Self {
+        Self::new(self.receiver.resubscribe())
+    }
+}
+
 pub fn resolve_chrome_executable<I>(
     explicit_path: Option<&Path>,
     env_override: Option<PathBuf>,
@@ -2742,8 +2800,8 @@ impl CdpBrowserSession {
         self.lifecycle_events.lock().await.iter().cloned().collect()
     }
 
-    pub fn subscribe_lifecycle_events(&self) -> broadcast::Receiver<BrowserLifecycleEvent> {
-        self.lifecycle_event_tx.subscribe()
+    pub fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
+        BrowserLifecycleEventSubscription::new(self.lifecycle_event_tx.subscribe())
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -5757,6 +5815,10 @@ async fn resolve_page_target_id(
 
 #[async_trait]
 impl BrowserSession for CdpBrowserSession {
+    fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
+        BrowserLifecycleEventSubscription::new(self.lifecycle_event_tx.subscribe())
+    }
+
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         self.enforce_open_tab_url_policy().await?;
         let (url, title) = self.page_location().await?;
@@ -6509,6 +6571,10 @@ fn previous_navigation_entry_id(history: &Value) -> Result<i64, BrowserError> {
 
 #[async_trait]
 pub trait BrowserSession: Send + Sync {
+    fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
+        BrowserLifecycleEventSubscription::closed()
+    }
+
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
@@ -6565,6 +6631,10 @@ impl<T> BrowserSession for Arc<T>
 where
     T: BrowserSession + ?Sized,
 {
+    fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
+        self.as_ref().subscribe_lifecycle_events()
+    }
+
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         self.as_ref().state(include_screenshot).await
     }
@@ -7609,6 +7679,82 @@ mod tests {
         assert!(matches!(
             event_rx.try_recv(),
             Err(broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_event_subscription_hides_broadcast_empty_and_closed_states() {
+        let (event_tx, event_rx) = broadcast::channel(4);
+        let mut subscription = BrowserLifecycleEventSubscription::new(event_rx);
+
+        assert_eq!(subscription.try_recv().expect("empty stream"), None);
+
+        let event = BrowserLifecycleEvent::target_switched("target-1");
+        event_tx.send(event.clone()).expect("event sent");
+        assert_eq!(
+            subscription.try_recv().expect("published event"),
+            Some(event)
+        );
+
+        drop(event_tx);
+        assert!(matches!(
+            subscription.recv().await,
+            Err(BrowserLifecycleEventStreamError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_event_subscription_reports_lagged_consumers() {
+        let (event_tx, event_rx) = broadcast::channel(1);
+        let mut subscription = BrowserLifecycleEventSubscription::new(event_rx);
+
+        event_tx
+            .send(BrowserLifecycleEvent::target_switched("target-1"))
+            .expect("first event sent");
+        event_tx
+            .send(BrowserLifecycleEvent::target_switched("target-2"))
+            .expect("second event sent");
+
+        assert!(matches!(
+            subscription.try_recv(),
+            Err(BrowserLifecycleEventStreamError::Lagged(_))
+        ));
+        assert_eq!(
+            subscription.try_recv().expect("latest event"),
+            Some(BrowserLifecycleEvent::target_switched("target-2"))
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_event_subscription_resubscribes_at_current_tail() {
+        let (event_tx, event_rx) = broadcast::channel(4);
+        let mut subscription = BrowserLifecycleEventSubscription::new(event_rx);
+
+        let first_event = BrowserLifecycleEvent::target_switched("target-1");
+        event_tx
+            .send(first_event.clone())
+            .expect("first event sent");
+        assert_eq!(subscription.recv().await.expect("first event"), first_event);
+
+        let mut resubscribed = subscription.resubscribe();
+        let second_event = BrowserLifecycleEvent::target_switched("target-2");
+        event_tx
+            .send(second_event.clone())
+            .expect("second event sent");
+
+        assert_eq!(
+            resubscribed.recv().await.expect("resubscribed event"),
+            second_event
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_lifecycle_event_subscription_is_immediately_closed() {
+        let mut subscription = BrowserLifecycleEventSubscription::closed();
+
+        assert!(matches!(
+            subscription.recv().await,
+            Err(BrowserLifecycleEventStreamError::Closed)
         ));
     }
 

@@ -64,10 +64,13 @@ commands fail locally with a clear reattach error, and the current target is
 reattached automatically on the next session access when Chrome still exposes
 it.
 
-The bounded history and `subscribe_lifecycle_events` stream are both kept out of
-normal agent replies unless an integration explicitly reads them. #32 tracks the
-next adapter layer that maps these diagnostics into richer upstream-style event
-concepts for CLI, MCP, daemon, and other subscriber surfaces.
+The bounded history and `subscribe_lifecycle_events` subscription facade are
+both kept out of normal agent replies unless an integration explicitly reads
+them. The facade exposes `recv`/`try_recv` with typed lag and closed-stream
+errors so downstream integrations do not need to depend on Tokio broadcast
+receiver details. #32 tracks the next adapter layer that maps these diagnostics
+into richer upstream-style event concepts for CLI, MCP, daemon, and other
+subscriber surfaces.
 
 ## Profile-Wide Storage Boundary
 
