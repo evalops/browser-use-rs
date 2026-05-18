@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is open at this checkpoint.
+- [#55 Pin replay recapture in conformance fixtures](https://github.com/evalops/browser-use-rs/issues/55)
 
 ## Completed Tracks
 
