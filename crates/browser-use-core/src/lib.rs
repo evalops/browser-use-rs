@@ -1,9 +1,10 @@
 //! Core agent contracts for browser-use-rs.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::io::{Read, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -33,7 +34,7 @@ pub const INITIAL_UPSTREAM_COMMIT: &str = "933e28c599ddd74c15a48568f159da95547e4
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSettings {
     #[serde(default = "default_use_vision")]
-    pub use_vision: bool,
+    pub use_vision: VisionMode,
     #[serde(default = "default_vision_detail_level")]
     pub vision_detail_level: ImageDetailLevel,
     #[serde(default = "default_max_failures")]
@@ -84,6 +85,131 @@ pub struct AgentSettings {
     pub extend_system_message: Option<String>,
 }
 
+/// Upstream-compatible vision behavior.
+///
+/// Python browser-use accepts `True`, `False`, or `"auto"` for `use_vision`.
+/// The JSON contract preserves that shape so existing MCP/CLI callers can send
+/// booleans while Rust code gets an explicit mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionMode {
+    Always,
+    Never,
+    Auto,
+}
+
+impl VisionMode {
+    #[must_use]
+    pub fn includes_screenshot_by_default(self) -> bool {
+        matches!(self, Self::Always)
+    }
+
+    #[must_use]
+    pub fn allows_screenshot_action(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    #[must_use]
+    pub fn should_include_screenshot(self, action_requested_screenshot: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => action_requested_screenshot,
+        }
+    }
+
+    #[must_use]
+    pub fn accepts_prompt_image(self) -> bool {
+        !matches!(self, Self::Never)
+    }
+}
+
+impl Default for VisionMode {
+    fn default() -> Self {
+        Self::Always
+    }
+}
+
+impl Serialize for VisionMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Always => serializer.serialize_bool(true),
+            Self::Never => serializer.serialize_bool(false),
+            Self::Auto => serializer.serialize_str("auto"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for VisionMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(VisionModeVisitor)
+    }
+}
+
+struct VisionModeVisitor;
+
+impl<'de> de::Visitor<'de> for VisionModeVisitor {
+    type Value = VisionMode;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, or \"auto\"")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            VisionMode::Always
+        } else {
+            VisionMode::Never
+        })
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(VisionMode::Auto),
+            "true" | "always" => Ok(VisionMode::Always),
+            "false" | "never" => Ok(VisionMode::Never),
+            _ => Err(E::custom("expected true, false, or \"auto\"")),
+        }
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_str(&value)
+    }
+}
+
+impl JsonSchema for VisionMode {
+    fn schema_name() -> String {
+        "VisionMode".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                {
+                    "type": "string",
+                    "enum": ["auto"]
+                }
+            ]
+        }))
+        .expect("valid VisionMode JSON schema")
+    }
+}
+
 impl Default for AgentSettings {
     fn default() -> Self {
         Self {
@@ -116,8 +242,8 @@ impl Default for AgentSettings {
     }
 }
 
-fn default_use_vision() -> bool {
-    true
+fn default_use_vision() -> VisionMode {
+    VisionMode::Always
 }
 
 fn default_vision_detail_level() -> ImageDetailLevel {
@@ -4415,12 +4541,14 @@ where
     }
 
     fn should_include_screenshot(&self) -> bool {
-        self.settings.use_vision
-            || self
-                .history
-                .items
-                .last()
-                .is_some_and(|item| item.result.iter().any(result_requests_screenshot))
+        let action_requested_screenshot = self
+            .history
+            .items
+            .last()
+            .is_some_and(|item| item.result.iter().any(result_requests_screenshot));
+        self.settings
+            .use_vision
+            .should_include_screenshot(action_requested_screenshot)
     }
 }
 
@@ -4656,7 +4784,7 @@ pub fn build_step_request_with_file_system(
         &sensitive_values,
     );
     let mut user_content = vec![ContentPart::Text { text: user_text }];
-    if settings.use_vision
+    if settings.use_vision.accepts_prompt_image()
         && let Some(screenshot) = state.screenshot.as_deref()
     {
         user_content.push(ContentPart::ImageUrl {
@@ -5100,7 +5228,7 @@ fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {
         prune_schema_properties(&mut schema, &remove_fields);
     }
 
-    let excluded_actions = normalized_excluded_actions(&settings.excluded_actions);
+    let excluded_actions = normalized_schema_excluded_actions(settings);
     if !excluded_actions.is_empty() {
         exclude_schema_actions(&mut schema, &excluded_actions);
     }
@@ -5132,7 +5260,26 @@ fn normalized_excluded_actions(actions: &[String]) -> BTreeSet<String> {
         .collect()
 }
 
+fn normalized_schema_excluded_actions(settings: &AgentSettings) -> BTreeSet<String> {
+    let mut excluded_actions = normalized_excluded_actions(&settings.excluded_actions);
+    if !settings.use_vision.allows_screenshot_action() {
+        excluded_actions.insert("screenshot".to_owned());
+    }
+    excluded_actions
+}
+
 fn excluded_action_error(actions: &[BrowserAction], settings: &AgentSettings) -> Option<String> {
+    if !settings.use_vision.allows_screenshot_action()
+        && actions
+            .iter()
+            .any(|action| matches!(action, BrowserAction::Screenshot(_)))
+    {
+        return Some(
+            "model output requested screenshot action, but AgentSettings.use_vision must be \"auto\""
+                .to_owned(),
+        );
+    }
+
     let excluded_actions = normalized_excluded_actions(&settings.excluded_actions);
     if excluded_actions.is_empty() {
         return None;
@@ -5714,6 +5861,7 @@ mod tests {
     fn settings_defaults_match_browser_use_shape() {
         let settings = AgentSettings::default();
 
+        assert_eq!(settings.use_vision, VisionMode::Always);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::Auto);
         assert_eq!(settings.max_failures, 5);
         assert_eq!(settings.max_actions_per_step, 5);
@@ -5738,6 +5886,38 @@ mod tests {
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
+    }
+
+    #[test]
+    fn vision_mode_preserves_upstream_json_shape() {
+        assert_eq!(
+            serde_json::to_value(VisionMode::Always).expect("serialize always"),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            serde_json::to_value(VisionMode::Never).expect("serialize never"),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            serde_json::to_value(VisionMode::Auto).expect("serialize auto"),
+            serde_json::json!("auto")
+        );
+
+        assert_eq!(
+            serde_json::from_value::<VisionMode>(serde_json::json!(true))
+                .expect("deserialize true"),
+            VisionMode::Always
+        );
+        assert_eq!(
+            serde_json::from_value::<VisionMode>(serde_json::json!(false))
+                .expect("deserialize false"),
+            VisionMode::Never
+        );
+        assert_eq!(
+            serde_json::from_value::<VisionMode>(serde_json::json!("auto"))
+                .expect("deserialize auto"),
+            VisionMode::Auto
+        );
     }
 
     #[test]
@@ -5913,6 +6093,29 @@ mod tests {
         assert!(!action_names.contains("switch_tab"));
         assert!(action_names.contains("navigate"));
         assert!(action_names.contains("done"));
+    }
+
+    #[test]
+    fn agent_output_schema_gates_screenshot_action_on_auto_vision() {
+        let default_schema = schema_for_agent_output_with_settings(&AgentSettings::default());
+        let default_actions = schema_action_names(&default_schema);
+        assert!(!default_actions.contains("screenshot"));
+
+        let auto_settings = AgentSettings {
+            use_vision: VisionMode::Auto,
+            ..AgentSettings::default()
+        };
+        let auto_schema = schema_for_agent_output_with_settings(&auto_settings);
+        let auto_actions = schema_action_names(&auto_schema);
+        assert!(auto_actions.contains("screenshot"));
+
+        let disabled_settings = AgentSettings {
+            use_vision: VisionMode::Never,
+            ..AgentSettings::default()
+        };
+        let disabled_schema = schema_for_agent_output_with_settings(&disabled_settings);
+        let disabled_actions = schema_action_names(&disabled_schema);
+        assert!(!disabled_actions.contains("screenshot"));
     }
 
     #[test]
@@ -10118,7 +10321,7 @@ mod tests {
             ]
         });
         let settings = AgentSettings {
-            use_vision: false,
+            use_vision: VisionMode::Never,
             ..AgentSettings::default()
         };
         let mut agent = Agent::with_settings(
@@ -10158,7 +10361,7 @@ mod tests {
             ]
         });
         let settings = AgentSettings {
-            use_vision: false,
+            use_vision: VisionMode::Auto,
             ..AgentSettings::default()
         };
         let mut agent = Agent::with_settings(
@@ -10176,6 +10379,107 @@ mod tests {
         assert!(
             state_requests.iter().any(|include| *include),
             "expected screenshot request override: {state_requests:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_step_defaults_to_screenshot_observation() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::with_settings(
+            "finish with default vision",
+            AgentSettings::default(),
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        agent.step().await.expect("agent step");
+
+        let state_requests = agent.executor.session().state_screenshot_requests();
+        assert_eq!(state_requests.first(), Some(&true));
+    }
+
+    #[tokio::test]
+    async fn agent_step_rejects_screenshot_action_outside_auto_vision() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "screenshot": {}
+                }
+            ]
+        });
+        let mut agent = Agent::with_settings(
+            "do not allow screenshot tool by default",
+            AgentSettings::default(),
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let error = {
+            let item = agent.step().await.expect("agent step");
+            assert_eq!(item.result.len(), 1);
+            item.result[0]
+                .error
+                .as_deref()
+                .expect("screenshot gating error")
+                .to_owned()
+        };
+
+        assert!(agent.executor.session().events().is_empty());
+        assert_eq!(
+            agent.executor.session().state_screenshot_requests(),
+            vec![true]
+        );
+        assert!(
+            error.contains("use_vision") && error.contains("auto"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_step_never_requests_screenshot_when_vision_disabled() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "screenshot": {}
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            use_vision: VisionMode::Never,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "vision disabled blocks screenshot tool",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let item = agent.step().await.expect("agent step");
+
+        assert!(
+            item.result[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| { error.contains("use_vision") && error.contains("auto") })
+        );
+        assert!(agent.executor.session().events().is_empty());
+        assert_eq!(
+            agent.executor.session().state_screenshot_requests(),
+            vec![false]
         );
     }
 
@@ -11501,7 +11805,7 @@ mod tests {
             ],
         };
         let settings = AgentSettings {
-            use_vision: false,
+            use_vision: VisionMode::Never,
             vision_detail_level: ImageDetailLevel::High,
             ..AgentSettings::default()
         };
@@ -11600,7 +11904,7 @@ mod tests {
         let mut state = blank_state();
         state.screenshot = Some("abc123".to_owned());
         let settings = AgentSettings {
-            use_vision: false,
+            use_vision: VisionMode::Never,
             ..AgentSettings::default()
         };
 
@@ -11616,6 +11920,36 @@ mod tests {
         assert_eq!(user_message.content.len(), 1);
         let request_text = serde_json::to_string(user_message).expect("message json");
         assert!(!request_text.contains("abc123"));
+    }
+
+    #[test]
+    fn step_request_includes_screenshot_when_auto_vision_state_has_one() {
+        let mut state = blank_state();
+        state.screenshot = Some("abc123".to_owned());
+        let settings = AgentSettings {
+            use_vision: VisionMode::Auto,
+            ..AgentSettings::default()
+        };
+
+        let request = build_step_request(
+            "include requested screenshot",
+            &state,
+            &AgentHistory::default(),
+            &settings,
+        )
+        .expect("step request");
+        let user_message = request
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .expect("user message");
+
+        assert!(matches!(
+            &user_message.content[1],
+            ContentPart::ImageUrl { image_url, detail }
+                if image_url == "data:image/png;base64,abc123"
+                    && *detail == Some(ImageDetailLevel::Auto)
+        ));
     }
 
     #[test]

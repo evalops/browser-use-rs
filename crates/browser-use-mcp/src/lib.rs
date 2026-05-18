@@ -464,6 +464,7 @@ mod tests {
         assert!(schema_text.contains("prompt-only"));
         assert!(schema_text.contains("tool-call"));
         assert!(schema_text.contains("settings"));
+        assert!(schema_text.contains("use_vision"));
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("vision_detail_level"));
         assert!(schema_text.contains("flash_mode"));
@@ -499,6 +500,7 @@ mod tests {
             "url": "https://example.com",
             "task": "extract",
             "settings": {
+                "use_vision": "auto",
                 "vision_detail_level": "high",
                 "excluded_actions": ["search", "scroll"],
                 "include_recent_events": true,
@@ -510,6 +512,10 @@ mod tests {
         assert_eq!(
             input.settings.vision_detail_level,
             browser_use_core::ImageDetailLevel::High
+        );
+        assert_eq!(
+            input.settings.use_vision,
+            browser_use_core::VisionMode::Auto
         );
         assert_eq!(input.settings.excluded_actions, ["search", "scroll"]);
         assert!(input.settings.include_recent_events);

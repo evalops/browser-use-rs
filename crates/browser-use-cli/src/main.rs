@@ -8,6 +8,7 @@ use base64::Engine;
 use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::{
     AgentHistory, AgentSettings, BrowserActionExecutor, ImageDetailLevel, SensitiveDataValue,
+    VisionMode,
 };
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
@@ -120,6 +121,8 @@ enum Command {
         max_steps: usize,
         #[arg(long, default_value_t = false)]
         no_vision: bool,
+        #[arg(long = "vision-mode", value_enum, conflicts_with = "no_vision")]
+        vision_mode: Option<CliVisionMode>,
         #[arg(long = "vision-detail-level", value_enum)]
         vision_detail_level: Option<CliVisionDetailLevel>,
         #[arg(long)]
@@ -204,6 +207,25 @@ impl From<CliVisionDetailLevel> for ImageDetailLevel {
             CliVisionDetailLevel::Auto => Self::Auto,
             CliVisionDetailLevel::Low => Self::Low,
             CliVisionDetailLevel::High => Self::High,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum CliVisionMode {
+    #[value(alias = "true")]
+    Always,
+    Auto,
+    #[value(alias = "false")]
+    Never,
+}
+
+impl From<CliVisionMode> for VisionMode {
+    fn from(value: CliVisionMode) -> Self {
+        match value {
+            CliVisionMode::Always => Self::Always,
+            CliVisionMode::Auto => Self::Auto,
+            CliVisionMode::Never => Self::Never,
         }
     }
 }
@@ -444,6 +466,7 @@ async fn main() -> anyhow::Result<()> {
             block_ip_addresses,
             max_steps,
             no_vision,
+            vision_mode,
             vision_detail_level,
             max_failures,
             max_actions_per_step,
@@ -488,6 +511,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             let settings = cli_agent_settings(CliAgentSettingsArgs {
                 no_vision,
+                vision_mode,
                 vision_detail_level,
                 max_failures,
                 max_actions_per_step,
@@ -554,6 +578,7 @@ fn read_agent_history(path: &PathBuf) -> anyhow::Result<AgentHistory> {
 #[derive(Debug, Default)]
 struct CliAgentSettingsArgs {
     no_vision: bool,
+    vision_mode: Option<CliVisionMode>,
     vision_detail_level: Option<CliVisionDetailLevel>,
     max_failures: Option<u32>,
     max_actions_per_step: Option<usize>,
@@ -584,7 +609,10 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     let mut settings = AgentSettings::default();
 
     if args.no_vision {
-        settings.use_vision = false;
+        settings.use_vision = VisionMode::Never;
+    }
+    if let Some(value) = args.vision_mode {
+        settings.use_vision = value.into();
     }
     if let Some(value) = args.vision_detail_level {
         settings.vision_detail_level = value.into();
@@ -2322,9 +2350,43 @@ mod tests {
     }
 
     #[test]
+    fn parses_agent_auto_vision_mode_flag() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "agent",
+            "https://example.com",
+            "test task",
+            "--vision-mode",
+            "auto",
+        ])
+        .expect("auto vision mode should parse");
+
+        match cli.command.expect("agent command") {
+            Command::Agent { vision_mode, .. } => {
+                assert_eq!(vision_mode, Some(CliVisionMode::Auto));
+            }
+            _ => panic!("expected agent command"),
+        }
+
+        assert!(
+            Cli::try_parse_from([
+                "browser-use-rs",
+                "agent",
+                "https://example.com",
+                "test task",
+                "--no-vision",
+                "--vision-mode",
+                "auto",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn builds_agent_settings_from_cli_flags() {
         let settings = cli_agent_settings(CliAgentSettingsArgs {
             no_vision: true,
+            vision_mode: None,
             vision_detail_level: Some(CliVisionDetailLevel::High),
             max_failures: Some(2),
             max_actions_per_step: Some(1),
@@ -2365,7 +2427,7 @@ mod tests {
             extend_system_message: Some("Add selector guidance.".to_owned()),
         });
 
-        assert!(!settings.use_vision);
+        assert_eq!(settings.use_vision, VisionMode::Never);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::High);
         assert_eq!(settings.max_failures, 2);
         assert_eq!(settings.max_actions_per_step, 1);
@@ -2410,6 +2472,16 @@ mod tests {
             settings.extend_system_message.as_deref(),
             Some("Add selector guidance.")
         );
+    }
+
+    #[test]
+    fn builds_agent_settings_with_auto_vision_mode() {
+        let settings = cli_agent_settings(CliAgentSettingsArgs {
+            vision_mode: Some(CliVisionMode::Auto),
+            ..CliAgentSettingsArgs::default()
+        });
+
+        assert_eq!(settings.use_vision, VisionMode::Auto);
     }
 
     #[test]
