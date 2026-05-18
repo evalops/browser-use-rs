@@ -118,11 +118,48 @@ impl AgentTask {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentOutput {
+    #[serde(default, skip_serializing_if = "AgentCurrentState::is_empty")]
     pub current_state: AgentCurrentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_previous_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_plan_item: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_update: Option<Vec<String>>,
     pub action: Vec<BrowserAction>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+impl AgentOutput {
+    #[must_use]
+    pub fn current_brain(&self) -> AgentCurrentState {
+        AgentCurrentState {
+            thinking: self
+                .thinking
+                .clone()
+                .or_else(|| self.current_state.thinking.clone()),
+            evaluation_previous_goal: self
+                .evaluation_previous_goal
+                .clone()
+                .or_else(|| self.current_state.evaluation_previous_goal.clone()),
+            memory: self
+                .memory
+                .clone()
+                .or_else(|| self.current_state.memory.clone()),
+            next_goal: self
+                .next_goal
+                .clone()
+                .or_else(|| self.current_state.next_goal.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCurrentState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
@@ -132,6 +169,16 @@ pub struct AgentCurrentState {
     pub memory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_goal: Option<String>,
+}
+
+impl AgentCurrentState {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.thinking.is_none()
+            && self.evaluation_previous_goal.is_none()
+            && self.memory.is_none()
+            && self.next_goal.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2126,6 +2173,58 @@ mod tests {
     }
 
     #[test]
+    fn agent_output_accepts_flattened_planning_shape() {
+        let output: AgentOutput = serde_json::from_value(serde_json::json!({
+            "thinking": "Need a plan",
+            "evaluation_previous_goal": "No previous step",
+            "memory": "Need to search",
+            "next_goal": "Open search",
+            "current_plan_item": 1,
+            "plan_update": ["Find search box", "Submit query"],
+            "action": [
+                {
+                    "done": {
+                        "text": "planned",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        }))
+        .expect("flattened agent output");
+
+        assert!(output.current_state.is_empty());
+        assert_eq!(output.current_plan_item, Some(1));
+        assert_eq!(
+            output.plan_update.as_ref().expect("plan update"),
+            &vec!["Find search box".to_owned(), "Submit query".to_owned()]
+        );
+        let brain = output.current_brain();
+        assert_eq!(brain.thinking.as_deref(), Some("Need a plan"));
+        assert_eq!(
+            brain.evaluation_previous_goal.as_deref(),
+            Some("No previous step")
+        );
+        assert_eq!(brain.memory.as_deref(), Some("Need to search"));
+        assert_eq!(brain.next_goal.as_deref(), Some("Open search"));
+
+        let serialized = serde_json::to_value(&output).expect("serialize output");
+        assert!(serialized.get("current_state").is_none());
+        assert_eq!(serialized["current_plan_item"], 1);
+        assert_eq!(serialized["plan_update"][0], "Find search box");
+    }
+
+    #[test]
+    fn agent_output_schema_exposes_planning_fields() {
+        let schema = schema_for_agent_output();
+        let schema_text = serde_json::to_string(&schema).expect("schema text");
+
+        assert!(schema_text.contains("current_plan_item"));
+        assert!(schema_text.contains("plan_update"));
+        assert!(schema_text.contains("evaluation_previous_goal"));
+    }
+
+    #[test]
     fn history_returns_latest_done_result() {
         let history = AgentHistory {
             items: vec![AgentHistoryItem {
@@ -2215,6 +2314,12 @@ mod tests {
                 AgentHistoryItem {
                     model_output: Some(AgentOutput {
                         current_state: current_state.clone(),
+                        thinking: None,
+                        evaluation_previous_goal: None,
+                        memory: None,
+                        next_goal: None,
+                        current_plan_item: None,
+                        plan_update: None,
                         action: vec![BrowserAction::Click(ClickElementAction {
                             index: Some(1),
                             coordinate_x: None,
@@ -2233,6 +2338,12 @@ mod tests {
                 AgentHistoryItem {
                     model_output: Some(AgentOutput {
                         current_state,
+                        thinking: None,
+                        evaluation_previous_goal: None,
+                        memory: None,
+                        next_goal: None,
+                        current_plan_item: None,
+                        plan_update: None,
                         action: vec![BrowserAction::Done(DoneAction {
                             text: "finished".to_owned(),
                             success: true,
@@ -3828,6 +3939,12 @@ mod tests {
                             memory: None,
                             next_goal: None,
                         },
+                        thinking: None,
+                        evaluation_previous_goal: None,
+                        memory: None,
+                        next_goal: None,
+                        current_plan_item: None,
+                        plan_update: None,
                         action: vec![BrowserAction::Click(ClickElementAction {
                             index: Some(1),
                             coordinate_x: None,
