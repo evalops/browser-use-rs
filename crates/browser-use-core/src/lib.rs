@@ -40,6 +40,8 @@ pub struct AgentSettings {
     pub vision_detail_level: ImageDetailLevel,
     #[serde(default = "default_max_failures")]
     pub max_failures: u32,
+    #[serde(default)]
+    pub generate_gif: GenerateGif,
     #[serde(default = "default_max_actions_per_step")]
     pub max_actions_per_step: usize,
     #[serde(default = "default_llm_timeout_seconds")]
@@ -74,6 +76,10 @@ pub struct AgentSettings {
     pub use_judge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground_truth: Option<String>,
+    #[serde(default)]
+    pub calculate_cost: bool,
+    #[serde(default)]
+    pub include_tool_call_examples: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_conversation_path: Option<String>,
     #[serde(
@@ -223,6 +229,7 @@ impl Default for AgentSettings {
             use_vision: default_use_vision(),
             vision_detail_level: default_vision_detail_level(),
             max_failures: default_max_failures(),
+            generate_gif: GenerateGif::default(),
             max_actions_per_step: default_max_actions_per_step(),
             llm_timeout_seconds: default_llm_timeout_seconds(),
             step_timeout_seconds: default_step_timeout_seconds(),
@@ -240,6 +247,8 @@ impl Default for AgentSettings {
             flash_mode: false,
             use_judge: default_use_judge(),
             ground_truth: None,
+            calculate_cost: false,
+            include_tool_call_examples: false,
             save_conversation_path: None,
             save_conversation_path_encoding: default_save_conversation_path_encoding(),
             include_attributes: Vec::new(),
@@ -250,6 +259,96 @@ impl Default for AgentSettings {
             override_system_message: None,
             extend_system_message: None,
         }
+    }
+}
+
+/// Upstream-compatible GIF generation setting.
+///
+/// Python browser-use accepts `False`, `True`, or a string output path. The
+/// Rust runtime preserves that public shape even before GIF rendering side
+/// effects are implemented.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum GenerateGif {
+    #[default]
+    Disabled,
+    Enabled,
+    Path(String),
+}
+
+impl Serialize for GenerateGif {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Enabled => serializer.serialize_bool(true),
+            Self::Path(path) => serializer.serialize_str(path),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GenerateGif {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(GenerateGifVisitor)
+    }
+}
+
+struct GenerateGifVisitor;
+
+impl<'de> de::Visitor<'de> for GenerateGifVisitor {
+    type Value = GenerateGif;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, or a GIF output path string")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            GenerateGif::Enabled
+        } else {
+            GenerateGif::Disabled
+        })
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(match value.trim().to_ascii_lowercase().as_str() {
+            "true" => GenerateGif::Enabled,
+            "false" => GenerateGif::Disabled,
+            _ => GenerateGif::Path(value.to_owned()),
+        })
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_str(&value)
+    }
+}
+
+impl JsonSchema for GenerateGif {
+    fn schema_name() -> String {
+        "GenerateGif".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                { "type": "string" }
+            ]
+        }))
+        .expect("valid GenerateGif JSON schema")
     }
 }
 
@@ -6222,6 +6321,7 @@ mod tests {
         assert_eq!(settings.use_vision, VisionMode::Always);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::Auto);
         assert_eq!(settings.max_failures, 5);
+        assert_eq!(settings.generate_gif, GenerateGif::Disabled);
         assert_eq!(settings.max_actions_per_step, 5);
         assert_eq!(settings.llm_timeout_seconds, 60);
         assert_eq!(settings.step_timeout_seconds, 180);
@@ -6239,6 +6339,8 @@ mod tests {
         assert!(!settings.flash_mode);
         assert!(settings.use_judge);
         assert_eq!(settings.ground_truth, None);
+        assert!(!settings.calculate_cost);
+        assert!(!settings.include_tool_call_examples);
         assert_eq!(settings.save_conversation_path, None);
         assert_eq!(
             settings.save_conversation_path_encoding.as_deref(),
@@ -6251,6 +6353,39 @@ mod tests {
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
+    }
+
+    #[test]
+    fn generate_gif_preserves_upstream_json_shape() {
+        assert_eq!(
+            serde_json::to_value(GenerateGif::Disabled).expect("serialize disabled"),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            serde_json::to_value(GenerateGif::Enabled).expect("serialize enabled"),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            serde_json::to_value(GenerateGif::Path("trace.gif".to_owned()))
+                .expect("serialize path"),
+            serde_json::json!("trace.gif")
+        );
+
+        assert_eq!(
+            serde_json::from_value::<GenerateGif>(serde_json::json!(false))
+                .expect("deserialize false"),
+            GenerateGif::Disabled
+        );
+        assert_eq!(
+            serde_json::from_value::<GenerateGif>(serde_json::json!(true))
+                .expect("deserialize true"),
+            GenerateGif::Enabled
+        );
+        assert_eq!(
+            serde_json::from_value::<GenerateGif>(serde_json::json!("trace.gif"))
+                .expect("deserialize path"),
+            GenerateGif::Path("trace.gif".to_owned())
+        );
     }
 
     #[test]
