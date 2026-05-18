@@ -219,12 +219,27 @@ impl AgentCurrentState {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JudgementResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    pub verdict: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub impossible_task: bool,
+    #[serde(default)]
+    pub reached_captcha: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ActionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extracted_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judgement: Option<JudgementResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub long_term_memory: Option<String>,
     #[serde(default)]
@@ -247,6 +262,8 @@ struct ActionResultWire {
     extracted_content: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    judgement: Option<JudgementResult>,
     #[serde(default)]
     long_term_memory: Option<String>,
     #[serde(default)]
@@ -278,6 +295,7 @@ impl<'de> Deserialize<'de> for ActionResult {
         Ok(Self {
             extracted_content: wire.extracted_content,
             error: wire.error,
+            judgement: wire.judgement,
             long_term_memory: wire.long_term_memory,
             include_extracted_content_only_once: wire.include_extracted_content_only_once,
             include_in_memory: wire.include_in_memory,
@@ -296,6 +314,7 @@ impl ActionResult {
         Self {
             extracted_content: Some(text.clone()),
             error: None,
+            judgement: None,
             long_term_memory: Some(text),
             include_extracted_content_only_once: false,
             include_in_memory: false,
@@ -311,6 +330,7 @@ impl ActionResult {
         Self {
             extracted_content: None,
             error: Some(error.into()),
+            judgement: None,
             long_term_memory: None,
             include_extracted_content_only_once: false,
             include_in_memory: true,
@@ -326,6 +346,7 @@ impl ActionResult {
         Self {
             extracted_content: Some(text.into()),
             error: None,
+            judgement: None,
             long_term_memory: None,
             include_extracted_content_only_once: false,
             include_in_memory: true,
@@ -415,6 +436,22 @@ impl AgentHistory {
     #[must_use]
     pub fn has_errors(&self) -> bool {
         self.errors().iter().any(Option::is_some)
+    }
+
+    #[must_use]
+    pub fn judgement(&self) -> Option<&JudgementResult> {
+        self.last_result()
+            .and_then(|result| result.judgement.as_ref())
+    }
+
+    #[must_use]
+    pub fn is_judged(&self) -> bool {
+        self.judgement().is_some()
+    }
+
+    #[must_use]
+    pub fn is_validated(&self) -> Option<bool> {
+        self.judgement().map(|judgement| judgement.verdict)
     }
 
     #[must_use]
@@ -705,6 +742,7 @@ where
                         params.text
                     )),
                     error: None,
+                    judgement: None,
                     long_term_memory: Some(format!(
                         "Tried scrolling to text '{}' but it was not found",
                         params.text
@@ -733,6 +771,7 @@ where
                     include_extracted_content_only_once: long_term_memory != result_text,
                     extracted_content: Some(result_text),
                     error: None,
+                    judgement: None,
                     long_term_memory: Some(long_term_memory),
                     include_in_memory: true,
                     is_done: false,
@@ -772,6 +811,7 @@ where
                 Ok(ActionResult {
                     extracted_content: Some(format!("Screenshot saved to {file_name}")),
                     error: None,
+                    judgement: None,
                     long_term_memory: Some(format!("Screenshot saved to {file_name}")),
                     include_extracted_content_only_once: true,
                     include_in_memory: true,
@@ -784,6 +824,7 @@ where
                 Ok(ActionResult {
                     extracted_content: Some("Requested screenshot for next observation".to_owned()),
                     error: None,
+                    judgement: None,
                     long_term_memory: None,
                     include_extracted_content_only_once: false,
                     include_in_memory: false,
@@ -936,6 +977,7 @@ where
             Ok(ActionResult {
                 extracted_content: Some(format!("Saved PDF to {file_name}")),
                 error: None,
+                judgement: None,
                 long_term_memory: Some(format!("Saved PDF to {file_name}")),
                 include_extracted_content_only_once: true,
                 include_in_memory: true,
@@ -1082,6 +1124,7 @@ fn extract_action_result(
     ActionResult {
         extracted_content: Some(rendered),
         error: None,
+        judgement: None,
         long_term_memory: Some(memory),
         include_extracted_content_only_once: true,
         include_in_memory: true,
@@ -1448,6 +1491,7 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
     Ok(ActionResult {
         extracted_content: Some(format!("Read file {file_name}:\n{content}")),
         error: None,
+        judgement: None,
         long_term_memory: Some(memory),
         include_extracted_content_only_once: true,
         include_in_memory: true,
@@ -2360,19 +2404,21 @@ fn render_previous_results(history: &AgentHistory, max_history_items: Option<usi
         .rev()
         .collect();
     let latest_recent_index = recent_items.len().saturating_sub(1);
-    let rendered: Vec<String> = recent_items
-        .into_iter()
-        .enumerate()
-        .flat_map(|(step_index, item)| {
-            item.result
-                .iter()
-                .enumerate()
-                .map(move |(result_index, result)| {
-                    let text = render_result_for_prompt(result, step_index == latest_recent_index);
-                    format!("{}.{} {}", step_index + 1, result_index + 1, text)
-                })
-        })
-        .collect();
+    let mut rendered = Vec::new();
+    for (step_index, item) in recent_items.into_iter().enumerate() {
+        let is_latest_step = step_index == latest_recent_index;
+        let mut read_state_index = 0;
+        for (result_index, result) in item.result.iter().enumerate() {
+            let text = render_result_for_prompt(result, is_latest_step, read_state_index);
+            if is_latest_step
+                && result.include_extracted_content_only_once
+                && result.extracted_content.is_some()
+            {
+                read_state_index += 1;
+            }
+            rendered.push(format!("{}.{} {}", step_index + 1, result_index + 1, text));
+        }
+    }
 
     let previous_results = if rendered.is_empty() {
         "None".to_owned()
@@ -2524,17 +2570,29 @@ fn consecutive_stagnant_pages(history: &AgentHistory, state: &BrowserStateSummar
     count
 }
 
-fn render_result_for_prompt(result: &ActionResult, is_latest_step: bool) -> String {
+fn render_result_for_prompt(
+    result: &ActionResult,
+    is_latest_step: bool,
+    read_state_index: usize,
+) -> String {
     if let Some(error) = result.error.as_deref() {
         return truncate_error_for_prompt(error);
     }
 
-    if result.include_extracted_content_only_once && !is_latest_step {
-        return result
-            .long_term_memory
-            .as_deref()
-            .unwrap_or("[extracted content omitted after first prompt]")
-            .to_owned();
+    if result.include_extracted_content_only_once {
+        if is_latest_step {
+            if let Some(extracted_content) = result.extracted_content.as_deref() {
+                return format!(
+                    "<read_state_{read_state_index}>\n{extracted_content}\n</read_state_{read_state_index}>"
+                );
+            }
+        } else {
+            return result
+                .long_term_memory
+                .as_deref()
+                .unwrap_or("[extracted content omitted after first prompt]")
+                .to_owned();
+        }
     }
 
     result
@@ -2723,6 +2781,27 @@ mod tests {
     }
 
     #[test]
+    fn action_result_deserializes_trace_judgement() {
+        let result: ActionResult = serde_json::from_value(serde_json::json!({
+            "judgement": {
+                "reasoning": "visual state matched expected result",
+                "verdict": true,
+                "failure_reason": null,
+                "impossible_task": false,
+                "reached_captcha": false
+            }
+        }))
+        .expect("judgement should deserialize");
+
+        let judgement = result.judgement.expect("judgement");
+        assert!(judgement.verdict);
+        assert_eq!(
+            judgement.reasoning.as_deref(),
+            Some("visual state matched expected result")
+        );
+    }
+
+    #[test]
     fn agent_output_accepts_flattened_planning_shape() {
         let output: AgentOutput = serde_json::from_value(serde_json::json!({
             "thinking": "Need a plan",
@@ -2895,6 +2974,87 @@ mod tests {
     }
 
     #[test]
+    fn history_judgement_helpers_use_last_result_like_browser_use() {
+        let judgement = JudgementResult {
+            reasoning: Some("trace satisfied the task".to_owned()),
+            verdict: true,
+            failure_reason: Some(String::new()),
+            impossible_task: false,
+            reached_captcha: false,
+        };
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult {
+                    extracted_content: Some("judged".to_owned()),
+                    error: None,
+                    judgement: Some(judgement.clone()),
+                    long_term_memory: None,
+                    include_extracted_content_only_once: false,
+                    include_in_memory: false,
+                    is_done: true,
+                    success: Some(true),
+                    attachments: Vec::new(),
+                    metadata: None,
+                }],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        assert_eq!(history.judgement(), Some(&judgement));
+        assert!(history.is_judged());
+        assert_eq!(history.is_validated(), Some(true));
+
+        let serialized = serde_json::to_value(&history).expect("serialize history");
+        assert_eq!(
+            serialized["items"][0]["result"][0]["judgement"]["verdict"],
+            true
+        );
+    }
+
+    #[test]
+    fn history_judgement_helpers_ignore_prior_non_terminal_judgement() {
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult {
+                        extracted_content: Some("judged earlier".to_owned()),
+                        error: None,
+                        judgement: Some(JudgementResult {
+                            reasoning: None,
+                            verdict: false,
+                            failure_reason: Some("missing final evidence".to_owned()),
+                            impossible_task: false,
+                            reached_captcha: false,
+                        }),
+                        long_term_memory: None,
+                        include_extracted_content_only_once: false,
+                        include_in_memory: false,
+                        is_done: false,
+                        success: None,
+                        attachments: Vec::new(),
+                        metadata: None,
+                    }],
+                    state: blank_state(),
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::extracted("latest result")],
+                    state: blank_state(),
+                    metadata: None,
+                },
+            ],
+        };
+
+        assert_eq!(history.judgement(), None);
+        assert!(!history.is_judged());
+        assert_eq!(history.is_validated(), None);
+    }
+
+    #[test]
     fn history_completion_helpers_use_last_result_like_browser_use() {
         let history = AgentHistory {
             items: vec![
@@ -3042,6 +3202,45 @@ mod tests {
         assert!((history.total_duration_seconds() - 3.5).abs() < f64::EPSILON);
     }
 
+    #[test]
+    fn history_judgement_helpers_use_terminal_result() {
+        let judgement = JudgementResult {
+            reasoning: Some("visual state did not match".to_owned()),
+            verdict: false,
+            failure_reason: Some("missing confirmation".to_owned()),
+            impossible_task: false,
+            reached_captcha: false,
+        };
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![ActionResult {
+                    extracted_content: Some("validated".to_owned()),
+                    error: None,
+                    judgement: Some(judgement),
+                    long_term_memory: None,
+                    include_extracted_content_only_once: false,
+                    include_in_memory: false,
+                    is_done: true,
+                    success: Some(false),
+                    attachments: Vec::new(),
+                    metadata: None,
+                }],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        assert!(history.is_judged());
+        assert_eq!(history.is_validated(), Some(false));
+        assert_eq!(
+            history
+                .judgement()
+                .and_then(|judgement| judgement.failure_reason.as_deref()),
+            Some("missing confirmation")
+        );
+    }
+
     fn blank_state() -> BrowserStateSummary {
         BrowserStateSummary {
             dom_state: Default::default(),
@@ -3090,6 +3289,7 @@ mod tests {
             ActionResult {
                 extracted_content: Some(action.name().to_owned()),
                 error: None,
+                judgement: None,
                 long_term_memory: None,
                 include_extracted_content_only_once: false,
                 include_in_memory: false,
@@ -5070,6 +5270,7 @@ mod tests {
                     result: vec![ActionResult {
                         extracted_content: Some("very large extracted payload".to_owned()),
                         error: None,
+                        judgement: None,
                         long_term_memory: Some("Large extraction saved to file".to_owned()),
                         include_extracted_content_only_once: true,
                         include_in_memory: true,
@@ -5105,6 +5306,7 @@ mod tests {
                 result: vec![ActionResult {
                     extracted_content: Some("fresh extracted payload".to_owned()),
                     error: None,
+                    judgement: None,
                     long_term_memory: Some("Extraction saved to file".to_owned()),
                     include_extracted_content_only_once: true,
                     include_in_memory: true,
@@ -5121,7 +5323,52 @@ mod tests {
         let rendered = render_previous_results(&history, None);
 
         assert!(rendered.contains("fresh extracted payload"));
+        assert!(rendered.contains("<read_state_0>\nfresh extracted payload\n</read_state_0>"));
         assert!(!rendered.contains("Extraction saved to file"));
+    }
+
+    #[test]
+    fn previous_results_number_latest_read_state_blocks_like_upstream() {
+        let history = AgentHistory {
+            items: vec![AgentHistoryItem {
+                model_output: None,
+                result: vec![
+                    ActionResult {
+                        extracted_content: Some("first payload".to_owned()),
+                        error: None,
+                        judgement: None,
+                        long_term_memory: Some("first summary".to_owned()),
+                        include_extracted_content_only_once: true,
+                        include_in_memory: true,
+                        is_done: false,
+                        success: None,
+                        attachments: Vec::new(),
+                        metadata: None,
+                    },
+                    ActionResult {
+                        extracted_content: Some("second payload".to_owned()),
+                        error: None,
+                        judgement: None,
+                        long_term_memory: Some("second summary".to_owned()),
+                        include_extracted_content_only_once: true,
+                        include_in_memory: true,
+                        is_done: false,
+                        success: None,
+                        attachments: Vec::new(),
+                        metadata: None,
+                    },
+                ],
+                state: blank_state(),
+                metadata: None,
+            }],
+        };
+
+        let rendered = render_previous_results(&history, None);
+
+        assert!(rendered.contains("<read_state_0>\nfirst payload\n</read_state_0>"));
+        assert!(rendered.contains("<read_state_1>\nsecond payload\n</read_state_1>"));
+        assert!(!rendered.contains("first summary"));
+        assert!(!rendered.contains("second summary"));
     }
 
     #[test]

@@ -49,9 +49,10 @@ includes:
   configurable planning prompt nudges, thinking/flash output-schema controls,
   upstream-style flattened required output fields, structured extraction
   metadata, per-step timing metadata, configurable prompt-history and
-  clickable-element text limits, upstream-style prompt context and error
-  truncation, upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, step-error, model-output/action/thought,
+  clickable-element text limits, upstream-style one-time read-state prompt
+  blocks, upstream-style prompt context and error truncation, upstream-style
+  last-result completion helpers, upstream-compatible action-result success
+  validation, judgement results, step-error, model-output/action/thought,
   duration, action, and URL history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
