@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active tracked parity issue is open. The next slice should be filed before
-implementation starts so public progress stays auditable.
+- [#41 Apply interacted-element rematches to historical action replay](https://github.com/evalops/browser-use-rs/issues/41)
 
 ## Completed Tracks
 
@@ -223,4 +222,6 @@ Implemented:
 
 Next:
 
-1. Open the next narrowly scoped parity issue before starting implementation.
+1. Continue [#41](https://github.com/evalops/browser-use-rs/issues/41) by
+   applying interacted-element rematches to historical indexed actions while
+   preserving normal live execution semantics.
