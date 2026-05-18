@@ -162,6 +162,44 @@ pub struct DomInteractedElement {
     pub ax_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DomInteractedElementMatchLevel {
+    Exact,
+    Stable,
+    XPath,
+    AxName,
+    Attribute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DomInteractedElementMatchFailureReason {
+    EmptySelectorMap,
+    Ambiguous,
+    NotFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DomInteractedElementMatch {
+    pub index: u32,
+    pub level: DomInteractedElementMatchLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DomInteractedElementMatchFailure {
+    pub reason: DomInteractedElementMatchFailureReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<DomInteractedElementMatchLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_indices: Vec<u32>,
+    pub message: String,
+}
+
 impl DomInteractedElement {
     #[must_use]
     pub fn from_element(element: &DomElementRef) -> Self {
@@ -196,6 +234,13 @@ impl DomInteractedElement {
                         .cloned()
                 }),
         }
+    }
+
+    pub fn rematch(
+        &self,
+        state: &SerializedDomState,
+    ) -> Result<DomInteractedElementMatch, DomInteractedElementMatchFailure> {
+        rematch_interacted_element(self, state)
     }
 }
 
@@ -298,8 +343,7 @@ fn interacted_element_hash(
         .map(|value| format!("|ax_name={value}"))
         .unwrap_or_default();
     let source = format!(
-        "{}/{}|{}{}",
-        element.target_id,
+        "{}|{}{}",
         element.tag_name.to_ascii_lowercase(),
         attributes_string,
         ax_name
@@ -382,6 +426,142 @@ fn xpath_literal(value: &str) -> String {
         .map(|part| format!("'{part}'"))
         .collect::<Vec<_>>();
     format!("concat({})", parts.join(", \"'\", "))
+}
+
+pub fn rematch_interacted_element(
+    historical: &DomInteractedElement,
+    state: &SerializedDomState,
+) -> Result<DomInteractedElementMatch, DomInteractedElementMatchFailure> {
+    if state.selector_map.is_empty() {
+        return Err(DomInteractedElementMatchFailure {
+            reason: DomInteractedElementMatchFailureReason::EmptySelectorMap,
+            level: None,
+            attribute: None,
+            candidate_indices: Vec::new(),
+            message: "cannot rematch interacted element against an empty selector map".to_owned(),
+        });
+    }
+
+    if let Some(match_result) = unique_match(
+        DomInteractedElementMatchLevel::Exact,
+        None,
+        matching_indices(state, |element| {
+            DomInteractedElement::from_element(element).element_hash == historical.element_hash
+        }),
+    )? {
+        return Ok(match_result);
+    }
+
+    if let Some(stable_hash) = historical.stable_hash
+        && let Some(match_result) = unique_match(
+            DomInteractedElementMatchLevel::Stable,
+            None,
+            matching_indices(state, |element| {
+                DomInteractedElement::from_element(element).stable_hash == Some(stable_hash)
+            }),
+        )?
+    {
+        return Ok(match_result);
+    }
+
+    if !historical.x_path.is_empty()
+        && let Some(match_result) = unique_match(
+            DomInteractedElementMatchLevel::XPath,
+            None,
+            matching_indices(state, |element| {
+                DomInteractedElement::from_element(element).x_path == historical.x_path
+            }),
+        )?
+    {
+        return Ok(match_result);
+    }
+
+    if let Some(ax_name) = historical
+        .ax_name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        && let Some(match_result) = unique_match(
+            DomInteractedElementMatchLevel::AxName,
+            None,
+            matching_indices(state, |element| {
+                element
+                    .tag_name
+                    .eq_ignore_ascii_case(historical.node_name.as_str())
+                    && DomInteractedElement::from_element(element)
+                        .ax_name
+                        .as_deref()
+                        == Some(ax_name)
+            }),
+        )?
+    {
+        return Ok(match_result);
+    }
+
+    for attribute in ["name", "id", "aria-label"] {
+        let Some(expected) = historical
+            .attributes
+            .get(attribute)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if let Some(match_result) = unique_match(
+            DomInteractedElementMatchLevel::Attribute,
+            Some(attribute),
+            matching_indices(state, |element| {
+                element
+                    .tag_name
+                    .eq_ignore_ascii_case(historical.node_name.as_str())
+                    && element.attributes.get(attribute) == Some(expected)
+            }),
+        )? {
+            return Ok(match_result);
+        }
+    }
+
+    Err(DomInteractedElementMatchFailure {
+        reason: DomInteractedElementMatchFailureReason::NotFound,
+        level: None,
+        attribute: None,
+        candidate_indices: Vec::new(),
+        message: format!(
+            "no current selector-map element matched historical <{}> interacted element",
+            historical.node_name
+        ),
+    })
+}
+
+fn matching_indices(
+    state: &SerializedDomState,
+    mut predicate: impl FnMut(&DomElementRef) -> bool,
+) -> Vec<u32> {
+    state
+        .selector_map
+        .iter()
+        .filter_map(|(index, element)| predicate(element).then_some(*index))
+        .collect()
+}
+
+fn unique_match(
+    level: DomInteractedElementMatchLevel,
+    attribute: Option<&str>,
+    indices: Vec<u32>,
+) -> Result<Option<DomInteractedElementMatch>, DomInteractedElementMatchFailure> {
+    match indices.as_slice() {
+        [] => Ok(None),
+        [index] => Ok(Some(DomInteractedElementMatch {
+            index: *index,
+            level,
+            attribute: attribute.map(str::to_owned),
+        })),
+        _ => Err(DomInteractedElementMatchFailure {
+            reason: DomInteractedElementMatchFailureReason::Ambiguous,
+            level: Some(level),
+            attribute: attribute.map(str::to_owned),
+            candidate_indices: indices,
+            message: format!("multiple selector-map elements matched at {level:?} level"),
+        }),
+    }
 }
 
 /// Compact page-shape statistics rendered into the agent prompt.
@@ -1372,6 +1552,28 @@ impl BrowserStateSummary {
 mod tests {
     use super::*;
 
+    fn test_element(
+        index: u32,
+        tag_name: &str,
+        attributes: BTreeMap<String, String>,
+    ) -> DomElementRef {
+        DomElementRef {
+            index,
+            target_id: format!("target-{index}"),
+            backend_node_id: u64::from(index),
+            node_id: Some(u64::from(index)),
+            tag_name: tag_name.to_owned(),
+            role: None,
+            name: None,
+            text: None,
+            attributes,
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        }
+    }
+
     #[test]
     fn short_target_id_matches_browser_use_display_shape() {
         let tab = TabInfo {
@@ -1616,6 +1818,175 @@ mod tests {
         let interacted = DomInteractedElement::from_element(&element);
 
         assert_eq!(interacted.ax_name.as_deref(), Some("Fallback Label"));
+    }
+
+    #[test]
+    fn interacted_element_rematches_exact_hash_across_targets() {
+        let historical = DomInteractedElement::from_element(&test_element(
+            1,
+            "button",
+            BTreeMap::from([
+                ("id".to_owned(), "save".to_owned()),
+                ("class".to_owned(), "btn primary".to_owned()),
+            ]),
+        ));
+        let current = test_element(
+            9,
+            "button",
+            BTreeMap::from([
+                ("id".to_owned(), "save".to_owned()),
+                ("class".to_owned(), "btn primary".to_owned()),
+            ]),
+        );
+        let state = SerializedDomState::from_elements(vec![current]);
+
+        assert_eq!(
+            historical.rematch(&state).expect("exact match"),
+            DomInteractedElementMatch {
+                index: 9,
+                level: DomInteractedElementMatchLevel::Exact,
+                attribute: None,
+            }
+        );
+    }
+
+    #[test]
+    fn interacted_element_rematches_stable_hash_after_dynamic_class_change() {
+        let historical = DomInteractedElement::from_element(&test_element(
+            1,
+            "button",
+            BTreeMap::from([
+                ("data-testid".to_owned(), "save".to_owned()),
+                ("class".to_owned(), "btn primary hover selected".to_owned()),
+            ]),
+        ));
+        let current = test_element(
+            4,
+            "button",
+            BTreeMap::from([
+                ("data-testid".to_owned(), "save".to_owned()),
+                ("class".to_owned(), "active primary btn loading".to_owned()),
+            ]),
+        );
+        let state = SerializedDomState::from_elements(vec![current]);
+
+        assert_eq!(
+            historical.rematch(&state).expect("stable match").level,
+            DomInteractedElementMatchLevel::Stable
+        );
+        assert_eq!(historical.rematch(&state).expect("stable match").index, 4);
+    }
+
+    #[test]
+    fn interacted_element_rematches_xpath_when_hashes_are_unavailable() {
+        let current = test_element(
+            5,
+            "a",
+            BTreeMap::from([("id".to_owned(), "docs".to_owned())]),
+        );
+        let mut historical = DomInteractedElement::from_element(&current);
+        historical.element_hash = 0;
+        historical.stable_hash = None;
+        let state = SerializedDomState::from_elements(vec![current]);
+
+        assert_eq!(
+            historical.rematch(&state).expect("xpath match"),
+            DomInteractedElementMatch {
+                index: 5,
+                level: DomInteractedElementMatchLevel::XPath,
+                attribute: None,
+            }
+        );
+    }
+
+    #[test]
+    fn interacted_element_rematches_ax_name_when_structure_changes() {
+        let mut historical =
+            DomInteractedElement::from_element(&test_element(1, "button", BTreeMap::new()));
+        historical.element_hash = 0;
+        historical.stable_hash = None;
+        historical.x_path = String::new();
+        historical.ax_name = Some("Open menu".to_owned());
+        let mut current = test_element(8, "button", BTreeMap::new());
+        current.name = Some("Open menu".to_owned());
+        let state = SerializedDomState::from_elements(vec![current]);
+
+        assert_eq!(
+            historical.rematch(&state).expect("ax match").level,
+            DomInteractedElementMatchLevel::AxName
+        );
+    }
+
+    #[test]
+    fn interacted_element_rematches_unique_attribute_fallback() {
+        let mut historical = DomInteractedElement::from_element(&test_element(
+            1,
+            "input",
+            BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+        ));
+        historical.element_hash = 0;
+        historical.stable_hash = None;
+        historical.x_path = String::new();
+        historical.ax_name = None;
+        let state = SerializedDomState::from_elements(vec![
+            test_element(
+                3,
+                "input",
+                BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+            ),
+            test_element(
+                4,
+                "input",
+                BTreeMap::from([("name".to_owned(), "password".to_owned())]),
+            ),
+        ]);
+
+        assert_eq!(
+            historical.rematch(&state).expect("attribute match"),
+            DomInteractedElementMatch {
+                index: 3,
+                level: DomInteractedElementMatchLevel::Attribute,
+                attribute: Some("name".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn interacted_element_rematch_reports_ambiguous_and_missing_matches() {
+        let mut historical =
+            DomInteractedElement::from_element(&test_element(1, "button", BTreeMap::new()));
+        historical.element_hash = 0;
+        historical.stable_hash = None;
+        historical.x_path = String::new();
+        historical.ax_name = Some("Duplicate".to_owned());
+        let mut first = test_element(1, "button", BTreeMap::new());
+        first.name = Some("Duplicate".to_owned());
+        let mut second = test_element(2, "button", BTreeMap::new());
+        second.name = Some("Duplicate".to_owned());
+        let state = SerializedDomState::from_elements(vec![first, second]);
+
+        let error = historical.rematch(&state).expect_err("ambiguous match");
+        assert_eq!(
+            error.reason,
+            DomInteractedElementMatchFailureReason::Ambiguous
+        );
+        assert_eq!(error.level, Some(DomInteractedElementMatchLevel::AxName));
+        assert_eq!(error.candidate_indices, vec![1, 2]);
+
+        let empty = historical
+            .rematch(&SerializedDomState::default())
+            .expect_err("empty selector map");
+        assert_eq!(
+            empty.reason,
+            DomInteractedElementMatchFailureReason::EmptySelectorMap
+        );
+
+        historical.ax_name = Some("Missing".to_owned());
+        let missing = historical.rematch(&state).expect_err("missing match");
+        assert_eq!(
+            missing.reason,
+            DomInteractedElementMatchFailureReason::NotFound
+        );
     }
 
     #[test]
