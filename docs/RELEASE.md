@@ -8,7 +8,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
 
 ## Supported
 
-- Local Chrome/Chromium launch and CDP attach.
+- Local Chrome/Chromium launch and CDP attach, including upstream-style
+  `--proxy-server` and `--proxy-bypass-list` launch flags from
+  `BrowserProfile.proxy`.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

@@ -1110,6 +1110,8 @@ impl Default for BrowserViewport {
 pub struct ProxySettings {
     pub server: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bypass: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
@@ -1766,7 +1768,15 @@ impl BrowserProfile {
         }
 
         if let Some(proxy) = &self.proxy {
-            args.push(format!("--proxy-server={}", proxy.server));
+            let proxy_server = proxy.server.as_str();
+            if !proxy_server.is_empty() {
+                args.push(format!("--proxy-server={proxy_server}"));
+                if let Some(proxy_bypass) = proxy.bypass.as_deref() {
+                    if !proxy_bypass.is_empty() {
+                        args.push(format!("--proxy-bypass-list={proxy_bypass}"));
+                    }
+                }
+            }
         }
 
         args.extend(self.args.iter().cloned());
@@ -8161,6 +8171,7 @@ mod tests {
             args: vec!["--disable-gpu".to_owned()],
             proxy: Some(ProxySettings {
                 server: "http://127.0.0.1:8080".to_owned(),
+                bypass: None,
                 username: None,
                 password: None,
             }),
@@ -8179,6 +8190,120 @@ mod tests {
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn proxy_settings_serializes_optional_bypass() {
+        let without_bypass = ProxySettings {
+            server: "socks5://127.0.0.1:1080".to_owned(),
+            bypass: None,
+            username: None,
+            password: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&without_bypass).expect("serialize proxy without bypass"),
+            json!({ "server": "socks5://127.0.0.1:1080" })
+        );
+
+        let with_bypass = ProxySettings {
+            server: "http://proxy.internal:8080".to_owned(),
+            bypass: Some("localhost,127.0.0.1,*.internal".to_owned()),
+            username: Some("alice".to_owned()),
+            password: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&with_bypass).expect("serialize proxy with bypass"),
+            json!({
+                "server": "http://proxy.internal:8080",
+                "bypass": "localhost,127.0.0.1,*.internal",
+                "username": "alice"
+            })
+        );
+
+        let decoded: ProxySettings = serde_json::from_value(json!({
+            "server": "http://proxy.internal:8080"
+        }))
+        .expect("deserialize proxy without bypass");
+        assert_eq!(decoded.bypass, None);
+    }
+
+    #[test]
+    fn launch_plan_emits_proxy_bypass_after_proxy_server() {
+        let profile = BrowserProfile {
+            args: vec!["--disable-gpu".to_owned()],
+            proxy: Some(ProxySettings {
+                server: "http://proxy.internal:8080".to_owned(),
+                bypass: Some("localhost,127.0.0.1,*.internal".to_owned()),
+                username: None,
+                password: None,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let proxy_server_index = plan
+            .args
+            .iter()
+            .position(|arg| arg == "--proxy-server=http://proxy.internal:8080")
+            .expect("proxy server arg");
+        let proxy_bypass_index = plan
+            .args
+            .iter()
+            .position(|arg| arg == "--proxy-bypass-list=localhost,127.0.0.1,*.internal")
+            .expect("proxy bypass arg");
+
+        assert_eq!(proxy_bypass_index, proxy_server_index + 1);
+        assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_skips_proxy_bypass_without_server_or_value() {
+        let bypass_without_server = BrowserProfile {
+            proxy: Some(ProxySettings {
+                server: String::new(),
+                bypass: Some("localhost".to_owned()),
+                username: None,
+                password: None,
+            }),
+            ..BrowserProfile::default()
+        }
+        .launch_plan();
+
+        assert!(
+            !bypass_without_server
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--proxy-server="))
+        );
+        assert!(
+            !bypass_without_server
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--proxy-bypass-list="))
+        );
+
+        let empty_bypass = BrowserProfile {
+            proxy: Some(ProxySettings {
+                server: "http://proxy.internal:8080".to_owned(),
+                bypass: Some(String::new()),
+                username: None,
+                password: None,
+            }),
+            ..BrowserProfile::default()
+        }
+        .launch_plan();
+
+        assert!(
+            empty_bypass
+                .args
+                .contains(&"--proxy-server=http://proxy.internal:8080".to_owned())
+        );
+        assert!(
+            !empty_bypass
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--proxy-bypass-list="))
+        );
     }
 
     #[test]

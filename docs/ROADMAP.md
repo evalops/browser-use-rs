@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #84 lands and CI is green.
+- [#85 Add BrowserProfile proxy bypass launch parity](https://github.com/evalops/browser-use-rs/issues/85)
 
 ## Completed Tracks
 
@@ -127,7 +126,8 @@ Implemented:
   context, and extracted-content numbering that survives replay.
 - `done.files_to_display` parity for appending readable text files to the final
   result and returning attachment paths.
-- Browser profile launch planning and Chrome `DevToolsActivePort` endpoint parsing.
+- Browser profile launch planning, including upstream-style proxy-server and
+  proxy-bypass Chrome flags, and Chrome `DevToolsActivePort` endpoint parsing.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

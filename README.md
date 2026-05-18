@@ -21,8 +21,9 @@ includes:
   PDF capture, uploads, indexed actions, browser-profile URL access policies
   for navigation, blocked-navigation preflight diagnostics,
   navigation-capable actions, redirects, and newly observed tabs, and page
-  state with browser-use-style short tab ids,
-  plus typed Browser Use Cloud creation/stop parameters, current-session
+  state with browser-use-style short tab ids. Launch profiles include
+  upstream-style proxy-server and proxy-bypass Chrome flags, plus typed Browser
+  Use Cloud creation/stop parameters, current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint
   conversion that preserve upstream's omitted/null/proxy-country distinction,
