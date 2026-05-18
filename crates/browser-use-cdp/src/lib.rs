@@ -1674,6 +1674,131 @@ impl BrowserLifecycleEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserLifecycleAdapterEventKind {
+    BrowserStop,
+    BrowserConnected,
+    BrowserStopped,
+    BrowserReconnecting,
+    BrowserReconnected,
+    TabCreated,
+    TabClosed,
+    AgentFocusChanged,
+    TargetCrashed,
+    NavigationStarted,
+    NavigationComplete,
+    BrowserError,
+    JavaScriptDialogHandled,
+    DownloadStarted,
+    DownloadProgress,
+    FileDownloaded,
+    StorageState,
+    BrowserDiagnostic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrowserLifecycleAdapterEvent {
+    pub kind: BrowserLifecycleAdapterEventKind,
+    pub source_kind: BrowserLifecycleEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub details: BTreeMap<String, String>,
+    pub message: String,
+}
+
+impl BrowserLifecycleAdapterEvent {
+    pub fn from_lifecycle_event(event: &BrowserLifecycleEvent) -> Self {
+        let kind = match &event.kind {
+            BrowserLifecycleEventKind::BrowserConnected => {
+                BrowserLifecycleAdapterEventKind::BrowserConnected
+            }
+            BrowserLifecycleEventKind::BrowserCloseRequested => {
+                BrowserLifecycleAdapterEventKind::BrowserStop
+            }
+            BrowserLifecycleEventKind::BrowserStopped => {
+                BrowserLifecycleAdapterEventKind::BrowserStopped
+            }
+            BrowserLifecycleEventKind::BrowserReconnecting => {
+                BrowserLifecycleAdapterEventKind::BrowserReconnecting
+            }
+            BrowserLifecycleEventKind::BrowserReconnected => {
+                BrowserLifecycleAdapterEventKind::BrowserReconnected
+            }
+            BrowserLifecycleEventKind::TargetCreated => {
+                BrowserLifecycleAdapterEventKind::TabCreated
+            }
+            BrowserLifecycleEventKind::TargetClosed => BrowserLifecycleAdapterEventKind::TabClosed,
+            BrowserLifecycleEventKind::TargetSwitched => {
+                BrowserLifecycleAdapterEventKind::AgentFocusChanged
+            }
+            BrowserLifecycleEventKind::TargetCrashed => {
+                BrowserLifecycleAdapterEventKind::TargetCrashed
+            }
+            BrowserLifecycleEventKind::NavigationStarted => {
+                BrowserLifecycleAdapterEventKind::NavigationStarted
+            }
+            BrowserLifecycleEventKind::NavigationCompleted => {
+                BrowserLifecycleAdapterEventKind::NavigationComplete
+            }
+            BrowserLifecycleEventKind::NavigationFailed
+            | BrowserLifecycleEventKind::NetworkTimeout
+            | BrowserLifecycleEventKind::NavigationBlocked
+            | BrowserLifecycleEventKind::CurrentTargetResetFailed
+            | BrowserLifecycleEventKind::PopupCloseFailed => {
+                BrowserLifecycleAdapterEventKind::BrowserError
+            }
+            BrowserLifecycleEventKind::CurrentTargetReset
+            | BrowserLifecycleEventKind::PopupClosed => {
+                BrowserLifecycleAdapterEventKind::BrowserDiagnostic
+            }
+            BrowserLifecycleEventKind::JavaScriptDialogHandled => {
+                BrowserLifecycleAdapterEventKind::JavaScriptDialogHandled
+            }
+            BrowserLifecycleEventKind::DownloadStarted => {
+                BrowserLifecycleAdapterEventKind::DownloadStarted
+            }
+            BrowserLifecycleEventKind::DownloadProgress => {
+                BrowserLifecycleAdapterEventKind::DownloadProgress
+            }
+            BrowserLifecycleEventKind::FileDownloaded => {
+                BrowserLifecycleAdapterEventKind::FileDownloaded
+            }
+            BrowserLifecycleEventKind::StorageStateSaved
+            | BrowserLifecycleEventKind::StorageStateLoaded => {
+                BrowserLifecycleAdapterEventKind::StorageState
+            }
+        };
+
+        Self {
+            kind,
+            source_kind: event.kind.clone(),
+            target_id: event.target_id.clone(),
+            url: event.url.clone(),
+            reason: event.reason.clone(),
+            error: event.error.clone(),
+            details: event.details.clone(),
+            message: event.message.clone(),
+        }
+    }
+}
+
+pub fn browser_lifecycle_adapter_events(
+    events: &[BrowserLifecycleEvent],
+) -> Vec<BrowserLifecycleAdapterEvent> {
+    events
+        .iter()
+        .map(BrowserLifecycleAdapterEvent::from_lifecycle_event)
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BrowserLifecycleEventStreamError {
     #[error("lifecycle event stream closed")]
@@ -1729,6 +1854,42 @@ impl BrowserLifecycleEventSubscription {
 
     pub fn resubscribe(&self) -> Self {
         Self::new(self.receiver.resubscribe())
+    }
+}
+
+#[derive(Debug)]
+pub struct BrowserLifecycleAdapterEventSubscription {
+    subscription: BrowserLifecycleEventSubscription,
+}
+
+impl BrowserLifecycleAdapterEventSubscription {
+    pub fn new(subscription: BrowserLifecycleEventSubscription) -> Self {
+        Self { subscription }
+    }
+
+    pub fn closed() -> Self {
+        Self::new(BrowserLifecycleEventSubscription::closed())
+    }
+
+    pub async fn recv(
+        &mut self,
+    ) -> Result<BrowserLifecycleAdapterEvent, BrowserLifecycleEventStreamError> {
+        self.subscription
+            .recv()
+            .await
+            .map(|event| BrowserLifecycleAdapterEvent::from_lifecycle_event(&event))
+    }
+
+    pub fn try_recv(
+        &mut self,
+    ) -> Result<Option<BrowserLifecycleAdapterEvent>, BrowserLifecycleEventStreamError> {
+        self.subscription.try_recv().map(|event| {
+            event.map(|event| BrowserLifecycleAdapterEvent::from_lifecycle_event(&event))
+        })
+    }
+
+    pub fn resubscribe(&self) -> Self {
+        Self::new(self.subscription.resubscribe())
     }
 }
 
@@ -2800,8 +2961,16 @@ impl CdpBrowserSession {
         self.lifecycle_events.lock().await.iter().cloned().collect()
     }
 
+    pub async fn lifecycle_adapter_events(&self) -> Vec<BrowserLifecycleAdapterEvent> {
+        browser_lifecycle_adapter_events(&self.lifecycle_events().await)
+    }
+
     pub fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
         BrowserLifecycleEventSubscription::new(self.lifecycle_event_tx.subscribe())
+    }
+
+    pub fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
+        BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
     }
 
     async fn cached_element(&self, index: u32) -> Option<DomElementRef> {
@@ -6575,6 +6744,10 @@ pub trait BrowserSession: Send + Sync {
         BrowserLifecycleEventSubscription::closed()
     }
 
+    fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
+        BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
+    }
+
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
 
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
@@ -6633,6 +6806,10 @@ where
 {
     fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
         self.as_ref().subscribe_lifecycle_events()
+    }
+
+    fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
+        self.as_ref().subscribe_lifecycle_adapter_events()
     }
 
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
@@ -7289,6 +7466,154 @@ mod tests {
         assert_eq!(json[2]["kind"], "target_crashed");
         assert_eq!(json[5]["details"]["action"], "accepted");
         assert_eq!(json[8]["details"]["file_name"], "report.pdf");
+    }
+
+    #[test]
+    fn browser_lifecycle_adapter_events_map_upstream_taxonomy() {
+        let events = vec![
+            BrowserLifecycleEvent::browser_close_requested(),
+            BrowserLifecycleEvent::browser_connected("http://127.0.0.1:9222"),
+            BrowserLifecycleEvent::browser_stopped("graceful_stop"),
+            BrowserLifecycleEvent::browser_reconnecting("http://127.0.0.1:9222", 1, 3),
+            BrowserLifecycleEvent::browser_reconnected("http://127.0.0.1:9222", 1, "0.250"),
+            BrowserLifecycleEvent::target_created("target-1", "https://example.test"),
+            BrowserLifecycleEvent::target_closed("target-1"),
+            BrowserLifecycleEvent::target_switched("target-1"),
+            BrowserLifecycleEvent::target_crashed("target-1", "Inspector target crashed"),
+            BrowserLifecycleEvent::navigation_started("target-1", "https://example.test"),
+            BrowserLifecycleEvent::navigation_completed("target-1", "https://example.test"),
+            BrowserLifecycleEvent::navigation_failed(
+                "target-1",
+                "https://example.test",
+                "net::ERR_FAILED",
+            ),
+            BrowserLifecycleEvent::network_timeout("target-1", "https://example.test", "8"),
+            BrowserSecurityEvent::prevented_navigation(
+                "https://blocked.test".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserSecurityEvent::reset_current(
+                "https://blocked.test".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserSecurityEvent::reset_current_failed(
+                "https://blocked.test".to_owned(),
+                "not_in_allowed_domains".to_owned(),
+                "reset failed".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserSecurityEvent::closed_popup(
+                "https://blocked.test/popup".to_owned(),
+                "in_prohibited_domains".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserSecurityEvent::close_popup_failed(
+                "https://stuck.test/popup".to_owned(),
+                "in_prohibited_domains".to_owned(),
+                "No target with given id found".to_owned(),
+            )
+            .lifecycle_event,
+            BrowserLifecycleEvent::javascript_dialog_handled(
+                "https://example.test",
+                "alert",
+                "Hello",
+                false,
+            ),
+            BrowserLifecycleEvent::download_started(
+                "download-guid",
+                "https://example.test/report.pdf",
+                "report.pdf",
+            ),
+            BrowserLifecycleEvent::download_progress(
+                "download-guid",
+                1024,
+                Some(4096),
+                "inProgress",
+            ),
+            BrowserLifecycleEvent::file_downloaded(
+                "download-guid",
+                "/tmp/report.pdf",
+                "report.pdf",
+                4096,
+            ),
+            BrowserLifecycleEvent::storage_state_saved("/tmp/storage.json", 4, 2),
+            BrowserLifecycleEvent::storage_state_loaded("/tmp/storage.json", 4, 2),
+        ];
+
+        let adapter_events = browser_lifecycle_adapter_events(&events);
+
+        assert_eq!(
+            adapter_events
+                .iter()
+                .map(|event| &event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                &BrowserLifecycleAdapterEventKind::BrowserStop,
+                &BrowserLifecycleAdapterEventKind::BrowserConnected,
+                &BrowserLifecycleAdapterEventKind::BrowserStopped,
+                &BrowserLifecycleAdapterEventKind::BrowserReconnecting,
+                &BrowserLifecycleAdapterEventKind::BrowserReconnected,
+                &BrowserLifecycleAdapterEventKind::TabCreated,
+                &BrowserLifecycleAdapterEventKind::TabClosed,
+                &BrowserLifecycleAdapterEventKind::AgentFocusChanged,
+                &BrowserLifecycleAdapterEventKind::TargetCrashed,
+                &BrowserLifecycleAdapterEventKind::NavigationStarted,
+                &BrowserLifecycleAdapterEventKind::NavigationComplete,
+                &BrowserLifecycleAdapterEventKind::BrowserError,
+                &BrowserLifecycleAdapterEventKind::BrowserError,
+                &BrowserLifecycleAdapterEventKind::BrowserError,
+                &BrowserLifecycleAdapterEventKind::BrowserDiagnostic,
+                &BrowserLifecycleAdapterEventKind::BrowserError,
+                &BrowserLifecycleAdapterEventKind::BrowserDiagnostic,
+                &BrowserLifecycleAdapterEventKind::BrowserError,
+                &BrowserLifecycleAdapterEventKind::JavaScriptDialogHandled,
+                &BrowserLifecycleAdapterEventKind::DownloadStarted,
+                &BrowserLifecycleAdapterEventKind::DownloadProgress,
+                &BrowserLifecycleAdapterEventKind::FileDownloaded,
+                &BrowserLifecycleAdapterEventKind::StorageState,
+                &BrowserLifecycleAdapterEventKind::StorageState,
+            ]
+        );
+        assert_eq!(
+            adapter_events[7].source_kind,
+            BrowserLifecycleEventKind::TargetSwitched
+        );
+        assert_eq!(adapter_events[7].target_id.as_deref(), Some("target-1"));
+        assert_eq!(
+            adapter_events[14].source_kind,
+            BrowserLifecycleEventKind::CurrentTargetReset
+        );
+
+        let json = serde_json::to_value(&adapter_events).expect("serialize adapter events");
+        assert_eq!(json[7]["kind"], "agent_focus_changed");
+        assert_eq!(json[10]["kind"], "navigation_complete");
+        assert_eq!(json[10]["source_kind"], "navigation_completed");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_adapter_subscription_maps_facade_events() {
+        let (event_tx, event_rx) = broadcast::channel(4);
+        let subscription = BrowserLifecycleEventSubscription::new(event_rx);
+        let mut adapter_subscription = BrowserLifecycleAdapterEventSubscription::new(subscription);
+
+        assert_eq!(adapter_subscription.try_recv().expect("empty stream"), None);
+
+        event_tx
+            .send(BrowserLifecycleEvent::target_switched("target-1"))
+            .expect("send lifecycle event");
+
+        let event = adapter_subscription
+            .recv()
+            .await
+            .expect("adapter lifecycle event");
+        assert_eq!(
+            event.kind,
+            BrowserLifecycleAdapterEventKind::AgentFocusChanged
+        );
+        assert_eq!(event.source_kind, BrowserLifecycleEventKind::TargetSwitched);
+        assert_eq!(event.target_id.as_deref(), Some("target-1"));
     }
 
     #[test]
