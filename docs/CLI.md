@@ -83,9 +83,10 @@ apply.
 
 Agent runs accept repeated `--allowed-domain <pattern>` and
 `--prohibited-domain <pattern>` flags plus `--block-ip-addresses` to enforce
-browser-profile URL access policy on explicit navigation. Allowed domains take
-precedence over prohibited domains, matching upstream browser-use. Supported
-patterns include exact hosts such as `example.com`, wildcard hosts such as
+browser-profile URL access policy on explicit navigation, post-navigation
+redirect observations, and newly observed tabs. Allowed domains take precedence
+over prohibited domains, matching upstream browser-use. Supported patterns
+include exact hosts such as `example.com`, wildcard hosts such as
 `*.example.com`, scheme-specific URL prefixes such as `https://wiki.org`, and
 URL globs such as `chrome-extension://*`.
 

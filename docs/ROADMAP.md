@@ -40,7 +40,8 @@ Implemented:
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
-  resistance, and optional IP-address blocking.
+  resistance, optional IP-address blocking, post-navigation redirect reset to
+  `about:blank`, and newly observed disallowed tab closure.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut
@@ -110,7 +111,7 @@ Implemented:
 Next:
 
 1. Move compact DOM serialization toward accessibility-aware parity.
-2. Extend browser-profile security parity to post-redirect and unsolicited
-   new-tab enforcement.
+2. Continue browser-profile security parity toward an event-driven watchdog
+   when the CDP layer grows background event dispatch.
 3. Expand agent planning depth, replay coverage, and provider parity beyond
    OpenAI-compatible, Anthropic, Gemini, and Ollama.

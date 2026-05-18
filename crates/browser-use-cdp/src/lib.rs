@@ -27,6 +27,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
+const URL_POLICY_SETTLE_MS: u64 = 200;
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -1123,6 +1124,12 @@ impl UrlAccessPolicy {
         })
     }
 
+    fn is_unrestricted(&self) -> bool {
+        self.allowed_domains.is_empty()
+            && self.prohibited_domains.is_empty()
+            && !self.block_ip_addresses
+    }
+
     fn is_allowed(&self, url: &str) -> bool {
         if is_internal_browser_url(url) {
             return true;
@@ -1579,6 +1586,65 @@ impl CdpBrowserSession {
                 (node_id != 0).then_some((*backend_node_id, node_id))
             })
             .collect())
+    }
+
+    async fn enforce_url_policy_after_settle(&self) -> Result<(), BrowserError> {
+        if self.url_policy.is_unrestricted() {
+            return Ok(());
+        }
+
+        sleep(Duration::from_millis(URL_POLICY_SETTLE_MS)).await;
+        self.enforce_open_tab_url_policy().await
+    }
+
+    async fn enforce_open_tab_url_policy(&self) -> Result<(), BrowserError> {
+        if self.url_policy.is_unrestricted() {
+            return Ok(());
+        }
+
+        let tabs = page_tabs(&self.connection).await?;
+        let current_page = self.current_page().await;
+        let mut blocked: Option<BrowserError> = None;
+
+        for tab in tabs {
+            if self.url_policy.is_allowed(&tab.url) {
+                continue;
+            }
+
+            let reason = self.url_policy.block_reason(&tab.url).to_owned();
+            if tab.target_id == current_page.target_id {
+                let _ = self
+                    .connection
+                    .command(
+                        "Page.navigate",
+                        json!({ "url": "about:blank" }),
+                        Some(&current_page.session_id),
+                    )
+                    .await;
+            } else {
+                self.connection
+                    .command(
+                        "Target.closeTarget",
+                        json!({ "targetId": &tab.target_id }),
+                        None,
+                    )
+                    .await?;
+            }
+            self.clear_cached_dom_state().await;
+
+            if blocked.is_none() {
+                blocked = Some(BrowserError::NavigationBlocked {
+                    url: tab.url,
+                    reason,
+                });
+            }
+        }
+
+        if let Some(error) = blocked {
+            return Err(error);
+        }
+
+        Ok(())
     }
 }
 
@@ -2391,6 +2457,7 @@ async fn resolve_page_target_id(
 #[async_trait]
 impl BrowserSession for CdpBrowserSession {
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
+        self.enforce_open_tab_url_policy().await?;
         let (url, title) = self.page_location().await?;
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
@@ -2439,7 +2506,7 @@ impl BrowserSession for CdpBrowserSession {
             let page = attach_to_target(&self.connection, target_id).await?;
             self.set_current_page(page).await;
             self.clear_cached_dom_state().await;
-            return Ok(());
+            return self.enforce_url_policy_after_settle().await;
         }
 
         let page = self.current_page().await;
@@ -2453,7 +2520,7 @@ impl BrowserSession for CdpBrowserSession {
             )
             .await?;
         self.clear_cached_dom_state().await;
-        Ok(())
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn go_back(&self) -> Result<(), BrowserError> {
@@ -2475,7 +2542,7 @@ impl BrowserSession for CdpBrowserSession {
             )
             .await?;
         self.clear_cached_dom_state().await;
-        Ok(())
+        self.enforce_url_policy_after_settle().await
     }
 
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
@@ -2483,7 +2550,7 @@ impl BrowserSession for CdpBrowserSession {
         let page = attach_to_target(&self.connection, target_id).await?;
         self.set_current_page(page).await;
         self.clear_cached_dom_state().await;
-        Ok(())
+        self.enforce_open_tab_url_policy().await
     }
 
     async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
@@ -3339,6 +3406,25 @@ mod tests {
         assert!(!policy.is_allowed("http://127.0.0.1:9222/json"));
         assert!(!policy.is_allowed("http://[::1]/"));
         assert!(policy.is_allowed("https://example.com"));
+    }
+
+    #[test]
+    fn url_policy_treats_ip_blocking_as_restricted() {
+        assert!(UrlAccessPolicy::default().is_unrestricted());
+        assert!(
+            !UrlAccessPolicy::from_profile(&BrowserProfile {
+                block_ip_addresses: true,
+                ..BrowserProfile::default()
+            })
+            .is_unrestricted()
+        );
+        assert!(
+            !UrlAccessPolicy::from_profile(&BrowserProfile {
+                prohibited_domains: vec!["blocked.test".to_owned()],
+                ..BrowserProfile::default()
+            })
+            .is_unrestricted()
+        );
     }
 
     #[test]
@@ -4799,6 +4885,90 @@ mod tests {
             error,
             BrowserError::NavigationBlocked { ref reason, .. } if reason == "not_in_allowed_domains"
         ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_resets_disallowed_redirect_after_navigation() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let profile = BrowserProfile {
+            block_ip_addresses: true,
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind redirect server");
+        let server_addr = listener.local_addr().expect("redirect server address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept redirect request");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .expect("write redirect response");
+        });
+        let start_url = format!("http://localhost:{}/start", server_addr.port());
+
+        let error = session
+            .navigate(&start_url, false)
+            .await
+            .expect_err("redirected navigation should be reset by URL policy");
+        server.await.expect("redirect server task");
+
+        assert!(
+            matches!(error, BrowserError::NavigationBlocked { .. }),
+            "unexpected redirect policy error: {error:?}"
+        );
+
+        sleep(Duration::from_millis(250)).await;
+        let state = session.state(false).await.expect("state after reset");
+        assert_eq!(state.url, "about:blank");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_closes_disallowed_unsolicited_new_tab() {
+        let profile = BrowserProfile {
+            block_ip_addresses: true,
+            browser_start_timeout_ms: 30_000,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+        let blocked_target_id = create_target(&session.connection, "http://127.0.0.1:1/popup")
+            .await
+            .expect("create blocked tab");
+
+        sleep(Duration::from_millis(250)).await;
+        let error = session
+            .state(false)
+            .await
+            .expect_err("state observation should close the blocked tab");
+
+        assert!(matches!(
+            error,
+            BrowserError::NavigationBlocked { ref url, ref reason }
+                if url.starts_with("http://127.0.0.1:1/popup")
+                    && reason == "ip_address_blocked"
+        ));
+
+        sleep(Duration::from_millis(150)).await;
+        let tabs = page_tabs(&session.connection)
+            .await
+            .expect("tabs after policy enforcement");
+        assert!(
+            tabs.iter().all(|tab| tab.target_id != blocked_target_id),
+            "blocked tab still open: {tabs:?}"
+        );
     }
 
     #[tokio::test]

@@ -12,7 +12,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
-  resistance, and optional IP-address blocking.
+  resistance, and optional IP-address blocking, plus post-navigation redirect
+  checks and newly observed tab closure for disallowed URLs.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
@@ -92,9 +93,9 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
 ## Known Gaps
 
 - Cross-origin iframe interaction is not implemented.
-- Browser profile URL access policies currently guard explicit navigation
-  requests; post-redirect and unsolicited new-tab watchdog enforcement remains
-  lighter than upstream.
+- Browser profile URL access policies use CDP observation rather than
+  upstream's event-bus watchdog, so very short-lived disallowed targets may only
+  be caught at the next navigation/action state boundary.
 - Accessibility-tree parity is partial; the DOM serializer currently uses a
   pragmatic compact representation rather than full browser-use AX snapshots.
 - Browser/action calls that implicitly create MCP sessions are still in-process
