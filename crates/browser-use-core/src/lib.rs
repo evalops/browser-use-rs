@@ -5221,6 +5221,19 @@ where
         self.stopped
     }
 
+    pub fn add_new_task(&mut self, new_task: impl AsRef<str>) {
+        if !self.task.contains("<initial_user_request>") {
+            self.task = format!("<initial_user_request>{}</initial_user_request>", self.task);
+        }
+        self.task.push('\n');
+        self.task.push_str(&format!(
+            "<follow_up_user_request> {} </follow_up_user_request>",
+            new_task.as_ref().trim()
+        ));
+        self.stopped = false;
+        self.paused = false;
+    }
+
     pub fn pause(&mut self) {
         self.paused = true;
     }
@@ -14606,6 +14619,108 @@ mod tests {
         assert!(agent.is_stopped());
         assert!(!agent.is_paused());
         assert!(agent.llm.requests.lock().expect("requests lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_add_new_task_clears_controls_and_preserves_state() {
+        let first_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "wait": {
+                        "seconds": 0
+                    }
+                }
+            ]
+        });
+        let follow_up_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "follow-up complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            initial_actions: vec![BrowserAction::Wait(WaitAction { seconds: 0 })],
+            use_judge: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "open the dashboard",
+            settings,
+            QueueModel::new(vec![first_output, follow_up_output]),
+            MockSession::new(),
+        );
+
+        agent
+            .execute_initial_actions()
+            .await
+            .expect("initial actions");
+        agent.step().await.expect("first step");
+        agent.pause();
+        agent.stop();
+
+        agent.add_new_task("summarize the new panel");
+
+        assert!(!agent.is_paused());
+        assert!(!agent.is_stopped());
+        assert!(agent.initial_actions_executed);
+        assert_eq!(agent.history().items.len(), 2);
+
+        let result = {
+            let item = agent.step().await.expect("follow-up step");
+            item.result[0].clone()
+        };
+
+        assert_eq!(
+            result.extracted_content.as_deref(),
+            Some("follow-up complete")
+        );
+        assert_eq!(agent.history().items.len(), 3);
+        let requests = agent.llm.requests.lock().expect("requests lock");
+        let follow_up_prompt = request_text(&requests[1]);
+        assert!(
+            follow_up_prompt
+                .contains("<initial_user_request>open the dashboard</initial_user_request>")
+        );
+        assert!(follow_up_prompt.contains(
+            "<follow_up_user_request> summarize the new panel </follow_up_user_request>"
+        ));
+    }
+
+    #[test]
+    fn agent_add_new_task_appends_without_double_wrapping_initial_request() {
+        let mut agent = Agent::new(
+            "collect receipts",
+            QueueModel::new(vec![]),
+            MockSession::new(),
+        );
+
+        agent.add_new_task("find invoice totals");
+        agent.add_new_task("compare vendors");
+
+        assert_eq!(agent.task.matches("<initial_user_request>").count(), 1);
+        assert_eq!(agent.task.matches("<follow_up_user_request>").count(), 2);
+        assert!(
+            agent
+                .task
+                .contains("<initial_user_request>collect receipts</initial_user_request>")
+        );
+        assert!(
+            agent
+                .task
+                .contains("<follow_up_user_request> find invoice totals </follow_up_user_request>")
+        );
+        assert!(
+            agent
+                .task
+                .contains("<follow_up_user_request> compare vendors </follow_up_user_request>")
+        );
     }
 
     #[tokio::test]
