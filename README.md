@@ -141,7 +141,8 @@ includes:
   file-display controls, thinking/flash output-schema controls,
   upstream-style flattened required output fields, LLM-backed extract action
   results for free-text and structured-schema extraction while preserving raw
-  executor envelopes for replay/direct callers, per-step timing metadata,
+  executor envelopes for replay/direct callers, dedicated page-extraction LLM
+  routing, per-step timing metadata,
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state
   prompt blocks, upstream-style tagged agent-history/agent-state/browser-state

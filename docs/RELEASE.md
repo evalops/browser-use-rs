@@ -173,6 +173,8 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
 - Schema-guided agent extraction passes the requested schema to the extraction
   LLM, returns upstream-style `<structured_result>` content, and records
   structured metadata with schema, partial status, and content statistics.
+  Agents can route LLM-backed extract action resolution through a dedicated
+  page-extraction LLM while leaving normal model-output calls on the main LLM.
 - Scripted agent replay conformance fixtures for schema-guided model output,
   previous-result prompt context, action execution, `done`, serialized
   history, longer multi-step planning/recovery replay with prompt-history

@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#94 Add upstream page_extraction_llm routing](https://github.com/evalops/browser-use-rs/issues/94)
+- Next upstream parity slice after #94 lands and CI is green.
 
 ## Completed Tracks
 
+- [#94 Add upstream page_extraction_llm routing](https://github.com/evalops/browser-use-rs/issues/94)
 - [#93 Add upstream fallback LLM switching](https://github.com/evalops/browser-use-rs/issues/93)
 - [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
 - [#91 Add upstream file_system_path agent setting](https://github.com/evalops/browser-use-rs/issues/91)
@@ -228,7 +229,8 @@ Implemented:
   controls, configurable planning prompt nudges,
   LLM-backed extract action results for free-text and structured-schema
   extraction while preserving raw extraction envelopes for direct/replay
-  callers, per-step timing metadata, thinking/flash output-schema controls,
+  callers, upstream-style dedicated page-extraction LLM routing, per-step
+  timing metadata, thinking/flash output-schema controls,
   upstream-style flattened required output fields,
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
