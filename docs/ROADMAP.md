@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#104 Add upstream wait_between_actions delay](https://github.com/evalops/browser-use-rs/issues/104)
+- Next upstream parity slice after #104 lands and CI is green.
 
 ## Completed Tracks
 
+- [#104 Add upstream wait_between_actions delay](https://github.com/evalops/browser-use-rs/issues/104)
 - [#102 Add upstream external agent status interruption callback](https://github.com/evalops/browser-use-rs/issues/102)
 - [#100 Add upstream task_id agent identity preservation](https://github.com/evalops/browser-use-rs/issues/100)
 - [#98 Add upstream add_new_task follow-up control](https://github.com/evalops/browser-use-rs/issues/98)
@@ -212,8 +213,9 @@ Implemented:
   preservation, upstream-style continuous follow-up task updates via
   `add_new_task`, max-step, max-failure handling,
   upstream-style max-action truncation, step and LLM timeouts, upstream-style
-  per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
-  `action_timeout_seconds`, validated `llm_screenshot_size` prompt-only PNG
+  wait-between-actions delays, upstream-style per-action wall-clock timeout
+  guard with `BROWSER_USE_ACTION_TIMEOUT_S` and `action_timeout_seconds`,
+  validated `llm_screenshot_size` prompt-only PNG
   resizing with coordinate-click scaling back to the observed viewport,
   upstream-style long URL shortening for user/assistant prompt text with
   recursive restoration of parsed model output before execution/history,

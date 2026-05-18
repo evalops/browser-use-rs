@@ -126,7 +126,8 @@ includes:
   replay handling,
   fallback LLM switching for retryable main model-output provider/rate-limit
   failures,
-  step/LLM timeouts, max-failure handling,
+  step/LLM timeouts, upstream-style wait-between-actions delays, max-failure
+  handling,
   upstream-style initial actions, caller-supplied task identity with
   checkpoint restore continuity and follow-up task reuse, upstream-style
   max-action truncation,

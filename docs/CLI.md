@@ -134,6 +134,8 @@ vision behavior, `--vision-detail-level <auto|low|high>` for screenshot and
 read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--llm-timeout-seconds`, `--step-timeout-seconds`,
 `--action-timeout-seconds` for the upstream-style per-action wall-clock guard,
+`--wait-between-actions-seconds` for the upstream-style delay between
+consecutive model-requested actions,
 `--no-directly-open-url` to disable upstream-style task URL auto-navigation,
 `--no-final-response-after-failure`, `--no-display-files-in-done-text` for
 attaching requested `done.files_to_display` paths without expanding their text

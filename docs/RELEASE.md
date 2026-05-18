@@ -124,8 +124,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   per step with upstream-style truncation, sync and async new-step/done
   callbacks, callback-driven stop checks, explicit programmatic stop with
   reasoned stop errors, max steps, max failures, step and LLM timeouts,
-  upstream-style per-action wall-clock timeout
-  guard with `BROWSER_USE_ACTION_TIMEOUT_S`/`action_timeout_seconds`,
+  upstream-style wait-between-actions delays, upstream-style per-action
+  wall-clock timeout guard with
+  `BROWSER_USE_ACTION_TIMEOUT_S`/`action_timeout_seconds`,
   caller-supplied task identity with checkpoint restore continuity and
   follow-up task reuse,
   validated `llm_screenshot_size` prompt-only PNG resizing with coordinate-click
