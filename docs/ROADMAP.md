@@ -5,7 +5,8 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#46 Freeze AgentHistoryReplayRun conformance fixture](https://github.com/evalops/browser-use-rs/issues/46)
+No active tracked parity issue is open. The next slice should be filed before
+implementation starts so public progress stays auditable.
 
 ## Completed Tracks
 
@@ -49,6 +50,7 @@ small pushed checkpoints as each surface becomes real.
 - [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
 - [#44 Honor browser page-change guards during replay execution](https://github.com/evalops/browser-use-rs/issues/44)
 - [#45 Replay AgentHistory against current browser state](https://github.com/evalops/browser-use-rs/issues/45)
+- [#46 Freeze AgentHistoryReplayRun conformance fixture](https://github.com/evalops/browser-use-rs/issues/46)
 
 ## Current Checkpoint
 
@@ -161,7 +163,8 @@ Implemented:
   replay-plan execution through generic and browser-backed action executors
   with per-action, error, and page-change diagnostics, and current-state
   `AgentHistoryReplayRun` orchestration that returns captured state, plan, and
-  execution diagnostics, plus duration and screenshot/URL helpers.
+  execution diagnostics covered by a serialized conformance fixture, plus
+  duration and screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.
@@ -233,7 +236,8 @@ Implemented:
   generic or browser-backed action-executor boundaries while preserving
   step/action diagnostics and the live executor's URL-change guard. Browser
   executors can also capture the current DOM and return a replay run containing
-  the captured state, plan, and guarded execution result.
+  the captured state, plan, and guarded execution result, with the public JSON
+  shape pinned by `agent_history_replay_run.json`.
 
 Next:
 
