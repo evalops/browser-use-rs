@@ -1,6 +1,6 @@
 //! Chrome DevTools Protocol browser-session layer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -2502,10 +2502,15 @@ fn merge_dom_states(
         return root_state;
     }
 
+    let mut root_state = root_state;
     let mut page_stats = root_state.page_stats;
+    let mut eval_root = root_state.eval_root.take();
     let mut elements = dom_state_elements(root_state);
-    for child_state in child_states {
+    for mut child_state in child_states {
         add_dom_page_stats(&mut page_stats, child_state.page_stats);
+        if let Some(child_eval_root) = child_state.eval_root.take() {
+            attach_child_eval_root(&mut eval_root, child_eval_root);
+        }
         elements.extend(dom_state_elements(child_state));
     }
 
@@ -2513,11 +2518,68 @@ fn merge_dom_states(
         element.index = u32::try_from(index + 1).unwrap_or(u32::MAX);
     }
 
-    SerializedDomState::from_elements(elements).with_page_stats(page_stats)
+    let state = SerializedDomState::from_elements(elements).with_page_stats(page_stats);
+    match eval_root {
+        Some(eval_root) => state.with_eval_root(eval_root),
+        None => state,
+    }
 }
 
 fn dom_state_elements(state: SerializedDomState) -> Vec<DomElementRef> {
     state.selector_map.into_values().collect()
+}
+
+fn attach_child_eval_root(eval_root: &mut Option<DomEvalNode>, child_eval_root: DomEvalNode) {
+    let Some(root) = eval_root else {
+        *eval_root = Some(child_eval_root);
+        return;
+    };
+
+    let mut child_roots = VecDeque::from([child_eval_root]);
+    attach_eval_roots_to_iframes(root, &mut child_roots);
+    while let Some(child_root) = child_roots.pop_front() {
+        root.children
+            .extend(eval_iframe_content_children(child_root));
+    }
+}
+
+fn attach_eval_roots_to_iframes(node: &mut DomEvalNode, child_roots: &mut VecDeque<DomEvalNode>) {
+    if child_roots.is_empty() {
+        return;
+    }
+    if node.node_type == DomEvalNodeType::Element
+        && matches!(node.tag_name.as_str(), "iframe" | "frame")
+        && node.children.is_empty()
+        && let Some(child_root) = child_roots.pop_front()
+    {
+        node.children
+            .extend(eval_iframe_content_children(child_root));
+        return;
+    }
+
+    for child in &mut node.children {
+        attach_eval_roots_to_iframes(child, child_roots);
+        if child_roots.is_empty() {
+            return;
+        }
+    }
+}
+
+fn eval_iframe_content_children(child_root: DomEvalNode) -> Vec<DomEvalNode> {
+    if child_root.node_type == DomEvalNodeType::Element && child_root.tag_name == "html" {
+        if let Some(body) = child_root
+            .children
+            .into_iter()
+            .find(|child| child.node_type == DomEvalNodeType::Element && child.tag_name == "body")
+        {
+            return body.children;
+        }
+        return Vec::new();
+    }
+    if child_root.node_type == DomEvalNodeType::Element && child_root.tag_name == "body" {
+        return child_root.children;
+    }
+    vec![child_root]
 }
 
 fn add_dom_page_stats(total: &mut DomPageStats, next: DomPageStats) {
@@ -4252,7 +4314,12 @@ mod tests {
             interactive_elements: 1,
             total_elements: 3,
             ..DomPageStats::default()
-        });
+        })
+        .with_eval_root(DomEvalNode::element("html").with_children(vec![
+            DomEvalNode::element("body").with_children(vec![
+                DomEvalNode::element("iframe").with_attribute("title", "Child frame"),
+            ]),
+        ]));
         let mut child = SerializedDomState::from_elements(vec![test_dom_bound_element(
             1,
             "child-target",
@@ -4268,7 +4335,14 @@ mod tests {
             interactive_elements: 1,
             total_elements: 2,
             ..DomPageStats::default()
-        });
+        })
+        .with_eval_root(DomEvalNode::element("html").with_children(vec![
+            DomEvalNode::element("body").with_children(vec![
+                DomEvalNode::element("button")
+                    .with_children(vec![DomEvalNode::text("Child input")])
+                    .interactive(88),
+            ]),
+        ]));
         offset_dom_state_bounds(&mut child, FrameOffset { x: 100, y: 40 });
 
         let merged = merge_dom_states(root, vec![child]);
@@ -4288,6 +4362,15 @@ mod tests {
         );
         assert_eq!(merged.page_stats.interactive_elements, 2);
         assert_eq!(merged.page_stats.total_elements, 5);
+        let eval = merged.eval_representation();
+        assert!(
+            eval.contains("#iframe-content"),
+            "merged eval tree missed iframe content: {eval}"
+        );
+        assert!(
+            eval.contains("[i_88] <button>Child input"),
+            "merged eval tree missed child backend marker: {eval}"
+        );
     }
 
     fn test_dom_bound_element(
@@ -5597,6 +5680,15 @@ mod tests {
             .expect("child input");
         assert_ne!(child_button.target_id, iframe.target_id);
         assert_ne!(child_input.target_id, iframe.target_id);
+        let eval = initial_state.dom_state.eval_representation();
+        assert!(
+            eval.contains("#iframe-content"),
+            "cross-origin eval tree missed iframe content marker: {eval}"
+        );
+        assert!(
+            eval.contains("Cross child"),
+            "cross-origin eval tree missed child target content: {eval}"
+        );
 
         session
             .click(child_button.index)
