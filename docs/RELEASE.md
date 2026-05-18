@@ -34,9 +34,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   prompt-visible `keyshortcuts`, AX-shaped numeric value aliases,
   human-readable value text, contenteditable editor variants, media control
   compounds,
-  duplicate long-attribute pruning, input mask/autocomplete/date-format and
-  `data-provide` datepicker hints, live-region, hierarchy, and multiselect
-  state aliases,
+  duplicate long-attribute pruning, input mask/autocomplete/date-format
+  datepicker hints, live-region, hierarchy, and multiselect state aliases,
   JavaScript click/pointer listener-backed controls, cursor-pointer controls,
   decorative SVG child pruning, static mouse/keyboard handler attributes,
   contained duplicate-descendant pruning for action containers, pagination
