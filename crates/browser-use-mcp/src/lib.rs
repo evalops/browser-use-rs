@@ -76,10 +76,24 @@ pub struct AgentToolInput {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output_mode: Option<AgentStructuredOutputMode>,
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
     #[serde(default, skip_serializing_if = "is_default_agent_settings")]
     pub settings: AgentSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentStructuredOutputMode {
+    #[serde(rename = "json-schema", alias = "json_schema")]
+    JsonSchema,
+    #[serde(rename = "json-object", alias = "json_object")]
+    JsonObject,
+    #[serde(rename = "prompt-only", alias = "prompt_only")]
+    PromptOnly,
+    #[serde(rename = "tool-call", alias = "tool_call")]
+    ToolCall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -336,6 +350,11 @@ mod tests {
         assert!(schema_text.contains("ollama"));
         assert!(schema_text.contains("model"));
         assert!(schema_text.contains("base_url"));
+        assert!(schema_text.contains("structured_output_mode"));
+        assert!(schema_text.contains("json-schema"));
+        assert!(schema_text.contains("json-object"));
+        assert!(schema_text.contains("prompt-only"));
+        assert!(schema_text.contains("tool-call"));
         assert!(schema_text.contains("settings"));
         assert!(schema_text.contains("max_actions_per_step"));
         assert!(schema_text.contains("flash_mode"));
@@ -345,6 +364,21 @@ mod tests {
         assert!(schema_text.contains("sensitive_data"));
         assert!(schema_text.contains("override_system_message"));
         assert!(schema_text.contains("extend_system_message"));
+    }
+
+    #[test]
+    fn agent_tool_accepts_structured_output_mode_aliases() {
+        let input: AgentToolInput = serde_json::from_value(json!({
+            "url": "https://example.com",
+            "task": "extract",
+            "structured_output_mode": "tool_call"
+        }))
+        .expect("agent input");
+
+        assert_eq!(
+            input.structured_output_mode,
+            Some(AgentStructuredOutputMode::ToolCall)
+        );
     }
 
     #[test]

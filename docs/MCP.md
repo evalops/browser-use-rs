@@ -57,6 +57,12 @@ optional. Gemini runs require `GEMINI_API_KEY` plus a tool `model` argument or
 `model` argument or `OLLAMA_MODEL`; `OLLAMA_BASE_URL` or `OLLAMA_HOST` is
 optional and defaults to `http://localhost:11434`.
 
+For OpenAI-wire providers, `browser_use_agent` can override the provider
+default structured-output strategy with an optional `structured_output_mode`
+input. Supported values are `json-schema`, `json-object`, `prompt-only`, and
+`tool-call`; aliases using underscores are accepted for JSON clients that avoid
+kebab-case enum values.
+
 `browser_use_agent` also accepts an optional typed `settings` object matching
 `browser-use-core`'s `AgentSettings`, including vision, action limits,
 timeouts, final `done` responses after repeated failures, prompt-history

@@ -202,6 +202,15 @@ impl StructuredOutputMode {
             Self::ToolCall => OpenAiStructuredOutputMode::ToolCall,
         }
     }
+
+    fn from_mcp(mode: browser_use_mcp::AgentStructuredOutputMode) -> Self {
+        match mode {
+            browser_use_mcp::AgentStructuredOutputMode::JsonSchema => Self::JsonSchema,
+            browser_use_mcp::AgentStructuredOutputMode::JsonObject => Self::JsonObject,
+            browser_use_mcp::AgentStructuredOutputMode::PromptOnly => Self::PromptOnly,
+            browser_use_mcp::AgentStructuredOutputMode::ToolCall => Self::ToolCall,
+        }
+    }
 }
 
 impl DaemonTransport {
@@ -1388,7 +1397,17 @@ async fn execute_mcp_tool(
         browser_use_mcp::AGENT_TOOL_NAME => {
             let input: browser_use_mcp::AgentToolInput = serde_json::from_value(arguments)?;
             let provider = LlmProvider::from_mcp(input.provider);
-            let llm = configured_chat_model(provider, None, input.model, input.base_url, None)?;
+            let structured_output_mode = input
+                .structured_output_mode
+                .map(StructuredOutputMode::from_mcp)
+                .map(StructuredOutputMode::into_openai_mode);
+            let llm = configured_chat_model(
+                provider,
+                None,
+                input.model,
+                input.base_url,
+                structured_output_mode,
+            )?;
             let session = if let Some(session_id) = input.session_id {
                 runtime.session(&session_id, input.url).await?
             } else {
@@ -1890,6 +1909,15 @@ mod tests {
             } => assert_eq!(structured_output_mode, Some(StructuredOutputMode::ToolCall)),
             _ => panic!("expected agent command"),
         }
+    }
+
+    #[test]
+    fn maps_mcp_structured_output_mode_override() {
+        let mode =
+            StructuredOutputMode::from_mcp(browser_use_mcp::AgentStructuredOutputMode::ToolCall)
+                .into_openai_mode();
+
+        assert_eq!(mode, OpenAiStructuredOutputMode::ToolCall);
     }
 
     #[test]

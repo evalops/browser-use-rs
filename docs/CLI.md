@@ -139,9 +139,12 @@ supports `initialize`, `ping`, `tools/list`, and `tools/call` for
 `browser_use_state`, `browser_use_actions`, `browser_use_agent`, and
 `browser_use_session`. MCP browser and agent tool inputs accept an optional
 `session_id`; calls with the same `session_id` reuse the same in-process Chrome
-session. `browser_use_session` can start, stop, and list persistent session
-records. If `session_id` matches a persistent session record, `mcp-stdio`
-reconnects to that Chrome session even after the stdio server process restarts.
+session. The MCP `browser_use_agent` tool also accepts
+`structured_output_mode` values `json-schema`, `json-object`, `prompt-only`,
+and `tool-call`, matching the CLI override for OpenAI-wire provider fallbacks.
+`browser_use_session` can start, stop, and list persistent session records. If
+`session_id` matches a persistent session record, `mcp-stdio` reconnects to
+that Chrome session even after the stdio server process restarts.
 
 `daemon` binds a local listener, prints the bound address on startup, shares one
 in-process session runtime across active connections, and uses the same
