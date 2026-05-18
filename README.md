@@ -198,10 +198,10 @@ browser-use-rs version-target
 
 From a local checkout, use `cargo install --path crates/browser-use-cli`.
 
-Tagged GitHub releases publish a Linux x86_64 tarball, `SHA256SUMS`, and a
-Linux Homebrew formula artifact. The tarball contains the `browser-use-rs`
-binary, license files, install guide, release support matrix, and daemon
-supervision templates.
+Tagged GitHub releases publish Linux x86_64 and macOS host-triple tarballs,
+`SHA256SUMS`, and a Linux Homebrew formula artifact. The tarballs contain the
+`browser-use-rs` binary, license files, install guide, release support matrix,
+and daemon supervision templates.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for install commands and
 [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported

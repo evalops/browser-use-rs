@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#57 Publish macOS release artifacts](https://github.com/evalops/browser-use-rs/issues/57)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -58,6 +58,7 @@ small pushed checkpoints as each surface becomes real.
 - [#54 Recapture and rematch DOM state between replay actions](https://github.com/evalops/browser-use-rs/issues/54)
 - [#55 Pin replay recapture in conformance fixtures](https://github.com/evalops/browser-use-rs/issues/55)
 - [#56 Add package release install surfaces](https://github.com/evalops/browser-use-rs/issues/56)
+- [#57 Publish macOS release artifacts](https://github.com/evalops/browser-use-rs/issues/57)
 
 ## Current Checkpoint
 
@@ -66,8 +67,8 @@ Implemented:
 - Public repository, MIT license, upstream attribution, CI, and Rust workspace.
 - Published `v0.1.0` public conformance release with tag-triggered GitHub
   release workflow, release support matrix, packaged Linux artifact smoke,
-  SHA-256 checksum metadata, install guide, and generated Linux Homebrew formula
-  scaffold.
+  macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
+  install guide, and generated Linux Homebrew formula scaffold.
 - Frozen upstream target: `browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.

@@ -1,7 +1,7 @@
 # Install
 
-`browser-use-rs` currently publishes a Linux x86_64 release binary plus source
-install paths.
+`browser-use-rs` currently publishes Linux x86_64 and macOS release binaries
+plus source install paths.
 
 ## From Source
 
@@ -21,15 +21,21 @@ browser-use-rs version-target
 
 Tagged releases attach:
 
-- `browser-use-rs-<tag>-x86_64-unknown-linux-gnu.tar.gz`
+- `browser-use-rs-<tag>-<host-triple>.tar.gz`
 - `SHA256SUMS`
 - `browser-use-rs.rb`
+
+Current release triples include `x86_64-unknown-linux-gnu` and the macOS
+runner host triple, such as `aarch64-apple-darwin` or
+`x86_64-apple-darwin`.
 
 Verify and install manually:
 
 ```sh
-sha256sum -c SHA256SUMS
-tar -xzf browser-use-rs-<tag>-x86_64-unknown-linux-gnu.tar.gz
+archive=browser-use-rs-<tag>-<host-triple>.tar.gz
+grep "  ${archive}$" SHA256SUMS > "${archive}.sha256"
+sha256sum -c "${archive}.sha256" # or: shasum -a 256 -c "${archive}.sha256"
+tar -xzf "${archive}"
 ./browser-use-rs version-target
 ```
 
@@ -42,6 +48,8 @@ brew install ./browser-use-rs.rb
 browser-use-rs version-target
 ```
 
-The formula points at the release tarball and pins its SHA-256 checksum.
-Maintained tap publication, macOS prebuilt artifacts, distro packages, and
-installer-managed secret stores are still future packaging work.
+The formula points at the Linux release tarball and pins its SHA-256 checksum.
+macOS users should use the macOS tarball or source install until the Homebrew
+formula learns to select macOS release assets. Maintained tap publication,
+distro packages, and installer-managed secret stores are still future packaging
+work.

@@ -171,7 +171,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   `POST /rpc`, plus graceful signal shutdown, supervisor pid/ready files, and
   packaged systemd/launchd templates for long-lived local installs.
 - Release tarballs include daemon supervision docs plus systemd and launchd
-  templates alongside the binary and license files.
+  templates alongside the binary and license files. Tagged releases publish a
+  Linux x86_64 tarball, a macOS host-triple tarball, one `SHA256SUMS` manifest
+  covering all tarballs, and a generated Linux Homebrew formula artifact pinned
+  to the Linux tarball checksum.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 
@@ -213,9 +216,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   running sessions unless forced through normal stop semantics; the daemon does
   not automatically restart stale browser processes.
 - The packaged daemon service files are local user-service templates; distro
-  packages, maintained Homebrew tap publication, macOS prebuilt artifacts, and
-  installer-managed secret stores are not implemented. Tagged releases now emit
-  Linux tarball checksums plus a generated Linux Homebrew formula artifact.
+  packages, maintained Homebrew tap publication, Homebrew macOS asset
+  selection, and installer-managed secret stores are not implemented. Tagged
+  releases now emit Linux and macOS tarballs, cross-tarball checksums, and a
+  generated Linux Homebrew formula artifact.
 - Provider-specific structured-output fallbacks for gateway routing hints and
   non-chat-completions providers are still partial; DeepSeek now has a forced
   tool-call fallback.
