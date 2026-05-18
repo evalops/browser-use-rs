@@ -136,7 +136,9 @@ read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--no-final-response-after-failure`, `--no-display-files-in-done-text` for
 attaching requested `done.files_to_display` paths without expanding their text
 into the final answer, `--no-loop-detection`, `--loop-detection-window`,
-`--no-thinking`, `--flash-mode`, `--no-judge`, `--ground-truth <text>`,
+`--no-thinking`, `--flash-mode`, `--generate-gif[=<path>]`,
+`--calculate-cost`, `--include-tool-call-examples`, `--no-judge`,
+`--ground-truth <text>`,
 `--no-planning`, `--planning-replan-on-stall`, `--planning-exploration-limit`,
 `--max-history-items`,
 `--max-clickable-elements-length`, `--include-recent-events` for opting recent
@@ -152,7 +154,12 @@ standard text encoding labels and fails rather than writing lossy transcripts.
 By default, completed agent runs make a non-fatal judge request and
 attach `JudgementResult` to the final `done` action without overriding the
 agent-reported `success`; `--no-judge` disables that, and `--ground-truth`
-adds highest-priority evaluation criteria to the judge prompt. Repeated
+adds highest-priority evaluation criteria to the judge prompt.
+`--generate-gif`, `--calculate-cost`, and `--include-tool-call-examples`
+preserve upstream `AgentSettings` contract flags for migrating callers; GIF
+rendering and token-cost side effects are tracked as separate runtime parity
+slices.
+Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns
 one, while keeping `done` available for completion. Use repeated
