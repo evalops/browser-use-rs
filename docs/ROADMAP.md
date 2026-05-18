@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next parity track to be opened from the remaining gaps below.
+- [#21 Introduce managed FileSystem state and sandbox directory](https://github.com/evalops/browser-use-rs/issues/21)
 
 ## Completed Tracks
 
