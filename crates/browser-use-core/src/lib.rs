@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
 use encoding_rs::Encoding;
+use md5::{Digest, Md5};
 use url::form_urlencoded;
 
 pub use browser_use_dom::{
@@ -95,6 +96,8 @@ pub struct AgentSettings {
     pub vision_detail_level: ImageDetailLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_screenshot_size: Option<LlmScreenshotSize>,
+    #[serde(default = "default_url_shortening_limit")]
+    pub url_shortening_limit: Option<usize>,
     #[serde(default = "default_max_failures")]
     pub max_failures: u32,
     #[serde(default)]
@@ -294,6 +297,7 @@ impl Default for AgentSettings {
             use_vision: default_use_vision(),
             vision_detail_level: default_vision_detail_level(),
             llm_screenshot_size: None,
+            url_shortening_limit: default_url_shortening_limit(),
             max_failures: default_max_failures(),
             generate_gif: GenerateGif::default(),
             max_actions_per_step: default_max_actions_per_step(),
@@ -677,6 +681,10 @@ fn default_use_vision() -> VisionMode {
 
 fn default_vision_detail_level() -> ImageDetailLevel {
     ImageDetailLevel::Auto
+}
+
+fn default_url_shortening_limit() -> Option<usize> {
+    Some(25)
 }
 
 fn default_max_failures() -> u32 {
@@ -5277,6 +5285,8 @@ where
             Some(self.executor.file_system()),
         )?;
         let request_for_transcript = request.clone();
+        let (request, url_replacements) =
+            request_with_shortened_urls(request, self.settings.url_shortening_limit);
         let completion = timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -5287,6 +5297,10 @@ where
         })??;
         let model_output: AgentOutput = serde_json::from_value(completion.content)
             .map_err(|error| AgentRunError::InvalidOutput(error.to_string()))?;
+        let model_output = restore_shortened_urls_in_agent_output(model_output, &url_replacements)
+            .map_err(|error| {
+                AgentRunError::InvalidOutput(format!("restore shortened URLs: {error}"))
+            })?;
         self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
         self.record_model_output(state, model_output, Some(step_start_time))
             .await
@@ -5332,6 +5346,8 @@ where
             }
         };
         let request_for_transcript = request.clone();
+        let (request, url_replacements) =
+            request_with_shortened_urls(request, self.settings.url_shortening_limit);
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -5367,6 +5383,17 @@ where
                 );
             }
         };
+        let model_output =
+            match restore_shortened_urls_in_agent_output(model_output, &url_replacements) {
+                Ok(model_output) => model_output,
+                Err(error) => {
+                    return self.record_model_error(
+                        state,
+                        format!("invalid agent output after URL restoration: {error}"),
+                        Some(step_start_time),
+                    );
+                }
+            };
         self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
         if matches!(step_kind, StepRequestKind::FinalStep { .. })
             && !is_single_done_output(&model_output)
@@ -5575,6 +5602,8 @@ where
             failures,
         )?;
         let request_for_transcript = request.clone();
+        let (request, url_replacements) =
+            request_with_shortened_urls(request, self.settings.url_shortening_limit);
         let completion = match timeout(
             Duration::from_secs(self.settings.llm_timeout_seconds),
             self.llm.invoke_json(request),
@@ -5611,6 +5640,17 @@ where
                 );
             }
         };
+        let model_output =
+            match restore_shortened_urls_in_agent_output(model_output, &url_replacements) {
+                Ok(model_output) => model_output,
+                Err(error) => {
+                    return self.record_model_error(
+                        state,
+                        format!("invalid final response after URL restoration: {error}"),
+                        Some(step_start_time),
+                    );
+                }
+            };
         self.save_conversation_snapshot(&request_for_transcript, &model_output)?;
 
         if !is_single_done_output(&model_output) {
@@ -6055,6 +6095,128 @@ fn settings_with_llm_screenshot_default(
             Some(LlmScreenshotSize::new(1400, 850).expect("valid Claude Sonnet screenshot size"));
     }
     settings
+}
+
+fn request_with_shortened_urls(
+    mut request: ChatRequest,
+    limit: Option<usize>,
+) -> (ChatRequest, BTreeMap<String, String>) {
+    let Some(limit) = limit.filter(|limit| *limit > 0) else {
+        return (request, BTreeMap::new());
+    };
+
+    let mut replacements = BTreeMap::new();
+    for message in &mut request.messages {
+        if !matches!(&message.role, MessageRole::User | MessageRole::Assistant) {
+            continue;
+        }
+
+        for part in &mut message.content {
+            let ContentPart::Text { text } = part else {
+                continue;
+            };
+            let (rewritten, part_replacements) = shorten_urls_in_text(text, limit);
+            *text = rewritten;
+            replacements.extend(part_replacements);
+        }
+    }
+
+    (request, replacements)
+}
+
+fn shorten_urls_in_text(text: &str, limit: usize) -> (String, BTreeMap<String, String>) {
+    static URL_PATTERN: OnceLock<Regex> = OnceLock::new();
+
+    if limit == 0 || text.is_empty() {
+        return (text.to_owned(), BTreeMap::new());
+    }
+
+    let pattern = URL_PATTERN.get_or_init(|| {
+        Regex::new(
+            r#"(?i)https?://[^\s<>"']+|www\.[^\s<>"']+|[^\s<>"']+\.[a-z]{2,}(?:/[^\s<>"']*)?"#,
+        )
+        .expect("valid browser-use URL regex")
+    });
+    let mut replacements = BTreeMap::new();
+    let rewritten = pattern
+        .replace_all(text, |captures: &regex::Captures<'_>| {
+            let original_url = captures.get(0).expect("URL regex capture").as_str();
+            shorten_url(original_url, limit, &mut replacements)
+                .unwrap_or_else(|| original_url.to_owned())
+        })
+        .into_owned();
+
+    (rewritten, replacements)
+}
+
+fn shorten_url(
+    original_url: &str,
+    limit: usize,
+    replacements: &mut BTreeMap<String, String>,
+) -> Option<String> {
+    let query_start = original_url.find('?');
+    let fragment_start = original_url.find('#');
+    let after_path_start = [query_start, fragment_start]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(original_url.len());
+    let base_url = &original_url[..after_path_start];
+    let after_path = &original_url[after_path_start..];
+
+    if after_path.chars().count() <= limit {
+        return None;
+    }
+
+    let truncated_after_path = after_path.chars().take(limit).collect::<String>();
+    let mut hasher = Md5::new();
+    hasher.update(after_path.as_bytes());
+    let digest = hasher.finalize();
+    let short_hash = format!("{digest:x}");
+    let shortened = format!("{base_url}{truncated_after_path}...{}", &short_hash[..7]);
+
+    if shortened.len() < original_url.len() {
+        replacements.insert(shortened.clone(), original_url.to_owned());
+        Some(shortened)
+    } else {
+        None
+    }
+}
+
+fn restore_shortened_urls_in_agent_output(
+    output: AgentOutput,
+    replacements: &BTreeMap<String, String>,
+) -> Result<AgentOutput, serde_json::Error> {
+    if replacements.is_empty() {
+        return Ok(output);
+    }
+
+    let mut value = serde_json::to_value(output)?;
+    replace_shortened_urls_in_value(&mut value, replacements);
+    serde_json::from_value(value)
+}
+
+fn replace_shortened_urls_in_value(value: &mut Value, replacements: &BTreeMap<String, String>) {
+    match value {
+        Value::String(text) => {
+            for (shortened, original) in replacements {
+                if text.contains(shortened) {
+                    *text = text.replace(shortened, original);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_shortened_urls_in_value(item, replacements);
+            }
+        }
+        Value::Object(object) => {
+            for item in object.values_mut() {
+                replace_shortened_urls_in_value(item, replacements);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 fn extract_start_url_from_task(task: &str) -> Option<String> {
@@ -7781,6 +7943,7 @@ mod tests {
         assert_eq!(settings.use_vision, VisionMode::Always);
         assert_eq!(settings.vision_detail_level, ImageDetailLevel::Auto);
         assert_eq!(settings.llm_screenshot_size, None);
+        assert_eq!(settings.url_shortening_limit, Some(25));
         assert_eq!(settings.max_failures, 5);
         assert_eq!(settings.generate_gif, GenerateGif::Disabled);
         assert_eq!(settings.max_actions_per_step, 5);
@@ -7821,6 +7984,82 @@ mod tests {
         assert!(settings.sensitive_data.is_empty());
         assert_eq!(settings.override_system_message, None);
         assert_eq!(settings.extend_system_message, None);
+    }
+
+    #[test]
+    fn url_shortening_matches_upstream_query_hash_shape() {
+        let short_url = "https://example.test/path?q=short";
+        let long_url = "https://example.test/path?abcdefghijklmnopqrstuvwxyz0123456789";
+
+        let (rewritten, replacements) =
+            shorten_urls_in_text(&format!("Open {short_url} then {long_url}"), 10);
+
+        let shortened = "https://example.test/path?abcdefghi...0cd4b05";
+        assert!(rewritten.contains(short_url));
+        assert!(rewritten.contains(shortened));
+        assert!(!rewritten.contains(long_url));
+        assert_eq!(
+            replacements.get(shortened).map(String::as_str),
+            Some(long_url)
+        );
+    }
+
+    #[test]
+    fn url_shortening_rewrites_only_user_and_assistant_text_parts() {
+        let long_url = "https://example.test/path?abcdefghijklmnopqrstuvwxyz0123456789";
+        let request = ChatRequest {
+            messages: vec![
+                ChatMessage::text(MessageRole::System, format!("System keeps {long_url}")),
+                ChatMessage {
+                    role: MessageRole::User,
+                    content: vec![
+                        ContentPart::Text {
+                            text: format!("User opens {long_url}"),
+                        },
+                        ContentPart::ImageUrl {
+                            image_url: long_url.to_owned(),
+                            detail: None,
+                        },
+                    ],
+                },
+                ChatMessage::text(MessageRole::Assistant, format!("Assistant saw {long_url}")),
+            ],
+            output_schema: None,
+        };
+
+        let (request, replacements) = request_with_shortened_urls(request, Some(10));
+        let shortened = "https://example.test/path?abcdefghi...0cd4b05";
+
+        assert_eq!(
+            replacements.get(shortened).map(String::as_str),
+            Some(long_url)
+        );
+        let system_text = match &request.messages[0].content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected system content: {other:?}"),
+        };
+        let user_text = match &request.messages[1].content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected user content: {other:?}"),
+        };
+        let user_image = match &request.messages[1].content[1] {
+            ContentPart::ImageUrl { image_url, .. } => image_url,
+            other => panic!("unexpected user image content: {other:?}"),
+        };
+        let assistant_text = match &request.messages[2].content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("unexpected assistant content: {other:?}"),
+        };
+
+        assert!(system_text.contains(long_url));
+        assert!(user_text.contains(shortened));
+        assert_eq!(user_image, long_url);
+        assert!(assistant_text.contains(shortened));
+
+        let (disabled_request, disabled_replacements) =
+            request_with_shortened_urls(request.clone(), None);
+        assert!(disabled_replacements.is_empty());
+        assert_eq!(disabled_request, request);
     }
 
     #[test]
@@ -12126,6 +12365,67 @@ mod tests {
                 .as_ref()
                 .is_some_and(|schema| schema["properties"]["result"]["type"] == "string")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_shortens_prompt_urls_and_restores_model_output_before_execution() {
+        let long_url = "https://example.test/path?abcdefghijklmnopqrstuvwxyz0123456789";
+        let shortened = "https://example.test/path?abcdefghi...0cd4b05";
+        let mut state = blank_state();
+        state.url = long_url.to_owned();
+        let agent_output = serde_json::json!({
+            "current_state": {
+                "memory": format!("Use {shortened} from the page state"),
+                "next_goal": format!("Open {shortened}")
+            },
+            "action": [
+                {
+                    "navigate": {
+                        "url": shortened,
+                        "new_tab": false
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            directly_open_url: false,
+            url_shortening_limit: Some(10),
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "continue",
+            settings,
+            QueueModel::new(vec![agent_output]),
+            MockSession::with_states(vec![state]),
+        );
+
+        let model_output = {
+            let item = agent.step().await.expect("agent step");
+            item.model_output.clone().expect("model output")
+        };
+
+        let requests = agent.llm.requests.lock().expect("requests lock").clone();
+        let prompt_text = request_text(&requests[0]);
+        assert!(prompt_text.contains(shortened));
+        assert!(!prompt_text.contains(long_url));
+        assert_eq!(
+            agent.executor.session().events(),
+            vec![format!("navigate:{long_url}:false")]
+        );
+        let expected_memory = format!("Use {long_url} from the page state");
+        let expected_next_goal = format!("Open {long_url}");
+        assert_eq!(
+            model_output.current_state.memory.as_deref(),
+            Some(expected_memory.as_str())
+        );
+        assert_eq!(
+            model_output.current_state.next_goal.as_deref(),
+            Some(expected_next_goal.as_str())
+        );
+        assert!(matches!(
+            &model_output.action[0],
+            BrowserAction::Navigate(NavigateAction { url, new_tab: false }) if url == long_url
+        ));
     }
 
     #[tokio::test]

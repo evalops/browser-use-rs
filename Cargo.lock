@@ -221,6 +221,7 @@ dependencies = [
  "data-encoding",
  "encoding_rs",
  "image",
+ "md-5",
  "pdf-extract",
  "quick-xml",
  "regex",
