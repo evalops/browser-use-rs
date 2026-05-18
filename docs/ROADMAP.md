@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #91 lands and CI is green.
+- [#92 Add upstream extraction_schema agent setting](https://github.com/evalops/browser-use-rs/issues/92)
 
 ## Completed Tracks
 
