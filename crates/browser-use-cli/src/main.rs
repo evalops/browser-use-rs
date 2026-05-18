@@ -272,9 +272,23 @@ enum SessionCommand {
     Stop { id: String },
     /// List recorded persistent sessions.
     List,
+    /// Remove stale persistent session records, or force-clean a specific record.
+    Cleanup {
+        id: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 type StoredSession = browser_use_mcp::SessionRecord;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionCleanupDecision {
+    RemoveRecord,
+    StopRunning,
+    SkipRunning,
+    SkipUnknown,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -691,6 +705,68 @@ async fn stop_persistent_session(id: &str) -> anyhow::Result<StoredSession> {
     Ok(record)
 }
 
+async fn cleanup_persistent_sessions(
+    id: Option<&str>,
+    force: bool,
+) -> anyhow::Result<Vec<browser_use_mcp::SessionCleanupRecord>> {
+    let records = if let Some(id) = id {
+        vec![annotate_session_status(read_session_record(id)?)]
+    } else {
+        list_session_records()?
+    };
+    let mut cleaned = Vec::new();
+
+    for record in records {
+        match session_cleanup_decision(&record, force, process_is_running) {
+            SessionCleanupDecision::RemoveRecord => {
+                remove_session_dir(&record.id)?;
+                cleaned.push(browser_use_mcp::SessionCleanupRecord {
+                    action: browser_use_mcp::SessionCleanupAction::Removed,
+                    session: record,
+                });
+            }
+            SessionCleanupDecision::StopRunning => {
+                let record = stop_persistent_session(&record.id).await?;
+                cleaned.push(browser_use_mcp::SessionCleanupRecord {
+                    action: browser_use_mcp::SessionCleanupAction::Stopped,
+                    session: record,
+                });
+            }
+            SessionCleanupDecision::SkipRunning if id.is_some() => {
+                anyhow::bail!(
+                    "session {} is running; use session stop or pass --force",
+                    record.id
+                );
+            }
+            SessionCleanupDecision::SkipUnknown if id.is_some() => {
+                anyhow::bail!(
+                    "session {} has unknown liveness; pass --force to remove the record",
+                    record.id
+                );
+            }
+            SessionCleanupDecision::SkipRunning | SessionCleanupDecision::SkipUnknown => {}
+        }
+    }
+
+    Ok(cleaned)
+}
+
+fn session_cleanup_decision(
+    record: &StoredSession,
+    force: bool,
+    is_running: impl Fn(u32) -> bool,
+) -> SessionCleanupDecision {
+    match session_status_with_checker(record, is_running) {
+        browser_use_mcp::SessionStatus::Running if force => SessionCleanupDecision::StopRunning,
+        browser_use_mcp::SessionStatus::Running => SessionCleanupDecision::SkipRunning,
+        browser_use_mcp::SessionStatus::Stale | browser_use_mcp::SessionStatus::Stopped => {
+            SessionCleanupDecision::RemoveRecord
+        }
+        browser_use_mcp::SessionStatus::Unknown if force => SessionCleanupDecision::RemoveRecord,
+        browser_use_mcp::SessionStatus::Unknown => SessionCleanupDecision::SkipUnknown,
+    }
+}
+
 async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
     match command {
         SessionCommand::Start {
@@ -741,6 +817,17 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&list_session_records()?)?
+            );
+        }
+        SessionCommand::Cleanup { id, force } => {
+            let cleaned = cleanup_persistent_sessions(id.as_deref(), force).await?;
+            let remaining = list_session_records()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "cleaned_sessions": cleaned,
+                    "sessions": remaining,
+                }))?
             );
         }
     }
@@ -1497,6 +1584,7 @@ async fn execute_mcp_tool(
                     browser_use_mcp::SessionToolOutput {
                         session: Some(record),
                         sessions: Vec::new(),
+                        cleaned_sessions: Vec::new(),
                         state: Some(state),
                     }
                 }
@@ -1507,14 +1595,27 @@ async fn execute_mcp_tool(
                     browser_use_mcp::SessionToolOutput {
                         session: Some(record),
                         sessions: Vec::new(),
+                        cleaned_sessions: Vec::new(),
                         state: None,
                     }
                 }
                 browser_use_mcp::SessionOperation::List => browser_use_mcp::SessionToolOutput {
                     session: None,
                     sessions: list_session_records()?,
+                    cleaned_sessions: Vec::new(),
                     state: None,
                 },
+                browser_use_mcp::SessionOperation::Cleanup => {
+                    let cleaned_sessions =
+                        cleanup_persistent_sessions(input.session_id.as_deref(), input.force)
+                            .await?;
+                    browser_use_mcp::SessionToolOutput {
+                        session: None,
+                        sessions: list_session_records()?,
+                        cleaned_sessions,
+                        state: None,
+                    }
+                }
             };
             Ok(browser_use_mcp::tool_success_result(serde_json::to_value(
                 output,
@@ -2183,6 +2284,68 @@ mod tests {
             .status,
             Some(browser_use_mcp::SessionStatus::Unknown)
         );
+    }
+
+    #[test]
+    fn session_cleanup_decision_is_conservative() {
+        let record: StoredSession = serde_json::from_value(serde_json::json!({
+            "id": "cleanup-target",
+            "endpoint": {
+                "http_url": "http://127.0.0.1:9222",
+                "websocket_url": "ws://127.0.0.1:9222/devtools/browser/cleanup"
+            },
+            "user_data_dir": "/tmp/browser-use-rs-cleanup",
+            "process_id": 1234_u32
+        }))
+        .expect("cleanup record");
+
+        assert_eq!(
+            session_cleanup_decision(&record, false, |_| true),
+            SessionCleanupDecision::SkipRunning
+        );
+        assert_eq!(
+            session_cleanup_decision(&record, true, |_| true),
+            SessionCleanupDecision::StopRunning
+        );
+        assert_eq!(
+            session_cleanup_decision(&record, false, |_| false),
+            SessionCleanupDecision::RemoveRecord
+        );
+
+        let unknown = StoredSession {
+            process_id: None,
+            ..record
+        };
+        assert_eq!(
+            session_cleanup_decision(&unknown, false, |_| false),
+            SessionCleanupDecision::SkipUnknown
+        );
+        assert_eq!(
+            session_cleanup_decision(&unknown, true, |_| false),
+            SessionCleanupDecision::RemoveRecord
+        );
+    }
+
+    #[test]
+    fn parses_session_cleanup_flags() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "session",
+            "cleanup",
+            "stale-one",
+            "--force",
+        ])
+        .expect("cleanup flags should parse");
+
+        match cli.command.expect("command") {
+            Command::Session {
+                command: SessionCommand::Cleanup { id, force },
+            } => {
+                assert_eq!(id.as_deref(), Some("stale-one"));
+                assert!(force);
+            }
+            _ => panic!("expected session cleanup command"),
+        }
     }
 
     #[test]

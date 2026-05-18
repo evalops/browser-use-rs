@@ -128,6 +128,8 @@ pub enum SessionOperation {
     Stop,
     #[serde(rename = "list")]
     List,
+    #[serde(rename = "cleanup")]
+    Cleanup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -139,9 +141,11 @@ pub struct SessionToolInput {
     pub url: Option<String>,
     #[serde(default = "default_true")]
     pub screenshot: bool,
+    #[serde(default)]
+    pub force: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SessionStatus {
     #[serde(rename = "running")]
     Running,
@@ -151,6 +155,20 @@ pub enum SessionStatus {
     Stopped,
     #[serde(rename = "unknown")]
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SessionCleanupAction {
+    #[serde(rename = "removed")]
+    Removed,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionCleanupRecord {
+    pub action: SessionCleanupAction,
+    pub session: SessionRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -186,6 +204,8 @@ pub struct SessionToolOutput {
     pub session: Option<SessionRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<SessionRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleaned_sessions: Vec<SessionCleanupRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<BrowserStateSummary>,
 }
@@ -219,7 +239,7 @@ pub fn tool_manifest() -> Vec<McpToolContract> {
         ),
         tool_contract::<SessionToolInput>(
             SESSION_TOOL_NAME,
-            "Start, stop, or list persistent browser-use sessions.",
+            "Start, stop, list, or clean up persistent browser-use sessions.",
         ),
     ]
 }
@@ -408,6 +428,8 @@ mod tests {
         assert!(schema_text.contains("start"));
         assert!(schema_text.contains("stop"));
         assert!(schema_text.contains("list"));
+        assert!(schema_text.contains("cleanup"));
+        assert!(schema_text.contains("force"));
     }
 
     #[test]
