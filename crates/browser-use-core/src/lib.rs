@@ -5232,21 +5232,22 @@ where
         &mut self,
         request: ChatRequest,
     ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
-        let first = self.invoke_json_once(request.clone()).await;
+        let seconds = self.settings.llm_timeout_seconds;
+        let first = Self::invoke_json_once(&self.llm, seconds, request.clone()).await;
         match first {
             Err(AgentLlmCallError::Provider(error)) if self.try_switch_to_fallback_llm(&error) => {
-                self.invoke_json_once(request).await
+                Self::invoke_json_once(&self.llm, seconds, request).await
             }
             result => result,
         }
     }
 
     async fn invoke_json_once(
-        &self,
+        llm: &M,
+        seconds: u64,
         request: ChatRequest,
     ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
-        let seconds = self.settings.llm_timeout_seconds;
-        timeout(Duration::from_secs(seconds), self.llm.invoke_json(request))
+        timeout(Duration::from_secs(seconds), llm.invoke_json(request))
             .await
             .map_err(|_| AgentLlmCallError::TimedOut { seconds })?
             .map_err(AgentLlmCallError::Provider)
