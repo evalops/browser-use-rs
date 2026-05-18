@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active tracked slice is open right now; the next parity slice should be
-filed from the upstream gap scan before implementation starts.
+- [#71 Preserve upstream non-judge auxiliary AgentSettings flags](https://github.com/evalops/browser-use-rs/issues/71)
 
 ## Completed Tracks
 
