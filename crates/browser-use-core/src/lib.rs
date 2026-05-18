@@ -504,6 +504,40 @@ pub struct AgentHistoryReplayExecutionItem {
     pub result: ActionResult,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentHistoryReplayRun {
+    pub current_state: BrowserStateSummary,
+    pub plan: AgentHistoryReplayPlan,
+    pub execution: AgentHistoryReplayExecution,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentHistoryReplayRunError {
+    CurrentState {
+        message: String,
+    },
+    Plan {
+        error: Box<AgentHistoryReplayPlanError>,
+    },
+}
+
+impl std::fmt::Display for AgentHistoryReplayRunError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CurrentState { message } => {
+                write!(
+                    formatter,
+                    "failed to capture current browser state: {message}"
+                )
+            }
+            Self::Plan { error } => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for AgentHistoryReplayRunError {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentHistoryReplayStop {
     pub step_index: usize,
@@ -1034,6 +1068,28 @@ where
         }
 
         AgentHistoryReplayExecution { items, stop }
+    }
+
+    pub async fn replay_history(
+        &mut self,
+        history: &AgentHistory,
+    ) -> Result<AgentHistoryReplayRun, AgentHistoryReplayRunError> {
+        let current_state = self.session.state(false).await.map_err(|error| {
+            AgentHistoryReplayRunError::CurrentState {
+                message: error.to_string(),
+            }
+        })?;
+        let plan = history
+            .replay_plan(&current_state.dom_state)
+            .map_err(|error| AgentHistoryReplayRunError::Plan {
+                error: Box::new(error),
+            })?;
+        let execution = self.execute_replay_plan(&plan).await;
+        Ok(AgentHistoryReplayRun {
+            current_state,
+            plan,
+            execution,
+        })
     }
 }
 
@@ -7374,6 +7430,133 @@ mod tests {
                 diagnostic: None,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_history_captures_current_state_and_executes_plan() {
+        let mut historical_state = blank_state();
+        historical_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        )]);
+        let history = AgentHistory {
+            items: vec![history_item_with_state_actions(
+                historical_state,
+                vec![BrowserAction::Click(ClickElementAction {
+                    index: Some(1),
+                    coordinate_x: None,
+                    coordinate_y: None,
+                })],
+            )],
+        };
+        let mut current_state = blank_state();
+        current_state.url = "https://example.com/current".to_owned();
+        current_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            7,
+            "button",
+            BTreeMap::from([("id".to_owned(), "save".to_owned())]),
+        )]);
+        let mut before = blank_state();
+        before.url = current_state.url.clone();
+        let after = before.clone();
+        let session = MockSession::with_states(vec![current_state.clone(), before, after]);
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let run = executor.replay_history(&history).await.expect("replay run");
+
+        assert_eq!(run.current_state.url, current_state.url);
+        assert_eq!(run.plan.actions.len(), 1);
+        assert_eq!(
+            run.plan.actions[0]
+                .remapped_action
+                .interacted_element_index(),
+            Some(7)
+        );
+        assert_eq!(run.execution.items.len(), 1);
+        assert_eq!(
+            run.execution.items[0]
+                .executed_action
+                .interacted_element_index(),
+            Some(7)
+        );
+        assert_eq!(run.execution.stop, None);
+        assert_eq!(executor.session().events(), vec!["click:7"]);
+        assert_eq!(
+            executor.session().state_screenshot_requests(),
+            vec![false, false, false]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_replay_history_reports_current_state_failure() {
+        let session = MockSession::with_state_error("state unavailable");
+        let mut executor = BrowserActionExecutor::new(session);
+        let history = AgentHistory::default();
+
+        let error = executor
+            .replay_history(&history)
+            .await
+            .expect_err("state error");
+
+        assert!(matches!(
+            error,
+            AgentHistoryReplayRunError::CurrentState { .. }
+        ));
+        assert_eq!(executor.session().events(), Vec::<String>::new());
+        assert_eq!(executor.session().state_screenshot_requests(), vec![false]);
+    }
+
+    #[tokio::test]
+    async fn browser_replay_history_reports_plan_rematch_failure() {
+        let mut historical_state = blank_state();
+        historical_state.dom_state = SerializedDomState::from_elements(vec![replay_dom_element(
+            1,
+            "button",
+            BTreeMap::from([("data-testid".to_owned(), "duplicate".to_owned())]),
+        )]);
+        let history = AgentHistory {
+            items: vec![history_item_with_state_actions(
+                historical_state,
+                vec![BrowserAction::Click(ClickElementAction {
+                    index: Some(1),
+                    coordinate_x: None,
+                    coordinate_y: None,
+                })],
+            )],
+        };
+        let mut current_state = blank_state();
+        current_state.dom_state = SerializedDomState::from_elements(vec![
+            replay_dom_element(
+                7,
+                "button",
+                BTreeMap::from([("data-testid".to_owned(), "duplicate".to_owned())]),
+            ),
+            replay_dom_element(
+                8,
+                "button",
+                BTreeMap::from([("data-testid".to_owned(), "duplicate".to_owned())]),
+            ),
+        ]);
+        let session = MockSession::with_states(vec![current_state]);
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let error = executor
+            .replay_history(&history)
+            .await
+            .expect_err("plan error");
+
+        let AgentHistoryReplayRunError::Plan { error } = error else {
+            panic!("expected plan error");
+        };
+        assert_eq!(error.step_index, 0);
+        assert_eq!(error.action_index, 0);
+        assert_eq!(
+            error.failure.reason,
+            DomInteractedElementMatchFailureReason::Ambiguous
+        );
+        assert_eq!(executor.session().events(), Vec::<String>::new());
+        assert_eq!(executor.session().state_screenshot_requests(), vec![false]);
     }
 
     #[tokio::test]
