@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active track is open at this checkpoint.
+- [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
 
 ## Completed Tracks
 
