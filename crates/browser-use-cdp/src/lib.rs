@@ -3610,6 +3610,10 @@ async fn attach_to_target(
             BrowserError::MissingResponseData("Target.attachToTarget sessionId".to_owned())
         })?;
 
+    connection
+        .command("Page.enable", json!({}), Some(&session_id))
+        .await?;
+
     Ok(AttachedPage {
         target_id,
         session_id,
