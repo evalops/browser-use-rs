@@ -271,6 +271,8 @@ enum SessionCommand {
         #[arg(long, default_value_t = true)]
         screenshot: bool,
     },
+    /// Replay serialized AgentHistory against an existing persistent session.
+    Replay { id: String, history: PathBuf },
     /// Stop an existing persistent session.
     Stop { id: String },
     /// List recorded persistent sessions.
@@ -397,8 +399,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Replay { url, history }) => {
             let session = launch_and_navigate(&url).await?;
-            let history = std::fs::read_to_string(&history)?;
-            let history: AgentHistory = serde_json::from_str(&history)?;
+            let history = read_agent_history(&history)?;
             let mut executor = BrowserActionExecutor::new(session);
             let replay = executor.replay_history(&history).await?;
             println!("{}", serde_json::to_string_pretty(&replay)?);
@@ -508,6 +509,11 @@ async fn print_state(session: &CdpBrowserSession, include_screenshot: bool) -> a
     let state = session.state(include_screenshot).await?;
     println!("{}", serde_json::to_string_pretty(&state)?);
     Ok(())
+}
+
+fn read_agent_history(path: &PathBuf) -> anyhow::Result<AgentHistory> {
+    let history = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&history)?)
 }
 
 #[derive(Debug, Default)]
@@ -818,6 +824,20 @@ async fn run_session_command(command: SessionCommand) -> anyhow::Result<()> {
                     "session": record,
                     "results": results,
                     "state": state,
+                }))?
+            );
+        }
+        SessionCommand::Replay { id, history } => {
+            let record = annotate_session_status(read_session_record(&id)?);
+            let session = CdpBrowserSession::connect(record.endpoint.clone()).await?;
+            let history = read_agent_history(&history)?;
+            let mut executor = BrowserActionExecutor::new(session);
+            let replay = executor.replay_history(&history).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "session": record,
+                    "replay": replay,
                 }))?
             );
         }
@@ -2402,6 +2422,28 @@ mod tests {
                 assert!(force);
             }
             _ => panic!("expected session cleanup command"),
+        }
+    }
+
+    #[test]
+    fn parses_session_replay_command() {
+        let cli = Cli::try_parse_from([
+            "browser-use-rs",
+            "session",
+            "replay",
+            "existing",
+            "history.json",
+        ])
+        .expect("session replay command should parse");
+
+        match cli.command.expect("command") {
+            Command::Session {
+                command: SessionCommand::Replay { id, history },
+            } => {
+                assert_eq!(id, "existing");
+                assert_eq!(history, PathBuf::from("history.json"));
+            }
+            _ => panic!("expected session replay command"),
         }
     }
 
