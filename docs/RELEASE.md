@@ -118,8 +118,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   override/extension controls, upstream-style prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, and step-error,
-  model-output, model-action, thought, duration, truncated action-history,
-  interacted-element action-history metadata for indexed actions, and
+  model-output, model-action, thought, duration, model-action and truncated
+  action-history interacted-element metadata for indexed actions, and
   screenshot/URL accessors. `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.

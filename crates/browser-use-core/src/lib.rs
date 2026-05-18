@@ -579,9 +579,20 @@ impl AgentHistory {
     pub fn model_actions(&self) -> Vec<Value> {
         self.items
             .iter()
-            .filter_map(|item| item.model_output.as_ref())
-            .flat_map(|output| output.action.iter())
-            .filter_map(|action| serde_json::to_value(action).ok())
+            .flat_map(|item| {
+                item.model_output
+                    .as_ref()
+                    .map(|output| {
+                        output
+                            .action
+                            .iter()
+                            .filter_map(|action| {
+                                action_value_with_interacted_element(action, &item.state)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
             .collect()
     }
 
@@ -599,15 +610,9 @@ impl AgentHistory {
                     .iter()
                     .zip(item.result.iter())
                     .filter_map(|(action, result)| {
-                        let mut action_output = serde_json::to_value(action).ok()?;
+                        let mut action_output =
+                            action_value_with_interacted_element(action, &item.state)?;
                         if let Value::Object(attributes) = &mut action_output {
-                            let interacted_element = action
-                                .interacted_element_index()
-                                .and_then(|index| item.state.dom_state.selector_map.get(&index))
-                                .map(DomInteractedElement::from_element)
-                                .and_then(|element| serde_json::to_value(element).ok())
-                                .unwrap_or(Value::Null);
-                            attributes.insert("interacted_element".to_owned(), interacted_element);
                             attributes.insert(
                                 "result".to_owned(),
                                 result
@@ -648,6 +653,23 @@ impl AgentHistory {
     fn last_result(&self) -> Option<&ActionResult> {
         self.items.last().and_then(|item| item.result.last())
     }
+}
+
+fn action_value_with_interacted_element(
+    action: &BrowserAction,
+    state: &BrowserStateSummary,
+) -> Option<Value> {
+    let mut action_output = serde_json::to_value(action).ok()?;
+    if let Value::Object(attributes) = &mut action_output {
+        let interacted_element = action
+            .interacted_element_index()
+            .and_then(|index| state.dom_state.selector_map.get(&index))
+            .map(DomInteractedElement::from_element)
+            .and_then(|element| serde_json::to_value(element).ok())
+            .unwrap_or(Value::Null);
+        attributes.insert("interacted_element".to_owned(), interacted_element);
+    }
+    Some(action_output)
 }
 
 #[async_trait]
@@ -5651,15 +5673,23 @@ mod tests {
             }],
         };
 
-        let history = history.action_history();
+        let action_history = history.action_history();
         assert_eq!(
-            history[0][0]["interacted_element"],
+            action_history[0][0]["interacted_element"],
             serde_json::to_value(DomInteractedElement::from_element(&element))
                 .expect("interacted element")
         );
-        assert_eq!(history[0][0]["result"], "Typed into element 1");
-        assert_eq!(history[0][1]["interacted_element"], Value::Null);
-        assert_eq!(history[0][1]["result"], "Paused");
+        assert_eq!(action_history[0][0]["result"], "Typed into element 1");
+        assert_eq!(action_history[0][1]["interacted_element"], Value::Null);
+        assert_eq!(action_history[0][1]["result"], "Paused");
+
+        let model_actions = history.model_actions();
+        assert_eq!(
+            model_actions[0]["interacted_element"],
+            serde_json::to_value(DomInteractedElement::from_element(&element))
+                .expect("interacted element")
+        );
+        assert_eq!(model_actions[1]["interacted_element"], Value::Null);
     }
 
     #[test]

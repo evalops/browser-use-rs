@@ -148,8 +148,8 @@ Implemented:
   last-result completion helpers, upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation, judgement
   results, per-step error slots, model-output/action/thought accessors,
-  truncated action-history helpers, interacted-element action-history metadata
-  for indexed actions, duration helpers, and screenshot/URL helpers.
+  model-action and truncated action-history interacted-element metadata for
+  indexed actions, duration helpers, and screenshot/URL helpers.
   `AgentCheckpoint` export/resume preserves task settings, history,
   initial-action execution state, and managed filesystem state across a new
   model/session.

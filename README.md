@@ -124,8 +124,9 @@ includes:
   override/extension controls, upstream-style prompt context and error
   truncation, upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results, step-error,
-  model-output/action/thought, duration, action, truncated action-history, and
-  screenshot/URL history accessors. Agents can export a serializable
+  model-output/action/thought, duration, action, model-action and truncated
+  action-history interacted-element metadata, and screenshot/URL history
+  accessors. Agents can export a serializable
   `AgentCheckpoint` and resume it with a new model/session while preserving
   task settings, history, initial-action execution state, and managed
   filesystem state. Conformance fixtures include a longer multi-step replay for

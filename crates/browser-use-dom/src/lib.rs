@@ -183,7 +183,18 @@ impl DomInteractedElement {
                 HashClassMode::Stable,
             )),
             x_path,
-            ax_name: element.attributes.get("ax_name").cloned(),
+            ax_name: element
+                .attributes
+                .get("ax_name")
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .or_else(|| {
+                    element
+                        .name
+                        .as_ref()
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                }),
         }
     }
 }
@@ -1582,6 +1593,29 @@ mod tests {
         assert_ne!(first.element_hash, second.element_hash);
         assert_eq!(first.stable_hash, second.stable_hash);
         assert_eq!(first.x_path, second.x_path);
+    }
+
+    #[test]
+    fn interacted_element_uses_element_name_as_ax_fallback() {
+        let element = DomElementRef {
+            index: 3,
+            target_id: "target".to_owned(),
+            backend_node_id: 3,
+            node_id: Some(3),
+            tag_name: "button".to_owned(),
+            role: Some("button".to_owned()),
+            name: Some("Fallback Label".to_owned()),
+            text: Some("Fallback Label".to_owned()),
+            attributes: BTreeMap::from([("id".to_owned(), "fallback".to_owned())]),
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        };
+
+        let interacted = DomInteractedElement::from_element(&element);
+
+        assert_eq!(interacted.ax_name.as_deref(), Some("Fallback Label"));
     }
 
     #[test]
