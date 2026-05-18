@@ -469,10 +469,10 @@ pub struct AgentHistoryReplayPlanItem {
 pub struct AgentHistoryReplayPlanError {
     pub step_index: usize,
     pub action_index: usize,
-    pub original_action: BrowserAction,
+    pub original_action: Box<BrowserAction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_index: Option<u32>,
-    pub failure: DomInteractedElementMatchFailure,
+    pub failure: Box<DomInteractedElementMatchFailure>,
 }
 
 impl std::fmt::Display for AgentHistoryReplayPlanError {
@@ -539,9 +539,9 @@ pub fn build_history_replay_plan(
                     .map_err(|failure| AgentHistoryReplayPlanError {
                         step_index,
                         action_index,
-                        original_action: action.clone(),
+                        original_action: Box::new(action.clone()),
                         original_index: action.interacted_element_index(),
-                        failure,
+                        failure: Box::new(failure),
                     })?;
             actions.push(AgentHistoryReplayPlanItem {
                 step_index,
@@ -788,7 +788,6 @@ impl AgentHistory {
             .collect()
     }
 
-    #[must_use]
     pub fn replay_plan(
         &self,
         current_dom: &SerializedDomState,
