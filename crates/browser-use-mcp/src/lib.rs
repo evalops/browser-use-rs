@@ -23,6 +23,12 @@ pub struct McpToolContract {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    #[serde(
+        rename = "outputSchema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -240,23 +246,23 @@ fn is_default_agent_settings(settings: &AgentSettings) -> bool {
 #[must_use]
 pub fn tool_manifest() -> Vec<McpToolContract> {
     vec![
-        tool_contract::<StateToolInput>(
+        tool_contract::<StateToolInput, StateToolOutput>(
             STATE_TOOL_NAME,
             "Launch a browser, navigate to a URL, and return browser-use state.",
         ),
-        tool_contract::<ActionsToolInput>(
+        tool_contract::<ActionsToolInput, ActionsToolOutput>(
             ACTIONS_TOOL_NAME,
             "Launch a browser, run browser-use actions, and return action results plus final state.",
         ),
-        tool_contract::<ReplayToolInput>(
+        tool_contract::<ReplayToolInput, ReplayToolOutput>(
             REPLAY_TOOL_NAME,
             "Replay saved browser-use AgentHistory against current browser state.",
         ),
-        tool_contract::<AgentToolInput>(
+        tool_contract::<AgentToolInput, AgentToolOutput>(
             AGENT_TOOL_NAME,
             "Launch a browser, run a bounded browser-use agent task, and return agent history.",
         ),
-        tool_contract::<SessionToolInput>(
+        tool_contract::<SessionToolInput, SessionToolOutput>(
             SESSION_TOOL_NAME,
             "Start, stop, list, or clean up persistent browser-use sessions.",
         ),
@@ -341,14 +347,16 @@ pub fn json_rpc_error(id: Option<Value>, code: i64, message: impl Into<String>) 
     })
 }
 
-fn tool_contract<T>(name: &str, description: &str) -> McpToolContract
+fn tool_contract<Input, Output>(name: &str, description: &str) -> McpToolContract
 where
-    T: JsonSchema,
+    Input: JsonSchema,
+    Output: JsonSchema,
 {
     McpToolContract {
         name: name.to_owned(),
         description: description.to_owned(),
-        input_schema: serde_json::to_value(schema_for!(T)).unwrap_or(Value::Null),
+        input_schema: serde_json::to_value(schema_for!(Input)).unwrap_or(Value::Null),
+        output_schema: Some(serde_json::to_value(schema_for!(Output)).unwrap_or(Value::Null)),
     }
 }
 
@@ -397,6 +405,38 @@ mod tests {
         assert!(schema_text.contains("history"));
         assert!(schema_text.contains("session_id"));
         assert!(schema_text.contains("url"));
+    }
+
+    #[test]
+    fn manifest_exposes_output_schemas() {
+        let manifest = tool_manifest();
+
+        for tool_name in [
+            STATE_TOOL_NAME,
+            ACTIONS_TOOL_NAME,
+            REPLAY_TOOL_NAME,
+            AGENT_TOOL_NAME,
+            SESSION_TOOL_NAME,
+        ] {
+            let tool = manifest
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .expect("tool contract");
+            assert!(
+                tool.output_schema.is_some(),
+                "{tool_name} missing outputSchema"
+            );
+        }
+
+        let replay_tool = manifest
+            .iter()
+            .find(|tool| tool.name == REPLAY_TOOL_NAME)
+            .expect("replay tool");
+        let output_schema_text =
+            serde_json::to_string(&replay_tool.output_schema).expect("output schema text");
+
+        assert!(output_schema_text.contains("replay"));
+        assert!(output_schema_text.contains("AgentHistoryReplayRun"));
     }
 
     #[test]
