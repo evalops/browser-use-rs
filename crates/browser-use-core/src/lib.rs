@@ -1537,14 +1537,15 @@ fn ensure_png_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
 fn write_file_action(
     params: &browser_use_tools::WriteFileAction,
 ) -> Result<ActionResult, BrowserError> {
-    if let Some(result) = validate_write_file_name(&params.file_name) {
+    let resolved_file = resolve_file_action_path(&params.file_name, supported_write_extensions());
+    if let Some(result) = validate_write_file_name(&resolved_file.display_name) {
         return Ok(result);
     }
-    let path = std::path::Path::new(&params.file_name);
+    let path = resolved_file.path.as_path();
     if params.append && !path.exists() {
         return Ok(ActionResult::error(format!(
             "File '{}' not found.",
-            params.file_name
+            resolved_file.display_name
         )));
     }
     if let Some(parent) = path.parent()
@@ -1562,24 +1563,24 @@ fn write_file_action(
         content.insert(0, '\n');
     }
 
-    if is_csv_file(&params.file_name) {
+    if is_csv_file(&resolved_file.display_name) {
         content = normalize_csv_content(&content);
     }
 
     if params.append {
-        if is_pdf_file(&params.file_name) {
+        if is_pdf_file(&resolved_file.display_name) {
             let existing = pdf_extract::extract_text(path)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_pdf_append_content(&existing, &content);
             write_pdf_text(path, &merged)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-        } else if is_docx_file(&params.file_name) {
-            let existing = read_docx_text(&params.file_name)
+        } else if is_docx_file(&resolved_file.display_name) {
+            let existing = read_docx_text(&resolved_file.path_string())
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_docx_append_content(&existing, &content);
             write_docx_text(path, &merged)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-        } else if is_csv_file(&params.file_name) {
+        } else if is_csv_file(&resolved_file.display_name) {
             let existing = std::fs::read_to_string(path)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_csv_append_content(&existing, &content);
@@ -1595,14 +1596,15 @@ fn write_file_action(
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
         }
         Ok(ActionResult::extracted(format!(
-            "Appended to file {}",
-            params.file_name
+            "Appended to file {}{}",
+            resolved_file.display_name,
+            resolved_file.correction_suffix()
         )))
     } else {
-        if is_pdf_file(&params.file_name) {
+        if is_pdf_file(&resolved_file.display_name) {
             write_pdf_text(path, &content)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
-        } else if is_docx_file(&params.file_name) {
+        } else if is_docx_file(&resolved_file.display_name) {
             write_docx_text(path, &content)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
         } else {
@@ -1610,8 +1612,9 @@ fn write_file_action(
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
         }
         Ok(ActionResult::extracted(format!(
-            "Wrote file {}",
-            params.file_name
+            "Wrote file {}{}",
+            resolved_file.display_name,
+            resolved_file.correction_suffix()
         )))
     }
 }
@@ -1725,20 +1728,31 @@ fn normalize_csv_content(raw: &str) -> String {
 }
 
 fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
-    if let Some(result) = validate_read_file_name(file_name) {
+    let read_extensions = supported_read_extensions();
+    let resolved_file = resolve_file_action_path(file_name, &read_extensions);
+    if let Some(result) = validate_read_file_name(&resolved_file.display_name) {
         return Ok(result);
     }
-    if is_supported_read_image_file(file_name) {
-        return read_image_file_action(file_name);
+    let path_string = resolved_file.path_string();
+    if is_supported_read_image_file(&resolved_file.display_name) {
+        let mut result = read_image_file_action(&path_string)?;
+        apply_file_name_correction_note(&mut result, &resolved_file);
+        return Ok(result);
     }
-    if is_supported_read_document_file(file_name) {
-        return read_document_file_action(file_name);
+    if is_supported_read_document_file(&resolved_file.display_name) {
+        let mut result = read_document_file_action(&path_string)?;
+        apply_file_name_correction_note(&mut result, &resolved_file);
+        return Ok(result);
     }
-    let content = std::fs::read_to_string(file_name)
+    let content = std::fs::read_to_string(&resolved_file.path)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     let memory = read_file_memory(&content);
     Ok(ActionResult {
-        extracted_content: Some(format!("Read file {file_name}:\n{content}")),
+        extracted_content: Some(format!(
+            "{}Read file {}:\n{content}",
+            resolved_file.correction_prefix(),
+            resolved_file.display_name
+        )),
         error: None,
         judgement: None,
         long_term_memory: Some(memory),
@@ -2373,7 +2387,8 @@ fn replace_file_action(
     old_str: &str,
     new_str: &str,
 ) -> Result<ActionResult, BrowserError> {
-    if let Some(result) = validate_text_file_name(file_name) {
+    let resolved_file = resolve_file_action_path(file_name, supported_text_extensions());
+    if let Some(result) = validate_text_file_name(&resolved_file.display_name) {
         return Ok(result);
     }
     if old_str.is_empty() {
@@ -2381,19 +2396,153 @@ fn replace_file_action(
             "Cannot replace empty string. Please provide a non-empty string to replace.",
         ));
     }
-    let content = std::fs::read_to_string(file_name)
+    let content = std::fs::read_to_string(&resolved_file.path)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     if !content.contains(old_str) {
         return Ok(ActionResult::error(format!(
-            "Could not find text to replace in {file_name}"
+            "Could not find text to replace in {}",
+            resolved_file.display_name
         )));
     }
     let updated = content.replace(old_str, new_str);
-    std::fs::write(file_name, updated)
+    std::fs::write(&resolved_file.path, updated)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     Ok(ActionResult::extracted(format!(
-        "Replaced text in file {file_name}"
+        "Replaced text in file {}{}",
+        resolved_file.display_name,
+        resolved_file.correction_suffix()
     )))
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedFileActionPath {
+    path: std::path::PathBuf,
+    display_name: String,
+    original_name: String,
+    was_corrected: bool,
+}
+
+impl ResolvedFileActionPath {
+    fn path_string(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
+
+    fn correction_suffix(&self) -> String {
+        if self.was_corrected {
+            format!(" (auto-corrected from '{}')", self.original_name)
+        } else {
+            String::new()
+        }
+    }
+
+    fn correction_prefix(&self) -> String {
+        if self.was_corrected {
+            format!(
+                "Note: filename was auto-corrected from '{}' to '{}'. ",
+                self.original_name, self.display_name
+            )
+        } else {
+            String::new()
+        }
+    }
+}
+
+fn apply_file_name_correction_note(
+    result: &mut ActionResult,
+    resolved_file: &ResolvedFileActionPath,
+) {
+    if !resolved_file.was_corrected {
+        return;
+    }
+    if let Some(content) = result.extracted_content.as_mut() {
+        content.insert_str(0, &resolved_file.correction_prefix());
+    }
+    if let Some(memory) = result.long_term_memory.as_mut() {
+        memory.insert_str(0, &resolved_file.correction_prefix());
+    }
+}
+
+fn resolve_file_action_path(
+    file_name: &str,
+    supported_extensions: &[&str],
+) -> ResolvedFileActionPath {
+    let path = std::path::Path::new(file_name);
+    if path.is_absolute() {
+        return ResolvedFileActionPath {
+            path: path.to_path_buf(),
+            display_name: file_name.to_owned(),
+            original_name: file_name.to_owned(),
+            was_corrected: false,
+        };
+    }
+
+    let base_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(file_name);
+    let mut display_name = base_name.to_owned();
+    let mut was_corrected = base_name != file_name;
+
+    if !is_valid_action_file_name(&display_name, supported_extensions) {
+        let sanitized = sanitize_action_file_name(&display_name);
+        if sanitized != display_name && is_valid_action_file_name(&sanitized, supported_extensions)
+        {
+            display_name = sanitized;
+            was_corrected = true;
+        }
+    }
+
+    ResolvedFileActionPath {
+        path: std::path::PathBuf::from(&display_name),
+        display_name,
+        original_name: file_name.to_owned(),
+        was_corrected,
+    }
+}
+
+fn is_valid_action_file_name(file_name: &str, supported_extensions: &[&str]) -> bool {
+    let Some((name, extension)) = file_name.rsplit_once('.') else {
+        return false;
+    };
+    if name.trim().is_empty() {
+        return false;
+    }
+    let extension = extension.to_ascii_lowercase();
+    if !supported_extensions.contains(&extension.as_str()) {
+        return false;
+    }
+    name.chars().all(is_valid_action_file_name_char)
+}
+
+fn is_valid_action_file_name_char(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(character, '_' | '-' | '.' | '(' | ')' | ' ')
+        || ('\u{4e00}'..='\u{9fff}').contains(&character)
+}
+
+fn sanitize_action_file_name(file_name: &str) -> String {
+    let Some((name, extension)) = file_name.rsplit_once('.') else {
+        return file_name.to_owned();
+    };
+    let mut sanitized_name = name
+        .replace(' ', "-")
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(*character, '_' | '-' | '.' | '(' | ')')
+                || ('\u{4e00}'..='\u{9fff}').contains(character)
+        })
+        .collect::<String>();
+    while sanitized_name.contains("--") {
+        sanitized_name = sanitized_name.replace("--", "-");
+    }
+    sanitized_name = sanitized_name
+        .trim_matches(|character| character == '-' || character == '.')
+        .to_owned();
+    if sanitized_name.is_empty() {
+        sanitized_name = "file".to_owned();
+    }
+    format!("{}.{}", sanitized_name, extension.to_ascii_lowercase())
 }
 
 fn validate_write_file_name(file_name: &str) -> Option<ActionResult> {
@@ -2412,7 +2561,7 @@ fn validate_write_file_name(file_name: &str) -> Option<ActionResult> {
 
     if unsupported_binary_extensions().contains(&extension.as_str()) {
         return Some(ActionResult::error(format!(
-            "Cannot write binary/image file '{base_name}'. The write_file action supports text files and DOCX documents. Supported extensions: {}.",
+            "Cannot write binary/image file '{base_name}'. The write_file action supports text files and PDF/DOCX documents. Supported extensions: {}.",
             supported_write_extensions_message()
         )));
     }
@@ -2508,6 +2657,15 @@ fn supported_read_image_extensions() -> &'static [&'static str] {
 
 fn supported_read_document_extensions() -> &'static [&'static str] {
     &["pdf", "docx"]
+}
+
+fn supported_read_extensions() -> Vec<&'static str> {
+    supported_text_extensions()
+        .iter()
+        .chain(supported_read_document_extensions().iter())
+        .chain(supported_read_image_extensions().iter())
+        .copied()
+        .collect()
 }
 
 fn is_supported_read_image_file(file_name: &str) -> bool {
@@ -4266,6 +4424,26 @@ mod tests {
     };
     use std::{collections::BTreeMap, collections::VecDeque, sync::Mutex};
 
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    struct CurrentDirGuard {
+        original: std::path::PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn enter(path: &std::path::Path) -> Self {
+            let original = std::env::current_dir().expect("current dir");
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { original }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.original).expect("restore current dir");
+        }
+    }
+
     #[test]
     fn target_commit_is_pinned() {
         assert_eq!(INITIAL_UPSTREAM_COMMIT.len(), 40);
@@ -5560,6 +5738,81 @@ mod tests {
                 .contains("hello EvalOps\n\nEvalOps")
         );
         assert!(read_result.include_extracted_content_only_once);
+    }
+
+    #[test]
+    fn relative_file_action_paths_resolve_like_upstream_filesystem() {
+        let resolved =
+            resolve_file_action_path("../nested/test@file.MD", supported_text_extensions());
+
+        assert_eq!(resolved.path, std::path::PathBuf::from("testfile.md"));
+        assert_eq!(resolved.display_name, "testfile.md");
+        assert!(resolved.was_corrected);
+
+        let spaced = resolve_file_action_path("report (1).csv", supported_text_extensions());
+        assert_eq!(spaced.path, std::path::PathBuf::from("report (1).csv"));
+        assert!(!spaced.was_corrected);
+
+        let absolute =
+            resolve_file_action_path("/tmp/evalops/test@file.md", supported_text_extensions());
+        assert_eq!(
+            absolute.path,
+            std::path::PathBuf::from("/tmp/evalops/test@file.md")
+        );
+        assert!(!absolute.was_corrected);
+    }
+
+    #[test]
+    fn browser_executor_sanitizes_relative_file_actions_like_upstream() {
+        let _lock = CWD_LOCK.lock().expect("cwd lock");
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+        let write_result = write_file_action(&WriteFileAction {
+            file_name: "nested/test@file.md".to_owned(),
+            content: "old text".to_owned(),
+            append: false,
+            trailing_newline: false,
+            leading_newline: false,
+        })
+        .expect("write result");
+        let append_result = write_file_action(&WriteFileAction {
+            file_name: "nested/test@file.md".to_owned(),
+            content: "\nmore text".to_owned(),
+            append: true,
+            trailing_newline: false,
+            leading_newline: false,
+        })
+        .expect("append result");
+        let replace_result =
+            replace_file_action("nested/test@file.md", "old", "new").expect("replace result");
+        let read_result = read_file_action("nested/test@file.md").expect("read result");
+
+        assert_eq!(
+            write_result.extracted_content.as_deref(),
+            Some("Wrote file testfile.md (auto-corrected from 'nested/test@file.md')")
+        );
+        assert_eq!(
+            append_result.extracted_content.as_deref(),
+            Some("Appended to file testfile.md (auto-corrected from 'nested/test@file.md')")
+        );
+        assert_eq!(
+            replace_result.extracted_content.as_deref(),
+            Some("Replaced text in file testfile.md (auto-corrected from 'nested/test@file.md')")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp_dir.path().join("testfile.md")).expect("sanitized file"),
+            "new text\nmore text"
+        );
+        assert!(!temp_dir.path().join("nested").exists());
+        let read_content = read_result
+            .extracted_content
+            .as_deref()
+            .expect("read content");
+        assert!(read_content.contains(
+            "Note: filename was auto-corrected from 'nested/test@file.md' to 'testfile.md'."
+        ));
+        assert!(read_content.contains("new text\nmore text"));
     }
 
     #[tokio::test]
