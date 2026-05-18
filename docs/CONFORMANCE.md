@@ -68,6 +68,23 @@ Remaining lifecycle gaps are tracked in #31: profile-wide storage discovery
 outside the attached frame tree and a full general-purpose event bus are still
 lighter than upstream.
 
+## Profile-Wide Storage Boundary
+
+The supported storage-state boundary is intentionally the current page plus
+attached frame-tree HTTP(S) origins. CDP `DOMStorage.getDOMStorageItems` works
+from a caller-provided `StorageId` containing a `securityOrigin` or
+`storageKey`, but it does not enumerate every local/session storage origin in a
+browser profile. The CDP `Storage` domain exposes cookies, usage/quota by a
+caller-provided origin, and frame-derived storage keys, but not a safe
+profile-wide localStorage/sessionStorage origin inventory. Profile-wide storage
+discovery therefore remains out of the supported boundary unless a later Chrome
+surface exposes it without navigating pages or reading browser profile internals.
+
+References:
+
+- https://chromedevtools.github.io/devtools-protocol/tot/DOMStorage/
+- https://chromedevtools.github.io/devtools-protocol/tot/Storage/
+
 ## Drift Policy
 
 Upstream bumps must include:
