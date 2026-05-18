@@ -1174,7 +1174,7 @@ fn default_headless() -> bool {
 }
 
 fn default_browser_start_timeout_ms() -> u64 {
-    10_000
+    30_000
 }
 
 fn default_navigation_timeout_ms() -> u64 {
@@ -7079,6 +7079,7 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert_eq!(profile.browser_start_timeout_ms, 30_000);
         assert_eq!(profile.navigation_timeout_ms, 20_000);
     }
 
