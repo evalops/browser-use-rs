@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-No active tracked parity issue is open. The next slice should be filed before
-implementation starts so public progress stays auditable.
+- [#43 Execute rematched replay plans against browser sessions](https://github.com/evalops/browser-use-rs/issues/43)
 
 ## Completed Tracks
 
