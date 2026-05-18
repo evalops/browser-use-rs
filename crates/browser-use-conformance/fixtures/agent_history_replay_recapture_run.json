@@ -1,0 +1,179 @@
+{
+  "current_state": {
+    "dom_state": {
+      "text": "[7] <button id=reveal-email> Reveal email",
+      "selector_map": {
+        "7": {
+          "index": 7,
+          "target_id": "recapture-target",
+          "backend_node_id": 7,
+          "node_id": 7,
+          "tag_name": "button",
+          "name": "Reveal email",
+          "text": "Reveal email",
+          "attributes": {
+            "id": "reveal-email"
+          },
+          "is_visible": true,
+          "is_interactive": true
+        }
+      }
+    },
+    "url": "https://example.test/start",
+    "title": "Replay Recapture",
+    "tabs": [],
+    "pixels_above": 0,
+    "pixels_below": 0,
+    "browser_errors": [],
+    "is_pdf_viewer": false,
+    "pending_network_requests": [],
+    "pagination_buttons": [],
+    "closed_popup_messages": []
+  },
+  "plan": {
+    "actions": [
+      {
+        "step_index": 0,
+        "action_index": 0,
+        "original_action": {
+          "click": {
+            "index": 1
+          }
+        },
+        "remapped_action": {
+          "click": {
+            "index": 7
+          }
+        },
+        "rematch": {
+          "action": {
+            "click": {
+              "index": 7
+            }
+          },
+          "original_index": 1,
+          "rematched_index": 7,
+          "match_result": {
+            "index": 7,
+            "level": "exact"
+          },
+          "changed": true
+        }
+      },
+      {
+        "step_index": 1,
+        "action_index": 0,
+        "original_action": {
+          "input": {
+            "index": 2,
+            "text": "ada@example.test",
+            "clear": true
+          }
+        },
+        "remapped_action": {
+          "input": {
+            "index": 8,
+            "text": "ada@example.test",
+            "clear": true
+          }
+        },
+        "rematch": {
+          "action": {
+            "input": {
+              "index": 8,
+              "text": "ada@example.test",
+              "clear": true
+            }
+          },
+          "original_index": 2,
+          "rematched_index": 8,
+          "match_result": {
+            "index": 8,
+            "level": "exact"
+          },
+          "changed": true
+        }
+      }
+    ]
+  },
+  "execution": {
+    "items": [
+      {
+        "step_index": 0,
+        "action_index": 0,
+        "original_action": {
+          "click": {
+            "index": 1
+          }
+        },
+        "executed_action": {
+          "click": {
+            "index": 7
+          }
+        },
+        "rematch": {
+          "action": {
+            "click": {
+              "index": 7
+            }
+          },
+          "original_index": 1,
+          "rematched_index": 7,
+          "match_result": {
+            "index": 7,
+            "level": "exact"
+          },
+          "changed": true
+        },
+        "result": {
+          "extracted_content": "Clicked element 7",
+          "long_term_memory": "Clicked element 7",
+          "include_extracted_content_only_once": false,
+          "include_in_memory": false,
+          "is_done": false
+        }
+      },
+      {
+        "step_index": 1,
+        "action_index": 0,
+        "original_action": {
+          "input": {
+            "index": 2,
+            "text": "ada@example.test",
+            "clear": true
+          }
+        },
+        "executed_action": {
+          "input": {
+            "index": 8,
+            "text": "ada@example.test",
+            "clear": true
+          }
+        },
+        "rematch": {
+          "action": {
+            "input": {
+              "index": 8,
+              "text": "ada@example.test",
+              "clear": true
+            }
+          },
+          "original_index": 2,
+          "rematched_index": 8,
+          "match_result": {
+            "index": 8,
+            "level": "exact"
+          },
+          "changed": true
+        },
+        "result": {
+          "extracted_content": "Typed text into element 8",
+          "long_term_memory": "Typed text into element 8",
+          "include_extracted_content_only_once": false,
+          "include_in_memory": false,
+          "is_done": false
+        }
+      }
+    ]
+  }
+}

@@ -414,14 +414,15 @@ mod tests {
         FoundElement, Pdf, Screenshot, browser_lifecycle_adapter_events,
     };
     use browser_use_core::{
-        ActionExecutor, ActionReplayRematch, ActionResult, Agent, AgentHistoryReplayExecution,
-        AgentHistoryReplayExecutionItem, AgentHistoryReplayPlan, AgentHistoryReplayPlanItem,
-        AgentHistoryReplayRun, AgentHistoryReplayStop, AgentHistoryReplayStopReason, AgentRunError,
-        AgentSettings, ChatCompletion, ChatModel, ChatRequest, ContentPart, FileSystemState,
-        LlmError, ManagedFileSystem, MessageRole, execute_action_sequence,
+        ActionExecutor, ActionReplayRematch, ActionResult, Agent, AgentCurrentState, AgentHistory,
+        AgentHistoryItem, AgentHistoryReplayExecution, AgentHistoryReplayExecutionItem,
+        AgentHistoryReplayPlan, AgentHistoryReplayPlanItem, AgentHistoryReplayRun,
+        AgentHistoryReplayStop, AgentHistoryReplayStopReason, AgentOutput, AgentRunError,
+        AgentSettings, BrowserActionExecutor, ChatCompletion, ChatModel, ChatRequest, ContentPart,
+        FileSystemState, LlmError, ManagedFileSystem, MessageRole, execute_action_sequence,
     };
     use browser_use_dom::{DomInteractedElementMatch, DomInteractedElementMatchLevel};
-    use browser_use_tools::{BrowserAction, ClickElementAction, WaitAction};
+    use browser_use_tools::{BrowserAction, ClickElementAction, InputTextAction, WaitAction};
     use schemars::schema_for;
     use serde_json::{Value, json};
     use std::{
@@ -563,6 +564,58 @@ mod tests {
         assert_matches_fixture(
             actual,
             include_str!("../fixtures/agent_history_replay_run.json"),
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_history_replay_recapture_run_matches_golden_fixture() {
+        let session = ReplayRecaptureFixtureSession::new(vec![
+            replay_recapture_state(
+                "https://example.test/start",
+                vec![replay_recapture_element(
+                    7,
+                    "button",
+                    Some("Reveal email"),
+                    Some("Reveal email"),
+                    BTreeMap::from([("id".to_owned(), "reveal-email".to_owned())]),
+                )],
+            ),
+            replay_recapture_state(
+                "https://example.test/form",
+                vec![replay_recapture_element(
+                    8,
+                    "input",
+                    Some("Email"),
+                    None,
+                    BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+                )],
+            ),
+            replay_recapture_state(
+                "https://example.test/form",
+                vec![replay_recapture_element(
+                    8,
+                    "input",
+                    Some("Email"),
+                    Some("ada@example.test"),
+                    BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+                )],
+            ),
+        ]);
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let run = executor
+            .replay_history(&replay_recapture_history())
+            .await
+            .expect("recapture replay run");
+
+        assert_eq!(
+            executor.session().events(),
+            vec!["click:7", "input:8:ada@example.test:true"]
+        );
+        let actual = serde_json::to_value(run).expect("serialize recapture replay run");
+        assert_matches_fixture(
+            actual,
+            include_str!("../fixtures/agent_history_replay_recapture_run.json"),
         );
     }
 
@@ -1594,6 +1647,253 @@ mod tests {
             pending_network_requests: Vec::new(),
             pagination_buttons: Vec::new(),
             closed_popup_messages: Vec::new(),
+        }
+    }
+
+    fn replay_recapture_history() -> AgentHistory {
+        AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: Some(AgentOutput {
+                        current_state: AgentCurrentState::default(),
+                        thinking: None,
+                        evaluation_previous_goal: None,
+                        memory: None,
+                        next_goal: Some("Reveal the email field".to_owned()),
+                        current_plan_item: None,
+                        plan_update: None,
+                        action: vec![BrowserAction::Click(ClickElementAction {
+                            index: Some(1),
+                            coordinate_x: None,
+                            coordinate_y: None,
+                        })],
+                    }),
+                    result: vec![ActionResult::extracted("Clicked element 1")],
+                    state: replay_recapture_state(
+                        "https://example.test/start",
+                        vec![replay_recapture_element(
+                            1,
+                            "button",
+                            Some("Reveal email"),
+                            Some("Reveal email"),
+                            BTreeMap::from([("id".to_owned(), "reveal-email".to_owned())]),
+                        )],
+                    ),
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: Some(AgentOutput {
+                        current_state: AgentCurrentState::default(),
+                        thinking: None,
+                        evaluation_previous_goal: None,
+                        memory: None,
+                        next_goal: Some("Fill the email field".to_owned()),
+                        current_plan_item: None,
+                        plan_update: None,
+                        action: vec![BrowserAction::Input(InputTextAction {
+                            index: 2,
+                            text: "ada@example.test".to_owned(),
+                            clear: true,
+                        })],
+                    }),
+                    result: vec![ActionResult::extracted("Typed text into element 2")],
+                    state: replay_recapture_state(
+                        "https://example.test/form",
+                        vec![replay_recapture_element(
+                            2,
+                            "input",
+                            Some("Email"),
+                            None,
+                            BTreeMap::from([("name".to_owned(), "email".to_owned())]),
+                        )],
+                    ),
+                    metadata: None,
+                },
+            ],
+        }
+    }
+
+    fn replay_recapture_state(url: &str, elements: Vec<DomElementRef>) -> BrowserStateSummary {
+        BrowserStateSummary {
+            dom_state: SerializedDomState::from_elements(elements),
+            url: url.to_owned(),
+            title: "Replay Recapture".to_owned(),
+            tabs: Vec::new(),
+            screenshot: None,
+            page_info: None,
+            pixels_above: 0,
+            pixels_below: 0,
+            browser_errors: Vec::new(),
+            is_pdf_viewer: false,
+            recent_events: None,
+            pending_network_requests: Vec::new(),
+            pagination_buttons: Vec::new(),
+            closed_popup_messages: Vec::new(),
+        }
+    }
+
+    fn replay_recapture_element(
+        index: u32,
+        tag_name: &str,
+        name: Option<&str>,
+        text: Option<&str>,
+        attributes: BTreeMap<String, String>,
+    ) -> DomElementRef {
+        DomElementRef {
+            index,
+            target_id: "recapture-target".to_owned(),
+            backend_node_id: u64::from(index),
+            node_id: Some(u64::from(index)),
+            tag_name: tag_name.to_owned(),
+            role: None,
+            name: name.map(str::to_owned),
+            text: text.map(str::to_owned),
+            attributes,
+            bounds: None,
+            is_visible: true,
+            is_interactive: true,
+            is_scrollable: false,
+        }
+    }
+
+    #[derive(Clone)]
+    struct ReplayRecaptureFixtureSession {
+        states: Arc<Mutex<VecDeque<BrowserStateSummary>>>,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ReplayRecaptureFixtureSession {
+        fn new(states: Vec<BrowserStateSummary>) -> Self {
+            Self {
+                states: Arc::new(Mutex::new(states.into())),
+                events: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn events(&self) -> Vec<String> {
+            self.events.lock().expect("events lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl BrowserSession for ReplayRecaptureFixtureSession {
+        async fn state(
+            &self,
+            _include_screenshot: bool,
+        ) -> Result<BrowserStateSummary, BrowserError> {
+            self.states
+                .lock()
+                .expect("states lock")
+                .pop_front()
+                .ok_or_else(|| {
+                    BrowserError::StateUnavailable("fixture states exhausted".to_owned())
+                })
+        }
+
+        async fn navigate(&self, _url: &str, _new_tab: bool) -> Result<(), BrowserError> {
+            Err(unsupported_action("navigate"))
+        }
+
+        async fn go_back(&self) -> Result<(), BrowserError> {
+            Err(unsupported_action("go_back"))
+        }
+
+        async fn switch_tab(&self, _target_id: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("switch_tab"))
+        }
+
+        async fn close_tab(&self, _target_id: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("close_tab"))
+        }
+
+        async fn click(&self, index: u32) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("click:{index}"));
+            Ok(())
+        }
+
+        async fn click_coordinates(&self, _x: i32, _y: i32) -> Result<(), BrowserError> {
+            Err(unsupported_action("click_coordinates"))
+        }
+
+        async fn input_text(
+            &self,
+            index: u32,
+            text: &str,
+            clear: bool,
+        ) -> Result<(), BrowserError> {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(format!("input:{index}:{text}:{clear}"));
+            Ok(())
+        }
+
+        async fn scroll(
+            &self,
+            _index: Option<u32>,
+            _down: bool,
+            _pages: f64,
+        ) -> Result<(), BrowserError> {
+            Err(unsupported_action("scroll"))
+        }
+
+        async fn find_text(&self, _text: &str) -> Result<bool, BrowserError> {
+            Err(unsupported_action("find_text"))
+        }
+
+        async fn evaluate(&self, _code: &str) -> Result<String, BrowserError> {
+            Err(unsupported_action("evaluate"))
+        }
+
+        async fn dropdown_options(&self, _index: u32) -> Result<Vec<String>, BrowserError> {
+            Err(unsupported_action("dropdown_options"))
+        }
+
+        async fn select_dropdown_option(
+            &self,
+            _index: u32,
+            _text: &str,
+        ) -> Result<(), BrowserError> {
+            Err(unsupported_action("select_dropdown_option"))
+        }
+
+        async fn page_text(&self) -> Result<String, BrowserError> {
+            Err(unsupported_action("page_text"))
+        }
+
+        async fn find_elements(
+            &self,
+            _selector: &str,
+            _attributes: &[String],
+            _max_results: usize,
+            _include_text: bool,
+        ) -> Result<Vec<FoundElement>, BrowserError> {
+            Err(unsupported_action("find_elements"))
+        }
+
+        async fn send_keys(&self, _keys: &str) -> Result<(), BrowserError> {
+            Err(unsupported_action("send_keys"))
+        }
+
+        async fn upload_file(&self, _index: u32, _path: &Path) -> Result<(), BrowserError> {
+            Err(unsupported_action("upload_file"))
+        }
+
+        async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
+            Err(unsupported_action("screenshot"))
+        }
+
+        async fn save_pdf(
+            &self,
+            _print_background: bool,
+            _landscape: bool,
+            _scale: f64,
+            _paper_format: &str,
+        ) -> Result<Pdf, BrowserError> {
+            Err(unsupported_action("save_pdf"))
         }
     }
 
