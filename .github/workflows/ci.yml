@@ -28,6 +28,9 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
+      - name: Release version check
+        run: python3 scripts/release-version.py --check
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 

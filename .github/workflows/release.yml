@@ -5,14 +5,109 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: "SemVer bump to cut when version is omitted."
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: "Optional exact SemVer version to cut, with or without the v prefix."
+        required: false
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  prepare-release:
+    name: Prepare release ref
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.prepare.outputs.ref }}
+      tag: ${{ steps.prepare.outputs.tag }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare release ref
+        id: prepare
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            python3 scripts/release-version.py \
+              --release-type "${RELEASE_TYPE}" \
+              --version "${VERSION_INPUT}" \
+              --write \
+              --github-output "${GITHUB_OUTPUT}"
+
+            version="$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as handle:
+              print(tomllib.load(handle)["workspace"]["package"]["version"])
+          PY
+          )"
+            tag="v${version}"
+
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "Tag ${tag} already exists." >&2
+              exit 1
+            fi
+
+            cargo metadata --format-version 1 --no-deps >/tmp/browser-use-rs-metadata.json
+            git diff --check
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.toml Cargo.lock crates/*/Cargo.toml
+            git commit -m "Cut browser-use-rs ${tag}"
+            git tag -a "${tag}" -m "browser-use-rs ${tag}"
+            git push --atomic origin HEAD:main "${tag}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+            python3 scripts/release-version.py \
+              --check \
+              --expect-version "${version}" \
+              --github-output "${GITHUB_OUTPUT}"
+          fi
+
+          {
+            echo "ref=refs/tags/${tag}"
+            echo "tag=${tag}"
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
+
   build-binary:
     name: Build ${{ matrix.label }} binary
     runs-on: ${{ matrix.runner }}
+    needs: prepare-release
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +121,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -34,6 +131,10 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Verify release version
+        shell: bash
+        run: python3 scripts/release-version.py --check --expect-version "${RELEASE_TAG#v}"
 
       - name: Verify
         run: |
@@ -56,7 +157,7 @@ jobs:
           cp docs/DAEMON_SUPERVISION.md dist/package/DAEMON_SUPERVISION.md
           cp packaging/systemd/browser-use-rs.service dist/package/packaging/systemd/
           cp packaging/launchd/com.evalops.browser-use-rs.plist dist/package/packaging/launchd/
-          tar -C dist/package -czf "dist/browser-use-rs-${GITHUB_REF_NAME}-${target}.tar.gz" .
+          tar -C dist/package -czf "dist/browser-use-rs-${RELEASE_TAG}-${target}.tar.gz" .
 
       - name: Smoke packaged artifact
         shell: bash
@@ -93,10 +194,16 @@ jobs:
   publish-release:
     name: Publish release assets
     runs-on: ubuntu-latest
-    needs: build-binary
+    needs:
+      - prepare-release
+      - build-binary
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
 
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
@@ -108,21 +215,22 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum *.tar.gz > SHA256SUMS
+          sha256sum -- *.tar.gz > SHA256SUMS
 
       - name: Generate Homebrew formula
         run: |
           mkdir -p dist/homebrew
-          tag="${GITHUB_REF_NAME}"
-          version="${GITHUB_REF_NAME#v}"
-          linux_archive="browser-use-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-          macos_archive="$(find dist -maxdepth 1 -type f -name "browser-use-rs-${GITHUB_REF_NAME}-*-apple-darwin.tar.gz" -exec basename {} \; | LC_ALL=C sort | head -n 1)"
+          tag="${RELEASE_TAG}"
+          version="${RELEASE_TAG#v}"
+          linux_archive="browser-use-rs-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+          macos_archive="$(find dist -maxdepth 1 -type f -name "browser-use-rs-${RELEASE_TAG}-*-apple-darwin.tar.gz" -exec basename {} \; | LC_ALL=C sort | head -n 1)"
           test -n "${macos_archive}"
           linux_sha256="$(awk -v file="${linux_archive}" '$2 == file { print $1 }' dist/SHA256SUMS)"
           macos_sha256="$(awk -v file="${macos_archive}" '$2 == file { print $1 }' dist/SHA256SUMS)"
           test -n "${linux_sha256}"
           test -n "${macos_sha256}"
-          macos_triple="${macos_archive#browser-use-rs-${GITHUB_REF_NAME}-}"
+          archive_prefix="browser-use-rs-${RELEASE_TAG}-"
+          macos_triple="${macos_archive#"${archive_prefix}"}"
           macos_triple="${macos_triple%.tar.gz}"
           sed \
             -e "s/__TAG__/${tag}/g" \
@@ -147,9 +255,9 @@ jobs:
             dist/homebrew/browser-use-rs.rb
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           body_path: docs/RELEASE.md
           files: |
             dist/*.tar.gz

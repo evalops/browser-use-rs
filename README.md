@@ -238,7 +238,8 @@ release support matrix, and daemon supervision templates.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for install commands and
 [docs/RELEASE.md](docs/RELEASE.md) for the current supported and unsupported
-browser-use surface.
+browser-use surface. Release operators should use
+[docs/RELEASE_AUTOMATION.md](docs/RELEASE_AUTOMATION.md).
 
 ## Smokes
 
