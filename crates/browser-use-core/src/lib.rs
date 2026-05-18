@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -1522,6 +1522,9 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
     if is_supported_read_image_file(file_name) {
         return read_image_file_action(file_name);
     }
+    if is_supported_read_document_file(file_name) {
+        return read_document_file_action(file_name);
+    }
     let content = std::fs::read_to_string(file_name)
         .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
     let memory = read_file_memory(&content);
@@ -1538,6 +1541,111 @@ fn read_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
         images: Vec::new(),
         metadata: None,
     })
+}
+
+fn read_document_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
+    let content = match read_document_file_content(file_name) {
+        Ok(content) => content,
+        Err(error) => {
+            return Ok(ActionResult::error(format!(
+                "Error: Could not read file '{file_name}'. {error}"
+            )));
+        }
+    };
+    let content = truncate_read_document_content(&content);
+    let memory = read_file_memory(&content);
+    Ok(ActionResult {
+        extracted_content: Some(format!(
+            "Read from file {file_name}.\n<content>\n{content}\n</content>"
+        )),
+        error: None,
+        judgement: None,
+        long_term_memory: Some(memory),
+        include_extracted_content_only_once: true,
+        include_in_memory: true,
+        is_done: false,
+        success: None,
+        attachments: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
+    })
+}
+
+fn read_document_file_content(file_name: &str) -> Result<String, String> {
+    match file_extension(file_name).as_deref() {
+        Some("pdf") => pdf_extract::extract_text(file_name).map_err(|error| error.to_string()),
+        Some("docx") => read_docx_text(file_name),
+        _ => Err("unsupported document extension".to_owned()),
+    }
+}
+
+fn read_docx_text(file_name: &str) -> Result<String, String> {
+    let file = std::fs::File::open(file_name).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut document = archive
+        .by_name("word/document.xml")
+        .map_err(|error| error.to_string())?;
+    let mut xml = String::new();
+    document
+        .read_to_string(&mut xml)
+        .map_err(|error| error.to_string())?;
+    docx_document_xml_to_text(&xml)
+}
+
+fn docx_document_xml_to_text(xml: &str) -> Result<String, String> {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(quick_xml::events::Event::Text(event)) => {
+                let decoded = event.decode().map_err(|error| error.to_string())?;
+                text.push_str(&decoded);
+            }
+            Ok(quick_xml::events::Event::Empty(event))
+                if local_xml_name(event.name().as_ref()) == b"tab" =>
+            {
+                text.push('\t');
+            }
+            Ok(quick_xml::events::Event::Empty(event))
+                if local_xml_name(event.name().as_ref()) == b"br" =>
+            {
+                push_docx_newline(&mut text);
+            }
+            Ok(quick_xml::events::Event::End(event))
+                if local_xml_name(event.name().as_ref()) == b"p" =>
+            {
+                push_docx_newline(&mut text);
+            }
+            Ok(_) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Ok(text.trim_end_matches('\n').to_owned())
+}
+
+fn local_xml_name(name: &[u8]) -> &[u8] {
+    name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
+}
+
+fn push_docx_newline(text: &mut String) {
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+}
+
+fn truncate_read_document_content(content: &str) -> String {
+    const MAX_CHARS: usize = 60_000;
+    if content.chars().count() <= MAX_CHARS {
+        return content.to_owned();
+    }
+
+    let mut truncated = content.chars().take(MAX_CHARS).collect::<String>();
+    truncated.push_str("\n[...truncated]");
+    truncated
 }
 
 fn read_image_file_action(file_name: &str) -> Result<ActionResult, BrowserError> {
@@ -1643,13 +1751,14 @@ fn validate_read_file_name(file_name: &str) -> Option<ActionResult> {
 
     if supported_text_extensions().contains(&extension.as_str())
         || supported_read_image_extensions().contains(&extension.as_str())
+        || supported_read_document_extensions().contains(&extension.as_str())
     {
         return None;
     }
 
     if unsupported_binary_extensions().contains(&extension.as_str()) {
         return Some(ActionResult::error(format!(
-            "Cannot read binary/image file '{base_name}'. The read_file action supports text files and PNG/JPEG images. Supported extensions: {}.",
+            "Cannot read binary/image file '{base_name}'. The read_file action supports text files, PDF/DOCX documents, and PNG/JPEG images. Supported extensions: {}.",
             supported_read_extensions_message()
         )));
     }
@@ -1668,12 +1777,25 @@ fn supported_read_image_extensions() -> &'static [&'static str] {
     &["png", "jpg", "jpeg"]
 }
 
+fn supported_read_document_extensions() -> &'static [&'static str] {
+    &["pdf", "docx"]
+}
+
 fn is_supported_read_image_file(file_name: &str) -> bool {
+    file_extension(file_name)
+        .is_some_and(|extension| supported_read_image_extensions().contains(&extension.as_str()))
+}
+
+fn is_supported_read_document_file(file_name: &str) -> bool {
+    file_extension(file_name)
+        .is_some_and(|extension| supported_read_document_extensions().contains(&extension.as_str()))
+}
+
+fn file_extension(file_name: &str) -> Option<String> {
     std::path::Path::new(file_name)
         .extension()
         .and_then(std::ffi::OsStr::to_str)
         .map(str::to_ascii_lowercase)
-        .is_some_and(|extension| supported_read_image_extensions().contains(&extension.as_str()))
 }
 
 fn unsupported_binary_extensions() -> &'static [&'static str] {
@@ -1694,6 +1816,7 @@ fn supported_text_extensions_message() -> String {
 fn supported_read_extensions_message() -> String {
     supported_text_extensions()
         .iter()
+        .chain(supported_read_document_extensions().iter())
         .chain(supported_read_image_extensions().iter())
         .map(|extension| format!(".{extension}"))
         .collect::<Vec<_>>()
@@ -2111,19 +2234,16 @@ where
     async fn record_model_output(
         &mut self,
         state: BrowserStateSummary,
-        model_output: AgentOutput,
+        mut model_output: AgentOutput,
         step_start_time: Option<f64>,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
-        let result = if model_output.action.len() > self.settings.max_actions_per_step {
-            vec![ActionResult::error(format!(
-                "model returned {} actions, exceeding max_actions_per_step {}",
-                model_output.action.len(),
-                self.settings.max_actions_per_step
-            ))]
-        } else {
-            let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
-            self.executor.execute_sequence(&actions).await
-        };
+        if model_output.action.len() > self.settings.max_actions_per_step {
+            model_output
+                .action
+                .truncate(self.settings.max_actions_per_step);
+        }
+        let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
+        let result = self.executor.execute_sequence(&actions).await;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
 
         self.history.items.push(AgentHistoryItem {
@@ -4533,6 +4653,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_executor_reads_docx_files_as_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.docx");
+        write_minimal_docx(
+            &path,
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:r><w:t>Beta</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        let content = result.extracted_content.as_deref().expect("docx content");
+        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains("<content>\nAlpha\nBeta\n</content>"));
+        assert_eq!(result.long_term_memory.as_deref(), Some("Alpha\nBeta"));
+        assert!(result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_reads_pdf_files_as_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.pdf");
+        std::fs::write(&path, minimal_pdf("Hello PDF EvalOps")).expect("seed pdf");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        let content = result.extracted_content.as_deref().expect("pdf content");
+        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains("Hello PDF EvalOps"));
+        assert!(
+            result
+                .long_term_memory
+                .as_deref()
+                .expect("pdf memory")
+                .contains("Hello PDF EvalOps")
+        );
+        assert!(result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
     async fn browser_executor_done_displays_requested_text_files() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let path = temp_dir.path().join("report.md");
@@ -4565,6 +4740,70 @@ mod tests {
                     .to_string()
             ]
         );
+    }
+
+    fn write_minimal_docx(path: &std::path::Path, document_xml: &str) {
+        let file = std::fs::File::create(path).expect("docx file");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        archive
+            .start_file("[Content_Types].xml", options)
+            .expect("content types entry");
+        archive
+            .write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            )
+            .expect("content types xml");
+        archive
+            .start_file("word/document.xml", options)
+            .expect("document entry");
+        archive
+            .write_all(document_xml.as_bytes())
+            .expect("document xml");
+        archive.finish().expect("finish docx");
+    }
+
+    fn minimal_pdf(text: &str) -> Vec<u8> {
+        let escaped = text
+            .replace('\\', r"\\")
+            .replace('(', r"\(")
+            .replace(')', r"\)");
+        let stream = format!("BT /F1 24 Tf 72 720 Td ({escaped}) Tj ET");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_owned(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{}\nendstream",
+                stream.len(),
+                stream
+            ),
+        ];
+
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
+        }
+        let xref_offset = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+                objects.len() + 1,
+                xref_offset
+            )
+            .as_bytes(),
+        );
+        pdf
     }
 
     #[tokio::test]
@@ -5354,7 +5593,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_step_rejects_too_many_actions_before_side_effects() {
+    async fn agent_step_truncates_too_many_actions_like_upstream() {
         let output = serde_json::json!({
             "current_state": {},
             "action": [
@@ -5384,14 +5623,16 @@ mod tests {
         let item = agent.step().await.expect("agent step");
 
         assert_eq!(item.result.len(), 1);
-        assert!(
-            item.result[0]
-                .error
-                .as_deref()
-                .expect("error")
-                .contains("max_actions_per_step")
+        assert_eq!(item.result[0].error, None);
+        assert_eq!(
+            item.model_output
+                .as_ref()
+                .expect("model output")
+                .action
+                .len(),
+            1
         );
-        assert!(agent.executor.session().events().is_empty());
+        assert_eq!(agent.executor.session().events(), vec!["click:1"]);
     }
 
     #[tokio::test]

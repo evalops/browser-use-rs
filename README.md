@@ -34,18 +34,18 @@ includes:
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
-  `send_keys` for text, special keys, and shortcuts, `upload_file`, text-file
-  read/write/replace plus PNG/JPEG image-file read payloads, `screenshot` with
-  optional PNG file save, `save_as_pdf` with filename normalization, `extract`,
-  `search_page`, `find_elements`, back navigation, 4-character tab-id actions,
-  native/ARIA dropdown actions, and `done` with requested text-file display
-  attachments.
+  `send_keys` for text, special keys, and shortcuts, `upload_file`,
+  text/PDF/DOCX read support, text-file write/replace, PNG/JPEG image-file read
+  payloads, `screenshot` with optional PNG file save, `save_as_pdf` with
+  filename normalization, `extract`, `search_page`, `find_elements`, back
+  navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
+  `done` with requested text-file display attachments.
 - Agent loop: state construction, schema-guided LLM output, bounded runs,
   vision-aware browser-state capture, screenshot action next-observation image
   prompts, action-result image prompt parts, compact page-stat prompt context,
   one-time extraction replay handling, step/LLM timeouts, max-failure handling,
-  page-change guards, normalized repeated-action loop detection,
-  loop-awareness prompt nudges, an
+  upstream-style max-action truncation, page-change guards, normalized
+  repeated-action loop detection, loop-awareness prompt nudges, an
   upstream-style final `done` response after repeated failures, upstream
   flattened planning fields,
   configurable planning prompt nudges, thinking/flash output-schema controls,
