@@ -106,11 +106,12 @@ Implemented:
   history-matching attributes, renders native and text datepicker input format
   hints, detects search affordance signals and small icon controls, detects
   JavaScript click/pointer listener-backed controls and cursor-pointer
-  controls, detects static mouse/keyboard handler attributes, detects
-  pagination affordances, carries page-shape stats for agent prompts, supports
-  caller-selected prompt attributes, renders the upstream empty-DOM load hint,
-  keeps hidden file-input upload targets, and excludes hidden, disabled, or
-  `data-browser-use-exclude` subtrees from the selector map.
+  controls, prunes decorative SVG child elements, detects static mouse/keyboard
+  handler attributes, detects pagination affordances, carries page-shape stats
+  for agent prompts, supports caller-selected prompt attributes, renders the
+  upstream empty-DOM load hint, keeps hidden file-input upload targets, and
+  excludes hidden, disabled, or `data-browser-use-exclude` subtrees from the
+  selector map.
 
 Next:
 

@@ -33,8 +33,9 @@ includes:
   attributes, hidden-element and `data-browser-use-exclude` subtree filtering,
   hidden file-input upload targets, and scrollable element metadata, plus common
   ARIA widget roles, search affordance signals, small icon controls,
-  cursor-pointer controls, static mouse/keyboard handler attributes, pagination
-  affordances, and configurable prompt-visible attributes.
+  cursor-pointer controls, decorative SVG child pruning, static mouse/keyboard
+  handler attributes, pagination affordances, and configurable prompt-visible
+  attributes.
 - DOM indexing recognizes controls backed only by JavaScript click/pointer
   listeners when Chrome's command-line inspection API is available.
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed

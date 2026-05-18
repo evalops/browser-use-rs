@@ -125,6 +125,10 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
   };
+  const isDecorativeSvgChild = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
+  };
   const isDisabledOrHidden = (el) => {
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
@@ -216,6 +220,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   };
   const visitNode = (node, offset) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (isDecorativeSvgChild(node)) return;
     if (isBrowserUseExcluded(node)) return;
     stats.total_elements += 1;
     addDirectTextStats(node);
@@ -428,6 +433,10 @@ fn element_eval_js(index: u32, body: &str) -> String {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file';
   }};
+  const isDecorativeSvgChild = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    return ['path', 'rect', 'g', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'use', 'defs', 'clippath', 'mask', 'pattern', 'image', 'text', 'tspan'].includes(tag);
+  }};
   const isDisabledOrHidden = (el) => {{
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
@@ -466,6 +475,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
   }};
   const visitNode = (node, offset) => {{
     if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (isDecorativeSvgChild(node)) return;
     if (isBrowserUseExcluded(node)) return;
     if (isInteractive(node) && isVisible(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
@@ -514,7 +524,11 @@ const CLICK_ELEMENT_ACTION_JS: &str = r#"const tag = el.tagName ? el.tagName.toL
     throw new Error('Cannot click on file input elements. Use upload_file instead.');
   }
   if (typeof el.focus === 'function') el.focus();
-  el.click();"#;
+  if (typeof el.click === 'function') {
+    el.click();
+  } else {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  }"#;
 
 fn click_element_js(index: u32) -> String {
     element_action_js(index, CLICK_ELEMENT_ACTION_JS)
@@ -3738,6 +3752,7 @@ mod tests {
         assert!(script.contains("select_dropdown_option"));
         assert!(script.contains("Cannot click on file input elements."));
         assert!(script.contains("Use upload_file instead."));
+        assert!(script.contains("dispatchEvent(new MouseEvent('click'"));
     }
 
     #[test]
@@ -3748,6 +3763,7 @@ mod tests {
         assert!(function.contains("Cannot click on <select> elements."));
         assert!(function.contains("Cannot click on file input elements."));
         assert!(function.contains("el.click();"));
+        assert!(function.contains("dispatchEvent(new MouseEvent('click'"));
     }
 
     #[test]
@@ -3833,6 +3849,17 @@ mod tests {
         let action_script = click_element_js(1);
         assert!(action_script.contains("isFileInput"));
         assert!(action_script.contains("if (isFileInput(el)) return true;"));
+    }
+
+    #[test]
+    fn interactive_snapshot_skips_decorative_svg_children() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isDecorativeSvgChild"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'path'"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("'tspan'"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isDecorativeSvgChild"));
+        assert!(action_script.contains("'circle'"));
     }
 
     #[test]
@@ -4739,6 +4766,52 @@ mod tests {
             element_by_id("image-submit").name.as_deref(),
             Some("Search icon")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_skips_decorative_svg_children() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>svg smoke</title></head><body><svg id='svg-button' role='button' aria-label='Open vector' onclick=\"document.title='svg clicked'\" width='32' height='32'><path id='decorative-path' onclick=\"document.title='path clicked'\" d='M0 0h32v32H0z'></path></svg></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let svg = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|value| value == "svg-button")
+            })
+            .expect("svg root indexed");
+        assert_eq!(svg.tag_name, "svg");
+        assert_eq!(svg.role.as_deref(), Some("button"));
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "decorative-path")
+        }));
+
+        session.click(svg.index).await.expect("click svg by index");
+        let title = session
+            .evaluate_json("document.title")
+            .await
+            .expect("document title");
+        assert_eq!(title.as_str(), Some("svg clicked"));
     }
 
     #[tokio::test]
