@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#55 Pin replay recapture in conformance fixtures](https://github.com/evalops/browser-use-rs/issues/55)
+No active track is open at this checkpoint.
 
 ## Completed Tracks
 
@@ -56,6 +56,7 @@ small pushed checkpoints as each surface becomes real.
 - [#52 Replay AgentHistory against persistent CLI sessions](https://github.com/evalops/browser-use-rs/issues/52)
 - [#53 Expose MCP output schemas for structuredContent](https://github.com/evalops/browser-use-rs/issues/53)
 - [#54 Recapture and rematch DOM state between replay actions](https://github.com/evalops/browser-use-rs/issues/54)
+- [#55 Pin replay recapture in conformance fixtures](https://github.com/evalops/browser-use-rs/issues/55)
 
 ## Current Checkpoint
 
@@ -199,9 +200,10 @@ Implemented:
   prompt-history limits and stagnant-page loop-awareness, and managed
   `FileSystemState` replay through restored prompts, todo context, restored
   `read_file`, extracted-content numbering, and full `AgentCheckpoint` resume
-  with prior history and initial-action state, public browser lifecycle event
-  and adapter JSON shapes, public `AgentHistoryReplayRun` JSON Schema, plus
-  semantic step timing metadata checks.
+  with prior history and initial-action state, browser-backed replay
+  recapture/rematch, public browser lifecycle event and adapter JSON shapes,
+  public `AgentHistoryReplayRun` JSON Schema, plus semantic step timing
+  metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
   cached-node actions, indexes common ARIA widget roles and disclosure elements,

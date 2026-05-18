@@ -124,7 +124,8 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   plan construction from saved `AgentHistory`, replay-plan execution through
   generic and browser-backed action executors with per-action, error, and
   page-change diagnostics, current-state `AgentHistoryReplayRun` orchestration,
-  serialized replay-run conformance coverage, and screenshot/URL accessors.
+  serialized replay-run and replay-recapture conformance coverage, and
+  screenshot/URL accessors.
   `AgentCheckpoint` export/resume preserves task
   settings, history, initial-action execution state, and managed filesystem
   state across a new model/session.
@@ -137,9 +138,10 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   limits and stagnant-page loop-awareness, managed `FileSystemState` replay
   through restored prompts, `read_file`, todo context, extracted-content
   numbering, and full `AgentCheckpoint` resume with prior history and
-  initial-action state, plus public browser lifecycle event and adapter JSON
-  shapes, public `AgentHistoryReplayRun` JSON Schema, and semantic checks for
-  dynamic step timing metadata.
+  initial-action state, browser-backed replay recapture/rematch, plus public
+  browser lifecycle event and adapter JSON shapes, public
+  `AgentHistoryReplayRun` JSON Schema, and semantic checks for dynamic step
+  timing metadata.
 - `browser-use-dom` exposes interacted-element rematching diagnostics for
   exact hash, stable hash, XPath, AX-name, and unique-attribute history replay
   foundations without changing live action execution.
