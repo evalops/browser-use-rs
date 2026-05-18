@@ -1,7 +1,10 @@
 //! LLM provider contracts for schema-guided agent calls.
 
 use async_trait::async_trait;
-use reqwest::StatusCode;
+use reqwest::{
+    StatusCode,
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -107,7 +110,7 @@ pub struct OpenAiCompatibleChatModel {
     provider_name: String,
     schema_name: String,
     structured_output_mode: OpenAiStructuredOutputMode,
-    default_headers: Vec<(String, String)>,
+    default_headers: HeaderMap,
     client: reqwest::Client,
 }
 
@@ -394,7 +397,7 @@ impl OpenAiCompatibleChatModel {
             provider_name: "openai-compatible".to_owned(),
             schema_name: "agent_output".to_owned(),
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
-            default_headers: Vec::new(),
+            default_headers: HeaderMap::new(),
             client: reqwest::Client::new(),
         }
     }
@@ -432,19 +435,33 @@ impl OpenAiCompatibleChatModel {
         self
     }
 
-    #[must_use]
-    pub fn with_default_header(
+    pub fn try_with_default_header(
         mut self,
-        name: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        self.default_headers.push((name.into(), value.into()));
-        self
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, LlmError> {
+        let name = HeaderName::from_bytes(name.as_ref().as_bytes()).map_err(|error| {
+            LlmError::Provider(format!("invalid OpenAI-wire default header name: {error}"))
+        })?;
+        if name == AUTHORIZATION || name == CONTENT_TYPE {
+            return Err(LlmError::Provider(format!(
+                "refusing to override reserved OpenAI-wire header `{}`",
+                name.as_str()
+            )));
+        }
+        let value = HeaderValue::from_str(value.as_ref()).map_err(|error| {
+            LlmError::Provider(format!("invalid OpenAI-wire default header value: {error}"))
+        })?;
+        self.default_headers.insert(name, value);
+        Ok(self)
     }
 
     #[must_use]
-    pub fn default_headers(&self) -> &[(String, String)] {
-        &self.default_headers
+    pub fn default_header_value(&self, name: &str) -> Option<&str> {
+        let name = HeaderName::from_bytes(name.as_bytes()).ok()?;
+        self.default_headers
+            .get(&name)
+            .and_then(|value| value.to_str().ok())
     }
 
     fn chat_completions_url(&self) -> String {
@@ -472,12 +489,12 @@ impl ChatModel for OpenAiCompatibleChatModel {
         let mut builder = self
             .client
             .post(self.chat_completions_url())
-            .bearer_auth(&self.api_key)
-            .json(&payload);
+            .bearer_auth(&self.api_key);
         for (name, value) in &self.default_headers {
-            builder = builder.header(name.as_str(), value.as_str());
+            builder = builder.header(name, value);
         }
         let response = builder
+            .json(&payload)
             .send()
             .await
             .map_err(|error| LlmError::Provider(error.to_string()))?;
@@ -1016,17 +1033,43 @@ mod tests {
     }
 
     #[test]
-    fn openai_compatible_model_stores_default_headers() {
+    fn openai_compatible_model_stores_safe_default_headers() {
         let model = OpenAiCompatibleChatModel::new("test-key", "test-model")
-            .with_default_header("HTTP-Referer", "https://evalops.dev")
-            .with_default_header("X-OpenRouter-Title", "browser-use-rs");
+            .try_with_default_header("HTTP-Referer", "https://evalops.dev")
+            .expect("referer header")
+            .try_with_default_header("X-OpenRouter-Title", "EvalOps browser-use-rs")
+            .expect("title header");
 
         assert_eq!(
-            model.default_headers(),
-            &[
-                ("HTTP-Referer".to_owned(), "https://evalops.dev".to_owned()),
-                ("X-OpenRouter-Title".to_owned(), "browser-use-rs".to_owned()),
-            ]
+            model.default_header_value("HTTP-Referer"),
+            Some("https://evalops.dev")
+        );
+        assert_eq!(
+            model.default_header_value("x-openrouter-title"),
+            Some("EvalOps browser-use-rs")
+        );
+    }
+
+    #[test]
+    fn openai_compatible_model_rejects_reserved_default_headers() {
+        let error = match OpenAiCompatibleChatModel::new("test-key", "test-model")
+            .try_with_default_header("Authorization", "Bearer replacement")
+        {
+            Ok(_) => panic!("authorization header must be reserved"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("reserved OpenAI-wire header"));
+
+        let error = match OpenAiCompatibleChatModel::new("test-key", "test-model")
+            .try_with_default_header("X-OpenRouter-Title", "bad\nvalue")
+        {
+            Ok(_) => panic!("invalid header value must be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("invalid OpenAI-wire default header value")
         );
     }
 
