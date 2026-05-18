@@ -135,7 +135,8 @@ tool: `--no-vision`, `--max-failures`, `--max-actions-per-step`,
 prompt-visible DOM attributes, and repeated `--available-file-path <path>` for
 upstream-style file-path context in the agent prompt. Repeated
 `--exclude-action <name>` removes built-in action names from the model output
-schema while keeping `done` available for completion. Use repeated
+schema and rejects them before execution if a loose provider still returns
+one, while keeping `done` available for completion. Use repeated
 `--sensitive-data <placeholder=value>` for global sensitive placeholders, and
 repeated `--sensitive-data-domain <domain-pattern=placeholder=value>` for
 domain-scoped placeholders. Sensitive values are replaced during action

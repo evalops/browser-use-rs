@@ -4210,6 +4210,9 @@ where
                 .action
                 .truncate(self.settings.max_actions_per_step);
         }
+        if let Some(error) = excluded_action_error(&model_output.action, &self.settings) {
+            return self.record_model_error(state, error, step_start_time);
+        }
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
         let result = self.executor.execute_sequence(&actions).await;
         let metadata = step_start_time.map(|start| self.step_metadata(start, now_seconds()));
@@ -5075,6 +5078,23 @@ fn normalized_excluded_actions(actions: &[String]) -> BTreeSet<String> {
         .map(|action| action.trim().replace('-', "_").to_ascii_lowercase())
         .filter(|action| !action.is_empty() && action != "done")
         .collect()
+}
+
+fn excluded_action_error(actions: &[BrowserAction], settings: &AgentSettings) -> Option<String> {
+    let excluded_actions = normalized_excluded_actions(&settings.excluded_actions);
+    if excluded_actions.is_empty() {
+        return None;
+    }
+
+    actions
+        .iter()
+        .map(BrowserAction::name)
+        .find(|name| excluded_actions.contains(*name))
+        .map(|name| {
+            format!(
+                "model output requested excluded action `{name}`; remove it from the action list or update AgentSettings.excluded_actions"
+            )
+        })
 }
 
 fn exclude_schema_actions(schema: &mut Value, excluded_actions: &BTreeSet<String>) {
@@ -10113,6 +10133,109 @@ mod tests {
             1
         );
         assert_eq!(agent.executor.session().events(), vec!["click:1"]);
+    }
+
+    #[tokio::test]
+    async fn agent_step_rejects_excluded_actions_before_side_effects() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            excluded_actions: vec!["click".to_owned()],
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "do not click",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let error = {
+            let item = agent.step().await.expect("agent step");
+            assert_eq!(item.result.len(), 1);
+            item.result[0]
+                .error
+                .as_deref()
+                .expect("excluded error")
+                .to_owned()
+        };
+
+        assert!(agent.executor.session().events().is_empty());
+        assert!(
+            error.contains("excluded action `click`"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_step_allows_non_excluded_actions_to_execute() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "click": {
+                        "index": 1
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            excluded_actions: vec!["search".to_owned(), "switch-tab".to_owned()],
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "click still allowed",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        {
+            let item = agent.step().await.expect("agent step");
+            assert_eq!(item.result.len(), 1);
+            assert_eq!(item.result[0].error, None);
+        }
+
+        assert_eq!(agent.executor.session().events(), vec!["click:1"]);
+    }
+
+    #[tokio::test]
+    async fn excluded_actions_never_block_done_outputs() {
+        let output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "complete",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let settings = AgentSettings {
+            excluded_actions: vec!["done".to_owned()],
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "finish",
+            settings,
+            QueueModel::new(vec![output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("agent run");
+
+        assert_eq!(history.final_result(), Some("complete"));
+        assert_eq!(history.is_successful(), Some(true));
     }
 
     #[tokio::test]
