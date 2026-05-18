@@ -45,7 +45,8 @@ includes:
   configurable planning prompt nudges, thinking/flash output-schema controls,
   structured extraction metadata, per-step timing metadata, configurable
   prompt-history and clickable-element text limits, upstream-style last-result
-  completion helpers, duration/action/url history accessors, and history.
+  completion helpers, step-error, model-output/action/thought, duration, action,
+  and URL history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP JSON-RPC daemon, persistent session

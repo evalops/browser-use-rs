@@ -346,12 +346,20 @@ impl AgentHistory {
     }
 
     #[must_use]
-    pub fn errors(&self) -> Vec<&str> {
+    pub fn errors(&self) -> Vec<Option<&str>> {
         self.items
             .iter()
-            .flat_map(|item| item.result.iter())
-            .filter_map(|result| result.error.as_deref())
+            .map(|item| {
+                item.result
+                    .iter()
+                    .find_map(|result| result.error.as_deref())
+            })
             .collect()
+    }
+
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        self.errors().iter().any(Option::is_some)
     }
 
     #[must_use]
@@ -389,6 +397,52 @@ impl AgentHistory {
         self.action_results()
             .into_iter()
             .filter_map(|result| result.extracted_content.as_deref())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn last_action(&self) -> Option<Value> {
+        self.items
+            .last()
+            .and_then(|item| item.model_output.as_ref())
+            .and_then(|output| output.action.last())
+            .and_then(|action| serde_json::to_value(action).ok())
+    }
+
+    #[must_use]
+    pub fn model_outputs(&self) -> Vec<&AgentOutput> {
+        self.items
+            .iter()
+            .filter_map(|item| item.model_output.as_ref())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn model_thoughts(&self) -> Vec<AgentCurrentState> {
+        self.model_outputs()
+            .into_iter()
+            .map(AgentOutput::current_brain)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn model_actions(&self) -> Vec<Value> {
+        self.items
+            .iter()
+            .filter_map(|item| item.model_output.as_ref())
+            .flat_map(|output| output.action.iter())
+            .filter_map(|action| serde_json::to_value(action).ok())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn model_actions_filtered(&self, include: &[&str]) -> Vec<Value> {
+        self.items
+            .iter()
+            .filter_map(|item| item.model_output.as_ref())
+            .flat_map(|output| output.action.iter())
+            .filter(|action| include.contains(&action.name()))
+            .filter_map(|action| serde_json::to_value(action).ok())
             .collect()
     }
 
@@ -2444,7 +2498,8 @@ mod tests {
         assert_eq!(history.final_result(), Some("finished"));
         assert!(history.is_done());
         assert_eq!(history.is_successful(), Some(true));
-        assert!(history.errors().is_empty());
+        assert_eq!(history.errors(), vec![None]);
+        assert!(!history.has_errors());
     }
 
     #[test]
@@ -2469,7 +2524,8 @@ mod tests {
         assert_eq!(history.final_result(), Some("could not finish"));
         assert!(history.is_done());
         assert_eq!(history.is_successful(), Some(false));
-        assert_eq!(history.errors(), vec!["first failure"]);
+        assert_eq!(history.errors(), vec![Some("first failure"), None]);
+        assert!(history.has_errors());
     }
 
     #[test]
@@ -2603,6 +2659,20 @@ mod tests {
             vec!["https://example.test/start", "https://example.test/done"]
         );
         assert_eq!(history.action_names(), vec!["click", "done"]);
+        assert_eq!(history.model_outputs().len(), 2);
+        assert_eq!(history.model_thoughts().len(), 2);
+        assert_eq!(history.model_actions().len(), 2);
+        assert_eq!(history.model_actions_filtered(&["click"]).len(), 1);
+        assert_eq!(
+            history.last_action().expect("last action"),
+            serde_json::json!({
+                "done": {
+                    "text": "finished",
+                    "success": true,
+                    "files_to_display": []
+                }
+            })
+        );
         assert!((history.total_duration_seconds() - 3.5).abs() < f64::EPSILON);
     }
 
@@ -3991,12 +4061,16 @@ mod tests {
         assert!(second_metadata.step_interval.unwrap_or(-1.0) >= 0.0);
         assert_eq!(history.final_result(), Some("recovered"));
         assert_eq!(history.is_successful(), Some(true));
-        assert_eq!(history.errors().len(), 1);
+        let errors = history.errors();
+        assert_eq!(errors.len(), 2);
+        let first_error = errors[0].expect("first step error");
         assert!(
-            history.errors()[0].contains("invalid agent output"),
+            first_error.contains("invalid agent output"),
             "unexpected error: {}",
-            history.errors()[0]
+            first_error
         );
+        assert_eq!(errors[1], None);
+        assert!(history.has_errors());
     }
 
     #[tokio::test]
