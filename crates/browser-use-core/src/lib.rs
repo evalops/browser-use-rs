@@ -1567,7 +1567,13 @@ fn write_file_action(
     }
 
     if params.append {
-        if is_docx_file(&params.file_name) {
+        if is_pdf_file(&params.file_name) {
+            let existing = pdf_extract::extract_text(path)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+            let merged = merge_pdf_append_content(&existing, &content);
+            write_pdf_text(path, &merged)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        } else if is_docx_file(&params.file_name) {
             let existing = read_docx_text(&params.file_name)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
             let merged = merge_docx_append_content(&existing, &content);
@@ -1593,7 +1599,10 @@ fn write_file_action(
             params.file_name
         )))
     } else {
-        if is_docx_file(&params.file_name) {
+        if is_pdf_file(&params.file_name) {
+            write_pdf_text(path, &content)
+                .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
+        } else if is_docx_file(&params.file_name) {
             write_docx_text(path, &content)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;
         } else {
@@ -1611,11 +1620,24 @@ fn is_csv_file(file_name: &str) -> bool {
     file_extension(file_name).as_deref() == Some("csv")
 }
 
+fn is_pdf_file(file_name: &str) -> bool {
+    file_extension(file_name).as_deref() == Some("pdf")
+}
+
 fn is_docx_file(file_name: &str) -> bool {
     file_extension(file_name).as_deref() == Some("docx")
 }
 
+fn merge_pdf_append_content(existing: &str, new_content: &str) -> String {
+    let existing = existing.trim_end_matches(|char| matches!(char, '\n' | '\r' | '\u{c}'));
+    merge_document_append_content(existing, new_content)
+}
+
 fn merge_docx_append_content(existing: &str, new_content: &str) -> String {
+    merge_document_append_content(existing, new_content)
+}
+
+fn merge_document_append_content(existing: &str, new_content: &str) -> String {
     if new_content
         .trim_matches(|char| char == '\n' || char == '\r')
         .is_empty()
@@ -1763,6 +1785,65 @@ fn read_document_file_content(file_name: &str) -> Result<String, String> {
         Some("pdf") => pdf_extract::extract_text(file_name).map_err(|error| error.to_string()),
         Some("docx") => read_docx_text(file_name),
         _ => Err("unsupported document extension".to_owned()),
+    }
+}
+
+fn write_pdf_text(path: &std::path::Path, content: &str) -> Result<(), String> {
+    std::fs::write(path, pdf_bytes_from_text(content)).map_err(|error| error.to_string())
+}
+
+fn pdf_bytes_from_text(content: &str) -> Vec<u8> {
+    let mut stream = String::from("BT /F1 12 Tf 72 720 Td 14 TL\n");
+    for line in content.split('\n') {
+        stream.push('(');
+        push_pdf_escaped(&mut stream, line);
+        stream.push_str(") Tj\nT*\n");
+    }
+    stream.push_str("ET");
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{}\nendstream",
+            stream.len(),
+            stream
+        ),
+    ];
+
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
+    }
+    let xref_offset = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objects.len() + 1,
+            xref_offset
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+fn push_pdf_escaped(output: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '\\' => output.push_str(r"\\"),
+            '(' => output.push_str(r"\("),
+            ')' => output.push_str(r"\)"),
+            '\r' => {}
+            _ => output.push(character),
+        }
     }
 }
 
@@ -2124,7 +2205,9 @@ fn supported_text_extensions() -> &'static [&'static str] {
 }
 
 fn supported_write_extensions() -> &'static [&'static str] {
-    &["txt", "md", "json", "jsonl", "csv", "html", "xml", "docx"]
+    &[
+        "txt", "md", "json", "jsonl", "csv", "html", "xml", "pdf", "docx",
+    ]
 }
 
 fn supported_read_image_extensions() -> &'static [&'static str] {
@@ -5192,6 +5275,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let text_path = temp_dir.path().join("missing.md");
         let csv_path = temp_dir.path().join("missing.csv");
+        let pdf_path = temp_dir.path().join("missing.pdf");
         let docx_path = temp_dir.path().join("missing.docx");
         let session = MockSession::new();
         let mut executor = BrowserActionExecutor::new(session);
@@ -5214,6 +5298,15 @@ mod tests {
                 leading_newline: false,
             }))
             .await;
+        let pdf_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: pdf_path.display().to_string(),
+                content: "pdf".to_owned(),
+                append: true,
+                trailing_newline: true,
+                leading_newline: false,
+            }))
+            .await;
         let docx_result = executor
             .execute(&BrowserAction::WriteFile(WriteFileAction {
                 file_name: docx_path.display().to_string(),
@@ -5226,6 +5319,7 @@ mod tests {
 
         let expected_text_error = format!("File '{}' not found.", text_path.display());
         let expected_csv_error = format!("File '{}' not found.", csv_path.display());
+        let expected_pdf_error = format!("File '{}' not found.", pdf_path.display());
         let expected_docx_error = format!("File '{}' not found.", docx_path.display());
         assert_eq!(
             text_result.error.as_deref(),
@@ -5236,11 +5330,16 @@ mod tests {
             Some(expected_csv_error.as_str())
         );
         assert_eq!(
+            pdf_result.error.as_deref(),
+            Some(expected_pdf_error.as_str())
+        );
+        assert_eq!(
             docx_result.error.as_deref(),
             Some(expected_docx_error.as_str())
         );
         assert!(!text_path.exists());
         assert!(!csv_path.exists());
+        assert!(!pdf_path.exists());
         assert!(!docx_path.exists());
     }
 
@@ -5399,7 +5498,7 @@ mod tests {
     async fn browser_executor_reads_pdf_files_as_text() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let path = temp_dir.path().join("report.pdf");
-        std::fs::write(&path, minimal_pdf("Hello PDF EvalOps")).expect("seed pdf");
+        std::fs::write(&path, pdf_bytes_from_text("Hello PDF EvalOps")).expect("seed pdf");
         let file_name = path.display().to_string();
         let session = MockSession::new();
         let mut executor = BrowserActionExecutor::new(session);
@@ -5422,6 +5521,51 @@ mod tests {
                 .contains("Hello PDF EvalOps")
         );
         assert!(result.include_extracted_content_only_once);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_writes_and_appends_pdf_files_as_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("report.pdf");
+        let file_name = path.display().to_string();
+        let session = MockSession::new();
+        let mut executor = BrowserActionExecutor::new(session);
+
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "Title (One)\nAlpha Beta".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let append_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: file_name.clone(),
+                content: "Gamma & Delta".to_owned(),
+                append: true,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        let read_result = executor
+            .execute(&BrowserAction::ReadFile(ReadFileAction {
+                file_name: file_name.clone(),
+            }))
+            .await;
+
+        assert_eq!(write_result.error, None);
+        assert_eq!(append_result.error, None);
+        let bytes = std::fs::read(&path).expect("pdf bytes");
+        assert!(bytes.starts_with(b"%PDF-1.4"));
+        let extracted = pdf_extract::extract_text(&path).expect("pdf text");
+        assert!(extracted.contains("Title (One)"));
+        assert!(extracted.contains("Alpha Beta"));
+        assert!(extracted.contains("Gamma & Delta"));
+        let content = read_result.extracted_content.as_deref().expect("pdf read");
+        assert!(content.contains(&format!("Read from file {file_name}.")));
+        assert!(content.contains("Gamma & Delta"));
     }
 
     #[tokio::test]
@@ -5480,47 +5624,6 @@ mod tests {
             .write_all(document_xml.as_bytes())
             .expect("document xml");
         archive.finish().expect("finish docx");
-    }
-
-    fn minimal_pdf(text: &str) -> Vec<u8> {
-        let escaped = text
-            .replace('\\', r"\\")
-            .replace('(', r"\(")
-            .replace(')', r"\)");
-        let stream = format!("BT /F1 24 Tf 72 720 Td ({escaped}) Tj ET");
-        let objects = [
-            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
-            "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_owned(),
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
-            format!(
-                "<< /Length {} >>\nstream\n{}\nendstream",
-                stream.len(),
-                stream
-            ),
-        ];
-
-        let mut pdf = b"%PDF-1.4\n".to_vec();
-        let mut offsets = Vec::new();
-        for (index, object) in objects.iter().enumerate() {
-            offsets.push(pdf.len());
-            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
-        }
-        let xref_offset = pdf.len();
-        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
-        pdf.extend_from_slice(b"0000000000 65535 f \n");
-        for offset in offsets {
-            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-        }
-        pdf.extend_from_slice(
-            format!(
-                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
-                objects.len() + 1,
-                xref_offset
-            )
-            .as_bytes(),
-        );
-        pdf
     }
 
     #[tokio::test]
