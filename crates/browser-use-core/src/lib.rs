@@ -219,7 +219,7 @@ impl AgentCurrentState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ActionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extracted_content: Option<String>,
@@ -239,6 +239,54 @@ pub struct ActionResult {
     pub attachments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct ActionResultWire {
+    #[serde(default)]
+    extracted_content: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    long_term_memory: Option<String>,
+    #[serde(default)]
+    include_extracted_content_only_once: bool,
+    #[serde(default)]
+    include_in_memory: bool,
+    #[serde(default)]
+    is_done: bool,
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    attachments: Vec<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+impl<'de> Deserialize<'de> for ActionResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ActionResultWire::deserialize(deserializer)?;
+        if wire.success == Some(true) && !wire.is_done {
+            return Err(serde::de::Error::custom(
+                "success=true can only be set when is_done=true",
+            ));
+        }
+
+        Ok(Self {
+            extracted_content: wire.extracted_content,
+            error: wire.error,
+            long_term_memory: wire.long_term_memory,
+            include_extracted_content_only_once: wire.include_extracted_content_only_once,
+            include_in_memory: wire.include_in_memory,
+            is_done: wire.is_done,
+            success: wire.success,
+            attachments: wire.attachments,
+            metadata: wire.metadata,
+        })
+    }
 }
 
 impl ActionResult {
@@ -2622,6 +2670,42 @@ mod tests {
         assert!(settings.use_thinking);
         assert!(!settings.flash_mode);
         assert!(settings.include_attributes.is_empty());
+    }
+
+    #[test]
+    fn action_result_rejects_success_true_without_done() {
+        let error = serde_json::from_value::<ActionResult>(serde_json::json!({
+            "extracted_content": "clicked",
+            "success": true
+        }))
+        .expect_err("success=true without done should be rejected");
+
+        assert!(error.to_string().contains("is_done=true"));
+    }
+
+    #[test]
+    fn action_result_accepts_failed_non_done_status() {
+        let result: ActionResult = serde_json::from_value(serde_json::json!({
+            "error": "click failed",
+            "success": false
+        }))
+        .expect("success=false remains valid for failed actions");
+
+        assert!(!result.is_done);
+        assert_eq!(result.success, Some(false));
+    }
+
+    #[test]
+    fn action_result_accepts_successful_done_status() {
+        let result: ActionResult = serde_json::from_value(serde_json::json!({
+            "extracted_content": "complete",
+            "is_done": true,
+            "success": true
+        }))
+        .expect("done success should deserialize");
+
+        assert!(result.is_done);
+        assert_eq!(result.success, Some(true));
     }
 
     #[test]

@@ -60,8 +60,8 @@ Implemented:
   output-schema controls, upstream-style flattened required output fields,
   configurable prompt-history and clickable-element text limits, upstream-style
   last-result completion helpers, upstream-style prompt error truncation,
-  per-step error slots, model-output/action/thought accessors, duration helpers,
-  and URL helpers.
+  upstream-compatible action-result success validation, per-step error slots,
+  model-output/action/thought accessors, duration helpers, and URL helpers.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
   payloads.

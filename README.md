@@ -50,8 +50,9 @@ includes:
   upstream-style flattened required output fields, structured extraction
   metadata, per-step timing metadata, configurable prompt-history and
   clickable-element text limits, upstream-style last-result completion helpers,
-  upstream-style prompt error truncation, step-error, model-output/action/thought,
-  duration, action, and URL history accessors, and history.
+  upstream-style prompt error truncation, upstream-compatible action-result
+  success validation, step-error, model-output/action/thought, duration, action,
+  and URL history accessors, and history.
 - OpenAI-compatible Chat Completions, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers.
 - CLI commands, stdio MCP server, local TCP/HTTP JSON-RPC daemon with optional
