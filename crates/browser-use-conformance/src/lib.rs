@@ -1710,6 +1710,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            ..AgentHistory::default()
         }
     }
 
