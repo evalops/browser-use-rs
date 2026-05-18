@@ -16,7 +16,8 @@ use browser_use_dom::{
 };
 use futures_util::{SinkExt, StreamExt};
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use thiserror::Error;
@@ -1049,10 +1050,6 @@ pub enum BrowserError {
     ExecutableNotFound(Vec<PathBuf>),
     #[error("browser launch failed: {0}")]
     LaunchFailed(String),
-    #[error("Browser Use Cloud authentication failed: {0}")]
-    CloudAuthFailed(String),
-    #[error("Browser Use Cloud browser creation failed: {0}")]
-    CloudBrowserFailed(String),
     #[error("timed out waiting for DevToolsActivePort at {0}")]
     DevToolsEndpointTimedOut(PathBuf),
     #[error("CDP transport error: {0}")]
@@ -1069,6 +1066,10 @@ pub enum BrowserError {
     ActionFailed(String),
     #[error("browser state unavailable: {0}")]
     StateUnavailable(String),
+    #[error("Browser Use Cloud authentication failed: {0}")]
+    CloudAuth(String),
+    #[error("Browser Use Cloud request failed: {0}")]
+    Cloud(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1114,7 +1115,7 @@ pub struct ProxySettings {
     pub password: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CloudProxyCountryCode {
     #[default]
     Unset,
@@ -1124,31 +1125,24 @@ pub enum CloudProxyCountryCode {
 
 impl CloudProxyCountryCode {
     #[must_use]
-    pub fn disabled() -> Self {
-        Self::Disabled
-    }
-
-    #[must_use]
     pub fn country(country_code: impl Into<String>) -> Self {
         Self::Country(country_code.into())
     }
-
-    fn is_unset(&self) -> bool {
-        matches!(self, Self::Unset)
-    }
 }
 
-fn serialize_cloud_proxy_country_code<S>(
-    value: &CloudProxyCountryCode,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match value {
-        CloudProxyCountryCode::Unset => serializer.serialize_none(),
-        CloudProxyCountryCode::Disabled => serializer.serialize_none(),
-        CloudProxyCountryCode::Country(country_code) => serializer.serialize_str(country_code),
+impl JsonSchema for CloudProxyCountryCode {
+    fn schema_name() -> String {
+        "CloudProxyCountryCode".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "string" },
+                { "type": "null" }
+            ]
+        }))
+        .expect("valid CloudProxyCountryCode JSON schema")
     }
 }
 
@@ -1156,76 +1150,87 @@ fn deserialize_cloud_proxy_country_code<'de, D>(
     deserializer: D,
 ) -> Result<CloudProxyCountryCode, D::Error>
 where
-    D: Deserializer<'de>,
+    D: serde::Deserializer<'de>,
 {
-    Ok(match Option::<String>::deserialize(deserializer)? {
-        Some(country_code) => CloudProxyCountryCode::Country(country_code),
-        None => CloudProxyCountryCode::Disabled,
-    })
+    Ok(Option::<String>::deserialize(deserializer)?
+        .map(CloudProxyCountryCode::Country)
+        .unwrap_or(CloudProxyCountryCode::Disabled))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-pub struct CloudBrowserCreateRequest {
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct CreateCloudBrowserRequest {
+    #[serde(default, alias = "profile_id", skip_serializing_if = "Option::is_none")]
+    pub cloud_profile_id: Option<String>,
     #[serde(
         default,
-        alias = "cloud_profile_id",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub profile_id: Option<String>,
-    #[serde(
-        default,
-        alias = "cloud_proxy_country_code",
-        skip_serializing_if = "CloudProxyCountryCode::is_unset",
-        serialize_with = "serialize_cloud_proxy_country_code",
+        alias = "proxy_country_code",
         deserialize_with = "deserialize_cloud_proxy_country_code"
     )]
-    pub proxy_country_code: CloudProxyCountryCode,
-    #[serde(
-        default,
-        alias = "cloud_timeout",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub timeout: Option<u16>,
-    #[serde(default, alias = "enableRecording", skip_serializing_if = "is_false")]
+    pub cloud_proxy_country_code: CloudProxyCountryCode,
+    #[serde(default, alias = "timeout", skip_serializing_if = "Option::is_none")]
+    pub cloud_timeout: Option<u32>,
+    #[serde(default, rename = "enableRecording", alias = "enable_recording")]
     pub enable_recording: bool,
+}
+
+impl Serialize for CreateCloudBrowserRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        if let Some(profile_id) = &self.cloud_profile_id {
+            map.serialize_entry("cloud_profile_id", profile_id)?;
+        }
+        match &self.cloud_proxy_country_code {
+            CloudProxyCountryCode::Unset => {}
+            CloudProxyCountryCode::Disabled => {
+                map.serialize_entry("cloud_proxy_country_code", &Option::<String>::None)?;
+            }
+            CloudProxyCountryCode::Country(country_code) => {
+                map.serialize_entry("cloud_proxy_country_code", country_code)?;
+            }
+        }
+        if let Some(timeout) = self.cloud_timeout {
+            map.serialize_entry("cloud_timeout", &timeout)?;
+        }
+        if self.enable_recording {
+            map.serialize_entry("enableRecording", &true)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserResponse {
     pub id: String,
     pub status: String,
-    #[serde(rename = "liveUrl", alias = "live_url")]
+    #[serde(rename = "liveUrl")]
     pub live_url: String,
-    #[serde(rename = "cdpUrl", alias = "cdp_url")]
+    #[serde(rename = "cdpUrl")]
     pub cdp_url: String,
-    #[serde(rename = "timeoutAt", alias = "timeout_at")]
+    #[serde(rename = "timeoutAt")]
     pub timeout_at: String,
-    #[serde(rename = "startedAt", alias = "started_at")]
+    #[serde(rename = "startedAt")]
     pub started_at: String,
     #[serde(
         default,
         rename = "finishedAt",
-        alias = "finished_at",
         skip_serializing_if = "Option::is_none"
     )]
     pub finished_at: Option<String>,
 }
 
 impl CloudBrowserResponse {
-    #[must_use]
-    pub fn devtools_endpoint(&self) -> DevToolsEndpoint {
-        DevToolsEndpoint {
-            http_url: self.live_url.clone(),
-            websocket_url: self.cdp_url.clone(),
-        }
+    pub fn devtools_endpoint(&self) -> Result<DevToolsEndpoint, BrowserError> {
+        DevToolsEndpoint::from_cdp_url(&self.cdp_url)
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct CloudBrowserClient {
     api_base_url: String,
     api_key: Option<String>,
-    http_client: reqwest::Client,
+    client: reqwest::Client,
 }
 
 impl Default for CloudBrowserClient {
@@ -1240,94 +1245,77 @@ impl CloudBrowserClient {
         Self {
             api_base_url: "https://api.browser-use.com".to_owned(),
             api_key: None,
-            http_client: reqwest::Client::new(),
+            client: reqwest::Client::new(),
         }
     }
 
     #[must_use]
-    pub fn with_api_base_url(mut self, api_base_url: impl Into<String>) -> Self {
-        self.api_base_url = api_base_url.into().trim_end_matches('/').to_owned();
-        self
+    pub fn with_api_key(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: Some(api_key.into()),
+            ..Self::new()
+        }
     }
 
     #[must_use]
-    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
-        self.api_key = Some(api_key.into());
+    pub fn with_base_url(mut self, api_base_url: impl Into<String>) -> Self {
+        self.api_base_url = api_base_url.into();
         self
     }
 
     pub async fn create_browser(
         &self,
-        request: &CloudBrowserCreateRequest,
+        request: &CreateCloudBrowserRequest,
     ) -> Result<CloudBrowserResponse, BrowserError> {
         let api_key = self
             .api_key
             .clone()
             .or_else(|| std::env::var("BROWSER_USE_API_KEY").ok())
-            .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
-                BrowserError::CloudAuthFailed(
-                    "BROWSER_USE_API_KEY is not set. To use cloud browsers, get a key at https://cloud.browser-use.com/new-api-key?utm_source=oss&utm_medium=use_cloud"
-                        .to_owned(),
+                BrowserError::CloudAuth(
+                    "BROWSER_USE_API_KEY is not set; pass an explicit key or set the environment variable".to_owned(),
                 )
             })?;
-        let url = format!("{}/api/v2/browsers", self.api_base_url);
+        let url = format!(
+            "{}/api/v2/browsers",
+            self.api_base_url.trim_end_matches('/')
+        );
         let response = self
-            .http_client
+            .client
             .post(url)
             .header("X-Browser-Use-API-Key", api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(request)
             .send()
             .await
-            .map_err(|error| BrowserError::CloudBrowserFailed(error.to_string()))?;
-
+            .map_err(|error| BrowserError::Cloud(error.to_string()))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(BrowserError::CloudAuthFailed(
-                "BROWSER_USE_API_KEY is invalid. Get a new key at https://cloud.browser-use.com/new-api-key?utm_source=oss&utm_medium=use_cloud"
-                    .to_owned(),
+            return Err(BrowserError::CloudAuth(
+                "BROWSER_USE_API_KEY is invalid".to_owned(),
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(BrowserError::CloudAuthFailed(
-                "Access forbidden. Please check your Browser Use Cloud subscription status."
-                    .to_owned(),
+            return Err(BrowserError::CloudAuth(
+                "access forbidden for Browser Use Cloud".to_owned(),
             ));
         }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(BrowserError::CloudBrowserFailed(format!(
-                "HTTP {status}{}",
-                render_cloud_error_body(&body)
+            return Err(BrowserError::Cloud(format!(
+                "failed to create cloud browser: HTTP {status}{detail}",
+                detail = if body.is_empty() {
+                    String::new()
+                } else {
+                    format!(" - {body}")
+                }
             )));
         }
-
         response
             .json::<CloudBrowserResponse>()
             .await
-            .map_err(|error| BrowserError::CloudBrowserFailed(error.to_string()))
+            .map_err(|error| BrowserError::Cloud(error.to_string()))
     }
-}
-
-fn render_cloud_error_body(body: &str) -> String {
-    if body.trim().is_empty() {
-        return String::new();
-    }
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("detail")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| Some(body.to_owned()))
-        .map(|detail| format!(" - {detail}"))
-        .unwrap_or_default()
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1337,7 +1325,11 @@ pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "is_false")]
     pub use_cloud: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloud_browser_params: Option<CloudBrowserCreateRequest>,
+    pub cloud_browser_params: Option<CreateCloudBrowserRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_api_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1376,6 +1368,8 @@ impl Default for BrowserProfile {
             cdp_url: None,
             use_cloud: false,
             cloud_browser_params: None,
+            cloud_api_base_url: None,
+            cloud_api_key: None,
             executable_path: None,
             remote_debugging_port: None,
             headless: default_headless(),
@@ -1393,6 +1387,10 @@ impl Default for BrowserProfile {
             proxy: None,
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_headless() -> bool {
@@ -1413,30 +1411,22 @@ fn default_network_request_timeout_ms() -> u64 {
 
 impl BrowserProfile {
     #[must_use]
-    pub fn uses_cloud(&self) -> bool {
-        self.use_cloud || self.cloud_browser_params.is_some()
+    pub fn cloud_browser_request(&self) -> CreateCloudBrowserRequest {
+        self.cloud_browser_params.clone().unwrap_or_default()
     }
 
-    #[must_use]
-    pub fn cloud_create_request(&self) -> Option<CloudBrowserCreateRequest> {
-        self.uses_cloud()
-            .then(|| self.cloud_browser_params.clone().unwrap_or_default())
-    }
-
-    pub async fn create_cloud_endpoint(&self) -> Result<Option<DevToolsEndpoint>, BrowserError> {
-        self.create_cloud_endpoint_with_client(&CloudBrowserClient::new())
-            .await
-    }
-
-    pub async fn create_cloud_endpoint_with_client(
-        &self,
-        client: &CloudBrowserClient,
-    ) -> Result<Option<DevToolsEndpoint>, BrowserError> {
-        let Some(request) = self.cloud_create_request() else {
-            return Ok(None);
+    pub async fn create_cloud_devtools_endpoint(&self) -> Result<DevToolsEndpoint, BrowserError> {
+        let mut client = match &self.cloud_api_key {
+            Some(api_key) => CloudBrowserClient::with_api_key(api_key.clone()),
+            None => CloudBrowserClient::new(),
         };
-        let response = client.create_browser(&request).await?;
-        Ok(Some(response.devtools_endpoint()))
+        if let Some(api_base_url) = &self.cloud_api_base_url {
+            client = client.with_base_url(api_base_url.clone());
+        }
+        client
+            .create_browser(&self.cloud_browser_request())
+            .await?
+            .devtools_endpoint()
     }
 
     pub fn resolve_executable(&self) -> Result<PathBuf, BrowserError> {
@@ -2242,6 +2232,37 @@ pub struct DevToolsEndpoint {
 }
 
 impl DevToolsEndpoint {
+    pub fn from_cdp_url(cdp_url: &str) -> Result<Self, BrowserError> {
+        let parsed = url::Url::parse(cdp_url)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let websocket_url = match parsed.scheme() {
+            "ws" | "wss" => cdp_url.to_owned(),
+            scheme => {
+                return Err(BrowserError::StateUnavailable(format!(
+                    "unsupported CDP URL scheme {scheme:?}; expected ws or wss"
+                )));
+            }
+        };
+        let mut http_url = parsed;
+        let http_scheme = if http_url.scheme() == "wss" {
+            "https"
+        } else {
+            "http"
+        };
+        http_url.set_scheme(http_scheme).map_err(|_| {
+            BrowserError::StateUnavailable(format!(
+                "could not convert CDP URL scheme to {http_scheme}"
+            ))
+        })?;
+        http_url.set_path("");
+        http_url.set_query(None);
+        http_url.set_fragment(None);
+        Ok(Self {
+            http_url: http_url.to_string().trim_end_matches('/').to_owned(),
+            websocket_url,
+        })
+    }
+
     pub fn from_active_port_file(
         host: &str,
         active_port_contents: &str,
@@ -3021,8 +3042,13 @@ impl CdpBrowserSession {
 
     pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
         let url_policy = UrlAccessPolicy::from_profile(profile);
-        let launched_browser = profile.launch_local().await?;
-        let connection = CdpConnection::connect(launched_browser.endpoint()).await?;
+        let (endpoint, launched_browser) = if profile.use_cloud {
+            (profile.create_cloud_devtools_endpoint().await?, None)
+        } else {
+            let launched_browser = profile.launch_local().await?;
+            (launched_browser.endpoint().clone(), Some(launched_browser))
+        };
+        let connection = CdpConnection::connect(&endpoint).await?;
         if let Some(downloads_path) = &profile.downloads_path {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
@@ -3052,9 +3078,7 @@ impl CdpBrowserSession {
             push_lifecycle_event_and_publish(
                 &mut events,
                 &lifecycle_event_tx,
-                BrowserLifecycleEvent::browser_connected(
-                    launched_browser.endpoint().http_url.clone(),
-                ),
+                BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
             if let Some(event) = storage_state_loaded_event {
                 push_lifecycle_event_and_publish(&mut events, &lifecycle_event_tx, event);
@@ -3093,7 +3117,7 @@ impl CdpBrowserSession {
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: security_watchdog,
-            _launched_browser: Some(launched_browser),
+            _launched_browser: launched_browser,
         })
     }
 
@@ -7332,104 +7356,71 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert!(!profile.use_cloud);
+        assert_eq!(profile.cloud_browser_params, None);
         assert_eq!(profile.browser_start_timeout_ms, 30_000);
         assert_eq!(profile.navigation_timeout_ms, 20_000);
-        assert!(!profile.uses_cloud());
-        assert_eq!(profile.cloud_create_request(), None);
     }
 
     #[test]
-    fn cloud_browser_request_preserves_proxy_country_tri_state() {
-        let omitted = CloudBrowserCreateRequest::default();
-        assert_eq!(
-            serde_json::to_value(&omitted).expect("request json"),
-            json!({})
-        );
-
-        let disabled = CloudBrowserCreateRequest {
-            proxy_country_code: CloudProxyCountryCode::disabled(),
-            ..CloudBrowserCreateRequest::default()
-        };
-        assert_eq!(
-            serde_json::to_value(&disabled).expect("request json"),
-            json!({ "proxy_country_code": null })
-        );
-
-        let country = CloudBrowserCreateRequest {
-            profile_id: Some("profile-123".to_owned()),
-            proxy_country_code: CloudProxyCountryCode::country("jp"),
-            timeout: Some(60),
+    fn cloud_browser_request_omits_unset_proxy_country() {
+        let request = CreateCloudBrowserRequest {
+            cloud_profile_id: Some("profile-123".to_owned()),
+            cloud_timeout: Some(30),
             enable_recording: true,
+            ..CreateCloudBrowserRequest::default()
         };
+
         assert_eq!(
-            serde_json::to_value(&country).expect("request json"),
+            serde_json::to_value(&request).expect("serialize request"),
             json!({
-                "profile_id": "profile-123",
-                "proxy_country_code": "jp",
-                "timeout": 60,
-                "enable_recording": true
+                "cloud_profile_id": "profile-123",
+                "cloud_timeout": 30,
+                "enableRecording": true
             })
         );
     }
 
     #[test]
-    fn cloud_browser_request_accepts_upstream_aliases() {
-        let request: CloudBrowserCreateRequest = serde_json::from_value(json!({
-            "cloud_profile_id": "profile-456",
-            "cloud_proxy_country_code": null,
-            "cloud_timeout": 45,
-            "enableRecording": true
-        }))
-        .expect("alias request");
-
-        assert_eq!(request.profile_id.as_deref(), Some("profile-456"));
-        assert_eq!(request.proxy_country_code, CloudProxyCountryCode::Disabled);
-        assert_eq!(request.timeout, Some(45));
-        assert!(request.enable_recording);
-    }
-
-    #[test]
-    fn cloud_browser_response_converts_to_devtools_endpoint() {
-        let response: CloudBrowserResponse = serde_json::from_value(json!({
-            "id": "session-1",
-            "status": "running",
-            "liveUrl": "https://cloud.browser-use.com/session/session-1",
-            "cdpUrl": "wss://cdp.browser-use.com/session-1",
-            "timeoutAt": "2026-05-18T20:00:00Z",
-            "startedAt": "2026-05-18T19:00:00Z",
-            "finishedAt": null
-        }))
-        .expect("cloud response");
-
-        assert_eq!(
-            response.devtools_endpoint(),
-            DevToolsEndpoint {
-                http_url: "https://cloud.browser-use.com/session/session-1".to_owned(),
-                websocket_url: "wss://cdp.browser-use.com/session-1".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn cloud_browser_params_force_cloud_request_without_local_launch_changes() {
-        let profile = BrowserProfile {
-            cloud_browser_params: Some(CloudBrowserCreateRequest {
-                proxy_country_code: CloudProxyCountryCode::disabled(),
-                ..CloudBrowserCreateRequest::default()
-            }),
-            ..BrowserProfile::default()
+    fn cloud_browser_request_preserves_explicit_null_proxy_country() {
+        let request = CreateCloudBrowserRequest {
+            cloud_proxy_country_code: CloudProxyCountryCode::Disabled,
+            ..CreateCloudBrowserRequest::default()
         };
 
-        assert!(profile.uses_cloud());
         assert_eq!(
-            serde_json::to_value(profile.cloud_create_request().expect("cloud request"))
-                .expect("request json"),
-            json!({ "proxy_country_code": null })
+            serde_json::to_value(&request).expect("serialize request"),
+            json!({ "cloud_proxy_country_code": null })
         );
 
-        let plan = profile.launch_plan();
-        assert!(plan.args.contains(&"--headless=new".to_owned()));
-        assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
+        let parsed: CreateCloudBrowserRequest =
+            serde_json::from_value(json!({ "proxy_country_code": null }))
+                .expect("deserialize legacy alias");
+        assert_eq!(
+            parsed.cloud_proxy_country_code,
+            CloudProxyCountryCode::Disabled
+        );
+    }
+
+    #[test]
+    fn cloud_browser_request_preserves_proxy_country_value() {
+        let request = CreateCloudBrowserRequest {
+            cloud_proxy_country_code: CloudProxyCountryCode::country("de"),
+            ..CreateCloudBrowserRequest::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&request).expect("serialize request"),
+            json!({ "cloud_proxy_country_code": "de" })
+        );
+
+        let parsed: CreateCloudBrowserRequest =
+            serde_json::from_value(json!({ "cloud_proxy_country_code": "jp" }))
+                .expect("deserialize cloud alias");
+        assert_eq!(
+            parsed.cloud_proxy_country_code,
+            CloudProxyCountryCode::Country("jp".to_owned())
+        );
     }
 
     #[test]
@@ -8795,6 +8786,27 @@ mod tests {
         assert_eq!(
             endpoint.websocket_url,
             "ws://127.0.0.1:38119/devtools/browser/abc123"
+        );
+    }
+
+    #[test]
+    fn cloud_browser_response_converts_to_devtools_endpoint() {
+        let response = CloudBrowserResponse {
+            id: "browser-123".to_owned(),
+            status: "running".to_owned(),
+            live_url: "https://cloud.browser-use.com/live/browser-123".to_owned(),
+            cdp_url: "wss://cdp.browser-use.com/devtools/browser/abc123".to_owned(),
+            timeout_at: "2026-05-18T20:00:00Z".to_owned(),
+            started_at: "2026-05-18T19:00:00Z".to_owned(),
+            finished_at: None,
+        };
+
+        let endpoint = response.devtools_endpoint().expect("devtools endpoint");
+
+        assert_eq!(endpoint.http_url, "https://cdp.browser-use.com");
+        assert_eq!(
+            endpoint.websocket_url,
+            "wss://cdp.browser-use.com/devtools/browser/abc123"
         );
     }
 
