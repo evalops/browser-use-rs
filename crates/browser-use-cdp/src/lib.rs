@@ -91,6 +91,13 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     }
     return false;
   };
+  const hasAriaInteractivityProperty = (el) => {
+    const required = String(el.getAttribute('aria-required') || '').toLowerCase();
+    if (required === 'true') return true;
+    const autocomplete = String(el.getAttribute('aria-autocomplete') || '').toLowerCase();
+    if (autocomplete && autocomplete !== 'none') return true;
+    return String(el.getAttribute('aria-keyshortcuts') || '').trim().length > 0;
+  };
   const hasIconSignal = (el) => {
     const rect = el.getBoundingClientRect();
     if (rect.width < 10 || rect.width > 50 || rect.height < 10 || rect.height > 50) return false;
@@ -211,6 +218,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (hasJsClickListener(el)) return true;
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    if (hasAriaInteractivityProperty(el)) return true;
     if (hasSearchIndicator(el)) return true;
     if (hasIconSignal(el)) return true;
     if (hasPointerCursor(el)) return true;
@@ -441,7 +449,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const axRef = `browser-use-rs-${index + 1}`;
     try { el.setAttribute(axRefAttribute, axRef); } catch (_) {}
     const attrs = {};
-    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
+    for (const name of ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-live', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo']) {
       const value = el.getAttribute(name);
       if (value) attrs[name] = value;
     }
@@ -602,6 +610,13 @@ fn element_eval_js(index: u32, body: &str) -> String {
     }}
     return false;
   }};
+  const hasAriaInteractivityProperty = (el) => {{
+    const required = String(el.getAttribute('aria-required') || '').toLowerCase();
+    if (required === 'true') return true;
+    const autocomplete = String(el.getAttribute('aria-autocomplete') || '').toLowerCase();
+    if (autocomplete && autocomplete !== 'none') return true;
+    return String(el.getAttribute('aria-keyshortcuts') || '').trim().length > 0;
+  }};
   const hasIconSignal = (el) => {{
     const rect = el.getBoundingClientRect();
     if (rect.width < 10 || rect.width > 50 || rect.height < 10 || rect.height > 50) return false;
@@ -728,6 +743,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     }}
     if (tag === 'label') return !el.hasAttribute('for') && hasFormControlDescendant(el, 2);
     if (tag === 'span' && hasFormControlDescendant(el, 2)) return true;
+    if (hasAriaInteractivityProperty(el)) return true;
     if (hasSearchIndicator(el)) return true;
     if (hasIconSignal(el)) return true;
     if (hasPointerCursor(el)) return true;
@@ -4109,6 +4125,7 @@ mod tests {
             "aria-controls",
             "aria-disabled",
             "aria-haspopup",
+            "aria-keyshortcuts",
             "aria-live",
             "aria-owns",
             "aria-placeholder",
@@ -4368,6 +4385,19 @@ mod tests {
         assert!(action_script.contains("[role=\"listbox\"]"));
         assert!(action_script.contains("[onmouseup]"));
         assert!(action_script.contains("[onkeyup]"));
+    }
+
+    #[test]
+    fn interactive_snapshot_detects_aria_interactivity_properties() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("hasAriaInteractivityProperty"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("aria-required"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("aria-autocomplete"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("aria-keyshortcuts"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("hasAriaInteractivityProperty"));
+        assert!(action_script.contains("autocomplete !== 'none'"));
+        assert!(action_script.contains("aria-keyshortcuts"));
     }
 
     #[test]
@@ -5459,6 +5489,76 @@ mod tests {
             .click(plain_anchor.index)
             .await
             .expect("click plain anchor by index");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_indexes_aria_interactivity_properties() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>aria property smoke</title></head><body><div id='required-proxy' aria-required='true' aria-label='Required proxy'>Required</div><div id='autocomplete-proxy' aria-autocomplete='list' aria-label='Autocomplete proxy'>Autocomplete</div><div id='shortcut-proxy' aria-keyshortcuts='Alt+S' aria-label='Shortcut proxy'>Shortcut</div><div id='autocomplete-none' aria-autocomplete='none'>Ignored autocomplete</div></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let element_by_id = |id: &str| {
+            state
+                .dom_state
+                .selector_map
+                .values()
+                .find(|element| {
+                    element
+                        .attributes
+                        .get("id")
+                        .is_some_and(|value| value == id)
+                })
+                .unwrap_or_else(|| panic!("missing interactive element with id {id}"))
+        };
+
+        let required = element_by_id("required-proxy");
+        assert_eq!(required.name.as_deref(), Some("Required proxy"));
+        assert_eq!(
+            required.attributes.get("aria-required").map(String::as_str),
+            Some("true")
+        );
+
+        let autocomplete = element_by_id("autocomplete-proxy");
+        assert_eq!(
+            autocomplete
+                .attributes
+                .get("aria-autocomplete")
+                .map(String::as_str),
+            Some("list")
+        );
+
+        let shortcut = element_by_id("shortcut-proxy");
+        assert_eq!(
+            shortcut
+                .attributes
+                .get("aria-keyshortcuts")
+                .map(String::as_str),
+            Some("Alt+S")
+        );
+
+        assert!(state.dom_state.selector_map.values().all(|element| {
+            element
+                .attributes
+                .get("id")
+                .is_none_or(|id| id != "autocomplete-none")
+        }));
+
+        session
+            .click(shortcut.index)
+            .await
+            .expect("click shortcut proxy by index");
     }
 
     #[tokio::test]

@@ -116,7 +116,8 @@ Implemented:
   upstream empty-DOM load hint, filters occluded elements with a topmost-center
   check, keeps hidden file-input upload targets, indexes plain scroll containers
   without interactive descendants, renders pages-above/below scroll context for
-  indexed scroll containers, indexes href-less anchor tags, prunes non-content
+  indexed scroll containers, indexes href-less anchor tags and ARIA
+  required/autocomplete/keyshortcut interactivity signals, prunes non-content
   `head`/`script`/`style`/metadata tags, and excludes hidden, disabled, or
   `data-browser-use-exclude` subtrees from the selector map.
 
