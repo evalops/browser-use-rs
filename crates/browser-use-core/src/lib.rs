@@ -329,18 +329,20 @@ pub struct AgentHistory {
 impl AgentHistory {
     #[must_use]
     pub fn final_result(&self) -> Option<&str> {
-        self.final_done_result()
+        self.last_result()
             .and_then(|result| result.extracted_content.as_deref())
     }
 
     #[must_use]
     pub fn is_done(&self) -> bool {
-        self.final_done_result().is_some()
+        self.last_result().is_some_and(|result| result.is_done)
     }
 
     #[must_use]
     pub fn is_successful(&self) -> Option<bool> {
-        self.final_done_result().and_then(|result| result.success)
+        self.last_result()
+            .filter(|result| result.is_done)
+            .and_then(|result| result.success)
     }
 
     #[must_use]
@@ -400,12 +402,8 @@ impl AgentHistory {
             .collect()
     }
 
-    fn final_done_result(&self) -> Option<&ActionResult> {
-        self.items
-            .iter()
-            .rev()
-            .flat_map(|item| item.result.iter().rev())
-            .find(|result| result.is_done)
+    fn last_result(&self) -> Option<&ActionResult> {
+        self.items.last().and_then(|item| item.result.last())
     }
 }
 
@@ -2472,6 +2470,30 @@ mod tests {
         assert!(history.is_done());
         assert_eq!(history.is_successful(), Some(false));
         assert_eq!(history.errors(), vec!["first failure"]);
+    }
+
+    #[test]
+    fn history_completion_helpers_use_last_result_like_browser_use() {
+        let history = AgentHistory {
+            items: vec![
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::done("finished earlier", true)],
+                    state: blank_state(),
+                    metadata: None,
+                },
+                AgentHistoryItem {
+                    model_output: None,
+                    result: vec![ActionResult::extracted("latest non-terminal result")],
+                    state: blank_state(),
+                    metadata: None,
+                },
+            ],
+        };
+
+        assert_eq!(history.final_result(), Some("latest non-terminal result"));
+        assert!(!history.is_done());
+        assert_eq!(history.is_successful(), None);
     }
 
     #[test]
