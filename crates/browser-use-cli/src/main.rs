@@ -163,6 +163,8 @@ enum Command {
         save_conversation_path: Option<String>,
         #[arg(long = "save-conversation-path-encoding")]
         save_conversation_path_encoding: Option<String>,
+        #[arg(long = "file-system-path")]
+        file_system_path: Option<String>,
         #[arg(long, default_value_t = false)]
         no_planning: bool,
         #[arg(long)]
@@ -530,6 +532,7 @@ async fn main() -> anyhow::Result<()> {
             include_tool_call_examples,
             save_conversation_path,
             save_conversation_path_encoding,
+            file_system_path,
             no_planning,
             planning_replan_on_stall,
             planning_exploration_limit,
@@ -592,6 +595,7 @@ async fn main() -> anyhow::Result<()> {
                 include_tool_call_examples,
                 save_conversation_path,
                 save_conversation_path_encoding,
+                file_system_path,
                 no_planning,
                 planning_replan_on_stall,
                 planning_exploration_limit,
@@ -676,6 +680,7 @@ struct CliAgentSettingsArgs {
     include_tool_call_examples: bool,
     save_conversation_path: Option<String>,
     save_conversation_path_encoding: Option<String>,
+    file_system_path: Option<String>,
     no_planning: bool,
     planning_replan_on_stall: Option<usize>,
     planning_exploration_limit: Option<usize>,
@@ -761,6 +766,7 @@ fn cli_agent_settings(args: CliAgentSettingsArgs) -> AgentSettings {
     if let Some(value) = args.save_conversation_path_encoding {
         settings.save_conversation_path_encoding = Some(value);
     }
+    settings.file_system_path = args.file_system_path;
     if args.no_planning {
         settings.enable_planning = false;
     }
@@ -2224,6 +2230,8 @@ mod tests {
             "/tmp/browser-use-conversations",
             "--save-conversation-path-encoding",
             "utf-8",
+            "--file-system-path",
+            "/tmp/browser-use-agent-files",
             "--no-planning",
             "--planning-replan-on-stall",
             "5",
@@ -2300,6 +2308,7 @@ mod tests {
                 include_tool_call_examples,
                 save_conversation_path,
                 save_conversation_path_encoding,
+                file_system_path,
                 no_planning,
                 planning_replan_on_stall,
                 planning_exploration_limit,
@@ -2352,6 +2361,10 @@ mod tests {
                     Some("/tmp/browser-use-conversations")
                 );
                 assert_eq!(save_conversation_path_encoding.as_deref(), Some("utf-8"));
+                assert_eq!(
+                    file_system_path.as_deref(),
+                    Some("/tmp/browser-use-agent-files")
+                );
                 assert!(no_planning);
                 assert_eq!(planning_replan_on_stall, Some(5));
                 assert_eq!(planning_exploration_limit, Some(6));
@@ -2682,6 +2695,7 @@ mod tests {
             include_tool_call_examples: true,
             save_conversation_path: Some("/tmp/browser-use-conversations".to_owned()),
             save_conversation_path_encoding: Some("utf-8".to_owned()),
+            file_system_path: Some("/tmp/browser-use-agent-files".to_owned()),
             no_planning: true,
             planning_replan_on_stall: Some(5),
             planning_exploration_limit: Some(6),
@@ -2751,6 +2765,10 @@ mod tests {
         assert_eq!(
             settings.save_conversation_path_encoding.as_deref(),
             Some("utf-8")
+        );
+        assert_eq!(
+            settings.file_system_path.as_deref(),
+            Some("/tmp/browser-use-agent-files")
         );
         assert!(!settings.enable_planning);
         assert_eq!(settings.planning_replan_on_stall, 5);

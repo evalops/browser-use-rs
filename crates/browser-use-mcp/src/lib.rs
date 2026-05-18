@@ -479,6 +479,7 @@ mod tests {
         assert!(schema_text.contains("keep_last_items"));
         assert!(schema_text.contains("save_conversation_path"));
         assert!(schema_text.contains("save_conversation_path_encoding"));
+        assert!(schema_text.contains("file_system_path"));
         assert!(schema_text.contains("max_clickable_elements_length"));
         assert!(schema_text.contains("include_recent_events"));
         assert!(schema_text.contains("sample_images"));
@@ -534,7 +535,8 @@ mod tests {
                     "include_read_state": true
                 },
                 "save_conversation_path": "/tmp/conversations",
-                "save_conversation_path_encoding": "utf-8"
+                "save_conversation_path_encoding": "utf-8",
+                "file_system_path": "/tmp/browser-use-agent-files"
             }
         }))
         .expect("agent input");
@@ -579,6 +581,10 @@ mod tests {
         assert_eq!(
             input.settings.save_conversation_path_encoding.as_deref(),
             Some("utf-8")
+        );
+        assert_eq!(
+            input.settings.file_system_path.as_deref(),
+            Some("/tmp/browser-use-agent-files")
         );
     }
 

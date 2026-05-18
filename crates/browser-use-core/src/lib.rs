@@ -155,6 +155,8 @@ pub struct AgentSettings {
         skip_serializing_if = "is_default_save_conversation_path_encoding"
     )]
     pub save_conversation_path_encoding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_system_path: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_attributes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -325,6 +327,7 @@ impl Default for AgentSettings {
             include_tool_call_examples: false,
             save_conversation_path: None,
             save_conversation_path_encoding: default_save_conversation_path_encoding(),
+            file_system_path: None,
             include_attributes: Vec::new(),
             available_file_paths: Vec::new(),
             initial_actions: Vec::new(),
@@ -4956,13 +4959,9 @@ where
         llm: M,
         session: S,
     ) -> Self {
-        Self::with_settings_and_file_system(
-            task,
-            settings,
-            llm,
-            session,
-            ManagedFileSystem::new_in_temp().expect("create managed file system"),
-        )
+        let file_system =
+            managed_file_system_for_settings(&settings).expect("create managed file system");
+        Self::with_settings_and_file_system(task, settings, llm, session, file_system)
     }
 
     #[must_use]
@@ -6095,6 +6094,19 @@ fn settings_with_llm_screenshot_default(
             Some(LlmScreenshotSize::new(1400, 850).expect("valid Claude Sonnet screenshot size"));
     }
     settings
+}
+
+fn managed_file_system_for_settings(
+    settings: &AgentSettings,
+) -> Result<ManagedFileSystem, BrowserError> {
+    match settings
+        .file_system_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => ManagedFileSystem::new(path),
+        None => ManagedFileSystem::new_in_temp(),
+    }
 }
 
 fn request_with_shortened_urls(
@@ -7977,6 +7989,7 @@ mod tests {
             settings.save_conversation_path_encoding.as_deref(),
             Some("utf-8")
         );
+        assert_eq!(settings.file_system_path, None);
         assert!(settings.include_attributes.is_empty());
         assert!(settings.available_file_paths.is_empty());
         assert!(settings.initial_actions.is_empty());
@@ -12364,6 +12377,51 @@ mod tests {
                 .output_schema
                 .as_ref()
                 .is_some_and(|schema| schema["properties"]["result"]["type"] == "string")
+        );
+    }
+
+    #[test]
+    fn agent_with_settings_uses_configured_file_system_path() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let custom_base_dir = temp_dir.path().join("custom-agent-files");
+        let settings = AgentSettings {
+            file_system_path: Some(custom_base_dir.display().to_string()),
+            ..AgentSettings::default()
+        };
+
+        let agent = Agent::with_settings(
+            "use custom files",
+            settings,
+            QueueModel::new(Vec::new()),
+            MockSession::new(),
+        );
+
+        let state = agent.file_system_state();
+        assert_eq!(std::path::PathBuf::from(state.base_dir), custom_base_dir);
+        assert!(
+            custom_base_dir
+                .join(DEFAULT_FILE_SYSTEM_PATH)
+                .join("todo.md")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn agent_with_settings_defaults_file_system_to_temp_dir() {
+        let agent = Agent::new(
+            "use temp files",
+            QueueModel::new(Vec::new()),
+            MockSession::new(),
+        );
+        let state = agent.file_system_state();
+        let base_dir = std::path::PathBuf::from(state.base_dir);
+
+        assert!(base_dir.starts_with(std::env::temp_dir()));
+        assert!(
+            base_dir
+                .join(DEFAULT_FILE_SYSTEM_PATH)
+                .join("todo.md")
+                .exists()
         );
     }
 
