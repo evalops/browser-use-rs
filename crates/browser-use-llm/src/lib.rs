@@ -91,6 +91,13 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAiStructuredOutputMode {
+    JsonSchema,
+    JsonObject,
+    PromptOnly,
+}
+
 #[derive(Clone)]
 pub struct OpenAiCompatibleChatModel {
     api_key: String,
@@ -98,6 +105,7 @@ pub struct OpenAiCompatibleChatModel {
     base_url: String,
     provider_name: String,
     schema_name: String,
+    structured_output_mode: OpenAiStructuredOutputMode,
     client: reqwest::Client,
 }
 
@@ -383,6 +391,7 @@ impl OpenAiCompatibleChatModel {
             base_url: "https://api.openai.com/v1".to_owned(),
             provider_name: "openai-compatible".to_owned(),
             schema_name: "agent_output".to_owned(),
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
             client: reqwest::Client::new(),
         }
     }
@@ -411,6 +420,15 @@ impl OpenAiCompatibleChatModel {
         self
     }
 
+    #[must_use]
+    pub fn with_structured_output_mode(
+        mut self,
+        structured_output_mode: OpenAiStructuredOutputMode,
+    ) -> Self {
+        self.structured_output_mode = structured_output_mode;
+        self
+    }
+
     fn chat_completions_url(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
@@ -427,7 +445,12 @@ impl ChatModel for OpenAiCompatibleChatModel {
     }
 
     async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError> {
-        let payload = openai_chat_payload(&self.model, &self.schema_name, request);
+        let payload = openai_chat_payload(
+            &self.model,
+            &self.schema_name,
+            self.structured_output_mode,
+            request,
+        );
         let response = self
             .client
             .post(self.chat_completions_url())
@@ -467,25 +490,72 @@ impl ChatModel for OpenAiCompatibleChatModel {
     }
 }
 
-fn openai_chat_payload(model: &str, schema_name: &str, request: ChatRequest) -> Value {
+fn openai_chat_payload(
+    model: &str,
+    schema_name: &str,
+    structured_output_mode: OpenAiStructuredOutputMode,
+    mut request: ChatRequest,
+) -> Value {
+    let output_schema = request.output_schema.take();
+    if matches!(
+        structured_output_mode,
+        OpenAiStructuredOutputMode::JsonObject | OpenAiStructuredOutputMode::PromptOnly
+    ) {
+        if let Some(schema) = output_schema.as_ref() {
+            append_json_schema_instruction(&mut request.messages, schema);
+        }
+    }
+
     let messages: Vec<Value> = request.messages.into_iter().map(openai_message).collect();
     let mut payload = json!({
         "model": model,
         "messages": messages,
     });
 
-    if let Some(schema) = request.output_schema {
-        payload["response_format"] = json!({
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": true,
-                "schema": schema,
-            },
-        });
+    if let Some(schema) = output_schema {
+        match structured_output_mode {
+            OpenAiStructuredOutputMode::JsonSchema => {
+                payload["response_format"] = json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": true,
+                        "schema": schema,
+                    },
+                });
+            }
+            OpenAiStructuredOutputMode::JsonObject => {
+                payload["response_format"] = json!({ "type": "json_object" });
+            }
+            OpenAiStructuredOutputMode::PromptOnly => {}
+        }
     }
 
     payload
+}
+
+fn append_json_schema_instruction(messages: &mut Vec<ChatMessage>, schema: &Value) {
+    let schema_text = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+    let instruction =
+        format!("\n\nReturn only a valid JSON object that matches this schema:\n{schema_text}");
+
+    if let Some(message) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::User | MessageRole::System))
+    {
+        append_text_to_message(message, instruction);
+    } else {
+        messages.push(ChatMessage::text(MessageRole::User, instruction));
+    }
+}
+
+fn append_text_to_message(message: &mut ChatMessage, text: String) {
+    if let Some(ContentPart::Text { text: existing }) = message.content.last_mut() {
+        existing.push_str(&text);
+    } else {
+        message.content.push(ContentPart::Text { text });
+    }
 }
 
 fn openai_message(message: ChatMessage) -> Value {
@@ -861,6 +931,7 @@ mod tests {
         let payload = openai_chat_payload(
             "gpt-test",
             "agent_output",
+            OpenAiStructuredOutputMode::JsonSchema,
             ChatRequest {
                 messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
                 output_schema: Some(json!({
@@ -885,10 +956,60 @@ mod tests {
     }
 
     #[test]
+    fn openai_json_object_mode_embeds_schema_instruction() {
+        let payload = openai_chat_payload(
+            "deepseek-test",
+            "agent_output",
+            OpenAiStructuredOutputMode::JsonObject,
+            ChatRequest {
+                messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"]
+                })),
+            },
+        );
+
+        let content = payload["messages"][0]["content"].as_str().expect("content");
+        assert_eq!(payload["response_format"]["type"], "json_object");
+        assert!(content.contains("Return JSON"));
+        assert!(content.contains("valid JSON object"));
+        assert!(content.contains("\"ok\""));
+    }
+
+    #[test]
+    fn openai_prompt_only_mode_omits_response_format() {
+        let payload = openai_chat_payload(
+            "cerebras-test",
+            "agent_output",
+            OpenAiStructuredOutputMode::PromptOnly,
+            ChatRequest {
+                messages: vec![ChatMessage::text(MessageRole::User, "Extract the result")],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "answer": { "type": "string" }
+                    },
+                    "required": ["answer"]
+                })),
+            },
+        );
+
+        let content = payload["messages"][0]["content"].as_str().expect("content");
+        assert!(payload.get("response_format").is_none());
+        assert!(content.contains("Extract the result"));
+        assert!(content.contains("\"answer\""));
+    }
+
+    #[test]
     fn openai_payload_preserves_multimodal_content_parts() {
         let payload = openai_chat_payload(
             "gpt-test",
             "agent_output",
+            OpenAiStructuredOutputMode::JsonSchema,
             ChatRequest {
                 messages: vec![ChatMessage {
                     role: MessageRole::User,

@@ -9,6 +9,7 @@ use browser_use_cdp::{BrowserProfile, BrowserSession, CdpBrowserSession};
 use browser_use_core::{AgentSettings, BrowserActionExecutor, SensitiveDataValue};
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
+    OpenAiStructuredOutputMode,
 };
 use clap::Parser;
 use schemars::schema_for;
@@ -1497,6 +1498,7 @@ struct OpenAiWireProviderConfig {
     base_url_env: &'static [&'static str],
     default_model: Option<&'static str>,
     default_base_url: &'static str,
+    structured_output_mode: OpenAiStructuredOutputMode,
 }
 
 fn configured_openai_wire_chat_model(
@@ -1529,7 +1531,8 @@ fn configured_openai_wire_chat_model(
     Ok(Box::new(
         OpenAiCompatibleChatModel::new(api_key, model)
             .with_base_url(base_url)
-            .with_provider_name(config.provider_name),
+            .with_provider_name(config.provider_name)
+            .with_structured_output_mode(config.structured_output_mode),
     ))
 }
 
@@ -1542,6 +1545,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["OPENAI_BASE_URL"],
             default_model: None,
             default_base_url: "https://api.openai.com/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
         },
         LlmProvider::DeepSeek => OpenAiWireProviderConfig {
             provider_name: "deepseek",
@@ -1550,6 +1554,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["DEEPSEEK_BASE_URL"],
             default_model: Some("deepseek-chat"),
             default_base_url: "https://api.deepseek.com/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonObject,
         },
         LlmProvider::Groq => OpenAiWireProviderConfig {
             provider_name: "groq",
@@ -1558,6 +1563,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["GROQ_BASE_URL"],
             default_model: None,
             default_base_url: "https://api.groq.com/openai/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
         },
         LlmProvider::Cerebras => OpenAiWireProviderConfig {
             provider_name: "cerebras",
@@ -1566,6 +1572,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["CEREBRAS_BASE_URL"],
             default_model: Some("llama3.1-8b"),
             default_base_url: "https://api.cerebras.ai/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::PromptOnly,
         },
         LlmProvider::Mistral => OpenAiWireProviderConfig {
             provider_name: "mistral",
@@ -1574,6 +1581,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["MISTRAL_BASE_URL"],
             default_model: Some("mistral-medium-latest"),
             default_base_url: "https://api.mistral.ai/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
         },
         LlmProvider::OpenRouter => OpenAiWireProviderConfig {
             provider_name: "openrouter",
@@ -1582,6 +1590,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["OPENROUTER_BASE_URL"],
             default_model: None,
             default_base_url: "https://openrouter.ai/api/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
         },
         LlmProvider::Vercel => OpenAiWireProviderConfig {
             provider_name: "vercel",
@@ -1590,6 +1599,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             base_url_env: &["AI_GATEWAY_BASE_URL"],
             default_model: None,
             default_base_url: "https://ai-gateway.vercel.sh/v1",
+            structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
         },
         LlmProvider::Anthropic | LlmProvider::Gemini | LlmProvider::Ollama => {
             unreachable!("non-OpenAI-wire provider")
@@ -1813,6 +1823,15 @@ mod tests {
         .expect("openrouter with explicit model");
         assert_eq!(openrouter.provider(), "openrouter");
         assert_eq!(openrouter.model(), "openai/gpt-4o-mini");
+
+        assert_eq!(
+            openai_wire_provider_config(LlmProvider::DeepSeek).structured_output_mode,
+            OpenAiStructuredOutputMode::JsonObject
+        );
+        assert_eq!(
+            openai_wire_provider_config(LlmProvider::Cerebras).structured_output_mode,
+            OpenAiStructuredOutputMode::PromptOnly
+        );
     }
 
     #[test]
