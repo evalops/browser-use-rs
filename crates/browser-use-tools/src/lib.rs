@@ -328,6 +328,42 @@ impl BrowserAction {
             _ => None,
         }
     }
+
+    pub fn set_interacted_element_index(&mut self, index: u32) -> bool {
+        match self {
+            Self::Click(params) if params.index.is_some() => {
+                params.index = Some(index);
+                true
+            }
+            Self::Input(params) => {
+                params.index = index;
+                true
+            }
+            Self::Scroll(params) if params.index.is_some() => {
+                params.index = Some(index);
+                true
+            }
+            Self::UploadFile(params) => {
+                params.index = index;
+                true
+            }
+            Self::GetDropdownOptions(params) => {
+                params.index = index;
+                true
+            }
+            Self::SelectDropdownOption(params) => {
+                params.index = index;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn with_interacted_element_index(&self, index: u32) -> Option<Self> {
+        let mut action = self.clone();
+        action.set_interacted_element_index(index).then_some(action)
+    }
 }
 
 #[cfg(test)]
@@ -386,6 +422,74 @@ mod tests {
         assert_eq!(
             BrowserAction::Wait(WaitAction { seconds: 1 }).interacted_element_index(),
             None
+        );
+    }
+
+    #[test]
+    fn action_rewrites_interacted_element_index_for_replayable_actions() {
+        let actions = vec![
+            BrowserAction::Click(ClickElementAction {
+                index: Some(3),
+                coordinate_x: None,
+                coordinate_y: None,
+            }),
+            BrowserAction::Input(InputTextAction {
+                index: 3,
+                text: "hello".to_owned(),
+                clear: true,
+            }),
+            BrowserAction::Scroll(ScrollAction {
+                down: true,
+                pages: 1.0,
+                index: Some(3),
+            }),
+            BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "/tmp/report.pdf".to_owned(),
+            }),
+            BrowserAction::GetDropdownOptions(GetDropdownOptionsAction { index: 3 }),
+            BrowserAction::SelectDropdownOption(SelectDropdownOptionAction {
+                index: 3,
+                text: "Enterprise".to_owned(),
+            }),
+        ];
+
+        for action in actions {
+            let updated = action
+                .with_interacted_element_index(9)
+                .expect("indexed action can be rewritten");
+
+            assert_eq!(updated.interacted_element_index(), Some(9));
+            assert_eq!(action.interacted_element_index(), Some(3));
+        }
+    }
+
+    #[test]
+    fn action_does_not_rewrite_coordinate_or_non_indexed_actions() {
+        assert!(
+            BrowserAction::Click(ClickElementAction {
+                index: None,
+                coordinate_x: Some(10),
+                coordinate_y: Some(20),
+            })
+            .with_interacted_element_index(9)
+            .is_none()
+        );
+
+        assert!(
+            BrowserAction::Scroll(ScrollAction {
+                down: true,
+                pages: 1.0,
+                index: None,
+            })
+            .with_interacted_element_index(9)
+            .is_none()
+        );
+
+        assert!(
+            BrowserAction::Wait(WaitAction { seconds: 1 })
+                .with_interacted_element_index(9)
+                .is_none()
         );
     }
 

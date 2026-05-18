@@ -726,29 +726,9 @@ fn action_value_with_interacted_element(
 }
 
 fn action_with_interacted_index(action: &BrowserAction, index: u32) -> BrowserAction {
-    let mut action = action.clone();
-    match &mut action {
-        BrowserAction::Click(params) if params.index.is_some() => {
-            params.index = Some(index);
-        }
-        BrowserAction::Input(params) => {
-            params.index = index;
-        }
-        BrowserAction::Scroll(params) if params.index.is_some() => {
-            params.index = Some(index);
-        }
-        BrowserAction::UploadFile(params) => {
-            params.index = index;
-        }
-        BrowserAction::GetDropdownOptions(params) => {
-            params.index = index;
-        }
-        BrowserAction::SelectDropdownOption(params) => {
-            params.index = index;
-        }
-        _ => {}
-    }
     action
+        .with_interacted_element_index(index)
+        .unwrap_or_else(|| action.clone())
 }
 
 #[async_trait]
@@ -5903,6 +5883,25 @@ mod tests {
         assert_eq!(
             error.reason,
             DomInteractedElementMatchFailureReason::Ambiguous
+        );
+
+        let missing = DomInteractedElement {
+            element_hash: 0,
+            stable_hash: None,
+            x_path: String::new(),
+            ax_name: Some("Missing".to_owned()),
+            ..DomInteractedElement::from_element(&historical_element)
+        };
+        let current_dom = SerializedDomState::from_elements(vec![replay_dom_element(
+            3,
+            "button",
+            BTreeMap::from([("id".to_owned(), "other".to_owned())]),
+        )]);
+        let error =
+            rematch_action_for_replay(&action, Some(&missing), &current_dom).expect_err("missing");
+        assert_eq!(
+            error.reason,
+            DomInteractedElementMatchFailureReason::NotFound
         );
     }
 
