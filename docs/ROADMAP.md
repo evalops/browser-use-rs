@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#22 Add managed FileSystem sandbox directory for relative file actions](https://github.com/evalops/browser-use-rs/issues/22)
+- [#23 Expose managed FileSystem in agent prompt and state lifecycle](https://github.com/evalops/browser-use-rs/issues/23)
 
 ## Completed Tracks
 
@@ -26,6 +26,7 @@ small pushed checkpoints as each surface becomes real.
 - [#19 Sanitize relative file action filenames like upstream FileSystem](https://github.com/evalops/browser-use-rs/issues/19)
 - [#20 Align file action binary extension guards](https://github.com/evalops/browser-use-rs/issues/20)
 - [#21 Introduce managed FileSystem state and sandbox directory](https://github.com/evalops/browser-use-rs/issues/21)
+- [#22 Add managed FileSystem sandbox directory for relative file actions](https://github.com/evalops/browser-use-rs/issues/22)
 
 ## Current Checkpoint
 
