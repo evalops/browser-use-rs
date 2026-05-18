@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #102 lands and CI is green.
+- [#104 Add upstream wait_between_actions delay](https://github.com/evalops/browser-use-rs/issues/104)
 
 ## Completed Tracks
 
