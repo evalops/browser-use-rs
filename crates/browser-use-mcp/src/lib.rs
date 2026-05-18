@@ -484,6 +484,7 @@ mod tests {
         assert!(schema_text.contains("display_files_in_done_text"));
         assert!(schema_text.contains("available_file_paths"));
         assert!(schema_text.contains("initial_actions"));
+        assert!(schema_text.contains("directly_open_url"));
         assert!(schema_text.contains("excluded_actions"));
         assert!(schema_text.contains("sensitive_data"));
         assert!(schema_text.contains("override_system_message"));

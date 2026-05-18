@@ -80,8 +80,9 @@ action limits, step/LLM/per-action timeouts, final `done` responses after repeat
 optional `done.files_to_display` text expansion, prompt-history limits,
 planning controls, upstream-style message compaction settings, thinking/flash
 output modes, and prompt-visible DOM
-attributes plus initial actions, excluded action names, conversation transcript
-saving, non-fatal judge trace validation with optional `ground_truth`,
+attributes plus initial actions, upstream-compatible `directly_open_url` task
+URL auto-navigation, excluded action names, conversation transcript saving,
+non-fatal judge trace validation with optional `ground_truth`,
 contract-preserved `generate_gif`, `calculate_cost`, and
 `include_tool_call_examples` flags,
 available file-path and sensitive-data prompt context, opt-in recent browser

@@ -134,6 +134,7 @@ vision behavior, `--vision-detail-level <auto|low|high>` for screenshot and
 read-state image fidelity, `--max-failures`, `--max-actions-per-step`,
 `--llm-timeout-seconds`, `--step-timeout-seconds`,
 `--action-timeout-seconds` for the upstream-style per-action wall-clock guard,
+`--no-directly-open-url` to disable upstream-style task URL auto-navigation,
 `--no-final-response-after-failure`, `--no-display-files-in-done-text` for
 attaching requested `done.files_to_display` paths without expanding their text
 into the final answer, `--no-loop-detection`, `--loop-detection-window`,
@@ -159,6 +160,10 @@ paths or files created in the managed agent filesystem. Repeated
 `conversation_<agent-id>_<step>.txt` after each successfully parsed model
 output by default; `--save-conversation-path-encoding <encoding>` accepts
 standard text encoding labels and fails rather than writing lossy transcripts.
+When no explicit initial actions are supplied, agent runs default to upstream's
+`directly_open_url` behavior: exactly one eligible URL in the task text becomes
+a step-zero `navigate` action before the first model step. Email addresses,
+file-like URLs, negated contexts, and multiple distinct URLs are ignored.
 When the final allowed `--max-steps` step is reached, the agent switches to an
 upstream-style done-only finalization contract. The model must call `done` with
 either a complete answer or useful partial results with `success=false`;

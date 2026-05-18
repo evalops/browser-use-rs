@@ -1,11 +1,13 @@
 //! Core agent contracts for browser-use-rs.
 
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{Read, Write};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -53,6 +55,8 @@ pub struct AgentSettings {
     pub step_timeout_seconds: u64,
     #[serde(default = "default_action_timeout_seconds")]
     pub action_timeout_seconds: f64,
+    #[serde(default = "default_true")]
+    pub directly_open_url: bool,
     #[serde(default = "default_final_response_after_failure")]
     pub final_response_after_failure: bool,
     #[serde(default = "default_display_files_in_done_text")]
@@ -241,6 +245,7 @@ impl Default for AgentSettings {
             llm_timeout_seconds: default_llm_timeout_seconds(),
             step_timeout_seconds: default_step_timeout_seconds(),
             action_timeout_seconds: default_action_timeout_seconds(),
+            directly_open_url: true,
             final_response_after_failure: default_final_response_after_failure(),
             display_files_in_done_text: default_display_files_in_done_text(),
             loop_detection_window: default_loop_detection_window(),
@@ -4878,13 +4883,15 @@ where
         session: S,
         file_system: ManagedFileSystem,
     ) -> Self {
+        let task = task.into();
+        let settings = settings_with_direct_start_url(&task, settings);
         let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
         executor.set_action_timeout_seconds(settings.action_timeout_seconds);
         executor.set_upload_file_availability(true, settings.available_file_paths.clone());
         Self {
             id: Uuid::now_v7(),
-            task: task.into(),
+            task,
             settings,
             llm,
             executor,
@@ -5715,6 +5722,161 @@ fn now_seconds() -> f64 {
 
 fn is_single_done_output(output: &AgentOutput) -> bool {
     matches!(output.action.as_slice(), [BrowserAction::Done(_)])
+}
+
+const START_URL_EXCLUDED_EXTENSIONS: &[&str] = &[
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "odt",
+    "ods",
+    "odp",
+    "txt",
+    "md",
+    "csv",
+    "json",
+    "xml",
+    "yaml",
+    "yml",
+    "zip",
+    "rar",
+    "7z",
+    "tar",
+    "gz",
+    "bz2",
+    "xz",
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "bmp",
+    "svg",
+    "webp",
+    "ico",
+    "mp3",
+    "mp4",
+    "avi",
+    "mkv",
+    "mov",
+    "wav",
+    "flac",
+    "ogg",
+    "py",
+    "js",
+    "css",
+    "java",
+    "cpp",
+    "bib",
+    "bibtex",
+    "tex",
+    "latex",
+    "cls",
+    "sty",
+    "exe",
+    "msi",
+    "dmg",
+    "pkg",
+    "deb",
+    "rpm",
+    "iso",
+    "polynomial",
+];
+
+const START_URL_EXCLUDED_WORDS: &[&str] = &["never", "dont", "not", "don't"];
+
+fn settings_with_direct_start_url(task: &str, mut settings: AgentSettings) -> AgentSettings {
+    if settings.directly_open_url
+        && settings.initial_actions.is_empty()
+        && let Some(url) = extract_start_url_from_task(task)
+    {
+        settings.initial_actions =
+            vec![BrowserAction::Navigate(browser_use_tools::NavigateAction {
+                url,
+                new_tab: false,
+            })];
+    }
+    settings
+}
+
+fn extract_start_url_from_task(task: &str) -> Option<String> {
+    static EMAIL_RE: OnceLock<Regex> = OnceLock::new();
+    static FULL_URL_RE: OnceLock<Regex> = OnceLock::new();
+    static DOMAIN_URL_RE: OnceLock<Regex> = OnceLock::new();
+
+    let email_re = EMAIL_RE.get_or_init(|| {
+        Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+            .expect("valid email regex")
+    });
+    let full_url_re = FULL_URL_RE
+        .get_or_init(|| Regex::new(r#"https?://[^\s<>"']+"#).expect("valid full URL regex"));
+    let domain_url_re = DOMAIN_URL_RE.get_or_init(|| {
+        Regex::new(r#"(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}(?:/[^\s<>"']*)?"#)
+            .expect("valid domain URL regex")
+    });
+
+    let task_without_emails = email_re.replace_all(task, "");
+    let mut found_urls = BTreeSet::new();
+
+    for pattern in [full_url_re, domain_url_re] {
+        for matched in pattern.find_iter(&task_without_emails) {
+            let original_position = matched.start();
+            let url = trim_start_url_trailing_punctuation(matched.as_str());
+            if url.is_empty() {
+                continue;
+            }
+
+            let url_lower = url.to_ascii_lowercase();
+            if contains_excluded_file_extension(&url_lower) {
+                continue;
+            }
+
+            let context_start =
+                char_boundary_n_chars_before(&task_without_emails, original_position, 20);
+            let context = task_without_emails[context_start..original_position].to_lowercase();
+            if START_URL_EXCLUDED_WORDS
+                .iter()
+                .any(|word| context.contains(word))
+            {
+                continue;
+            }
+
+            let url = if url.starts_with("http://") || url.starts_with("https://") {
+                url.to_owned()
+            } else {
+                format!("https://{url}")
+            };
+            found_urls.insert(url);
+        }
+    }
+
+    if found_urls.len() == 1 {
+        found_urls.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn trim_start_url_trailing_punctuation(url: &str) -> &str {
+    url.trim_end_matches(['.', ',', ';', ':', '!', '?', '(', ')', '[', ']'])
+}
+
+fn contains_excluded_file_extension(url_lower: &str) -> bool {
+    START_URL_EXCLUDED_EXTENSIONS
+        .iter()
+        .any(|ext| url_lower.contains(&format!(".{ext}")))
+}
+
+fn char_boundary_n_chars_before(text: &str, end: usize, chars: usize) -> usize {
+    text[..end]
+        .char_indices()
+        .rev()
+        .nth(chars.saturating_sub(1))
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
 }
 
 fn initial_actions_model_output(actions: Vec<BrowserAction>, flash_mode: bool) -> AgentOutput {
@@ -7286,6 +7448,7 @@ mod tests {
             settings.action_timeout_seconds,
             default_action_timeout_seconds()
         );
+        assert!(settings.directly_open_url);
         assert!(settings.final_response_after_failure);
         assert!(settings.display_files_in_done_text);
         assert_eq!(settings.loop_detection_window, 20);
@@ -12793,6 +12956,134 @@ mod tests {
         let prompt_text = request_text(&request[0]);
         assert!(prompt_text.contains("Initial navigation"));
         assert!(prompt_text.contains("Navigated to https://example.test/start"));
+    }
+
+    #[test]
+    fn extract_start_url_from_task_matches_upstream_filters() {
+        assert_eq!(
+            extract_start_url_from_task("Open example.com and summarize it").as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            extract_start_url_from_task("Open https://example.com/path?q=1.").as_deref(),
+            Some("https://example.com/path?q=1")
+        );
+        assert_eq!(
+            extract_start_url_from_task("Email support@example.com for the status"),
+            None
+        );
+        assert_eq!(
+            extract_start_url_from_task("Read https://example.com/report.pdf"),
+            None
+        );
+        assert_eq!(
+            extract_start_url_from_task("Do not open example.com during this task"),
+            None
+        );
+        assert_eq!(
+            extract_start_url_from_task("Compare example.com and example.org"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_auto_navigates_single_task_url_as_initial_action() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "ready",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut agent = Agent::with_settings(
+            "Summarize example.test/start before answering",
+            AgentSettings {
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![done_output]),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("agent run").clone();
+
+        assert_eq!(
+            agent.settings.initial_actions,
+            vec![BrowserAction::Navigate(NavigateAction {
+                url: "https://example.test/start".to_owned(),
+                new_tab: false,
+            })]
+        );
+        assert_eq!(
+            agent.executor.session().events(),
+            vec!["navigate:https://example.test/start:false"]
+        );
+        assert_eq!(history.items[0].state.url, "https://example.test/start");
+        assert_eq!(history.items[0].state.title, "Initial Actions");
+    }
+
+    #[tokio::test]
+    async fn agent_run_respects_directly_open_url_opt_out_and_explicit_initial_actions() {
+        let done_output = serde_json::json!({
+            "current_state": {},
+            "action": [
+                {
+                    "done": {
+                        "text": "ready",
+                        "success": true,
+                        "files_to_display": []
+                    }
+                }
+            ]
+        });
+        let mut disabled_agent = Agent::with_settings(
+            "Summarize example.test/start before answering",
+            AgentSettings {
+                directly_open_url: false,
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![done_output.clone()]),
+            MockSession::new(),
+        );
+        disabled_agent
+            .run(1)
+            .await
+            .expect("disabled directly_open_url run");
+        assert!(disabled_agent.settings.initial_actions.is_empty());
+        assert!(disabled_agent.executor.session().events().is_empty());
+
+        let explicit_action = BrowserAction::Navigate(NavigateAction {
+            url: "https://explicit.example/start".to_owned(),
+            new_tab: false,
+        });
+        let mut explicit_agent = Agent::with_settings(
+            "Summarize example.test/start before answering",
+            AgentSettings {
+                initial_actions: vec![explicit_action.clone()],
+                use_judge: false,
+                ..AgentSettings::default()
+            },
+            QueueModel::new(vec![done_output]),
+            MockSession::new(),
+        );
+        explicit_agent
+            .run(1)
+            .await
+            .expect("explicit initial action run");
+        assert_eq!(
+            explicit_agent.settings.initial_actions,
+            vec![explicit_action]
+        );
+        assert_eq!(
+            explicit_agent.executor.session().events(),
+            vec!["navigate:https://explicit.example/start:false"]
+        );
     }
 
     #[tokio::test]

@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- None at the moment. The next parity slice should be selected from upstream
-  drift after #85 lands and CI is green.
+- [#86 Add upstream directly_open_url initial navigation](https://github.com/evalops/browser-use-rs/issues/86)
 
 ## Completed Tracks
 
@@ -186,9 +185,10 @@ Implemented:
 - MCP stdio persistent session lifecycle tool for start/stop/list/cleanup, with
   liveness status and conservative stale-record cleanup on session records.
 - Single-step and bounded agent loops with schema-guided model output, history,
-  upstream-style initial actions, max-step, max-failure handling,
-  upstream-style max-action truncation, step and LLM timeouts, upstream-style
-  per-action wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
+  upstream-style initial actions, `directly_open_url` task URL extraction and
+  step-zero navigation, max-step, max-failure handling, upstream-style
+  max-action truncation, step and LLM timeouts, upstream-style per-action
+  wall-clock timeout guard with `BROWSER_USE_ACTION_TIMEOUT_S` and
   `action_timeout_seconds`, upstream-style final-step done-only guard for
   `max_steps`, upstream-style 75% step-budget warning before finalization,
   upstream-style page-stat prompt context with loading/skeleton hints,
