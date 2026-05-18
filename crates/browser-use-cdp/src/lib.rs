@@ -5,7 +5,7 @@ use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -31,6 +31,9 @@ const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
 const URL_POLICY_SETTLE_MS: u64 = 200;
 const MAX_SECURITY_EVENTS: usize = 8;
 const MAX_LIFECYCLE_EVENTS: usize = 32;
+const CDP_RECONNECT_MAX_ATTEMPTS: u32 = 3;
+const CDP_RECONNECT_DELAYS_MS: [u64; 3] = [1_000, 2_000, 4_000];
+const CDP_CONNECT_TIMEOUT_MS: u64 = 15_000;
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -1866,6 +1869,7 @@ pub struct CdpConnection {
     request_tx: mpsc::Sender<CdpRequest>,
     event_tx: broadcast::Sender<CdpEvent>,
     next_id: AtomicU64,
+    intentional_stop: Arc<AtomicBool>,
 }
 
 struct CdpRequest {
@@ -1884,22 +1888,33 @@ struct CdpEvent {
 
 impl CdpConnection {
     pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Arc<Self>, BrowserError> {
-        let (socket, _) = connect_async(&endpoint.websocket_url)
-            .await
-            .map_err(|error| BrowserError::Transport(error.to_string()))?;
+        let socket = connect_cdp_socket(&endpoint.websocket_url).await?;
         let (request_tx, request_rx) = mpsc::channel(64);
         let (event_tx, _) = broadcast::channel(256);
-        tokio::spawn(cdp_connection_actor(socket, request_rx, event_tx.clone()));
+        let intentional_stop = Arc::new(AtomicBool::new(false));
+        tokio::spawn(cdp_connection_actor(
+            endpoint.http_url.clone(),
+            endpoint.websocket_url.clone(),
+            socket,
+            request_rx,
+            event_tx.clone(),
+            intentional_stop.clone(),
+        ));
 
         Ok(Arc::new(Self {
             request_tx,
             event_tx,
             next_id: AtomicU64::new(1),
+            intentional_stop,
         }))
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<CdpEvent> {
         self.event_tx.subscribe()
+    }
+
+    fn mark_intentional_stop(&self) {
+        self.intentional_stop.store(true, Ordering::Relaxed);
     }
 
     pub async fn command(
@@ -1936,101 +1951,205 @@ impl CdpConnection {
     }
 }
 
+async fn connect_cdp_socket(websocket_url: &str) -> Result<CdpSocket, BrowserError> {
+    let connect_result = tokio::time::timeout(
+        Duration::from_millis(CDP_CONNECT_TIMEOUT_MS),
+        connect_async(websocket_url),
+    )
+    .await
+    .map_err(|_| {
+        BrowserError::Transport(format!(
+            "CDP websocket connect to {websocket_url} timed out after {CDP_CONNECT_TIMEOUT_MS}ms"
+        ))
+    })?;
+    connect_result
+        .map(|(socket, _)| socket)
+        .map_err(|error| BrowserError::Transport(error.to_string()))
+}
+
 async fn cdp_connection_actor(
+    cdp_url: String,
+    websocket_url: String,
     mut socket: CdpSocket,
     mut request_rx: mpsc::Receiver<CdpRequest>,
     event_tx: broadcast::Sender<CdpEvent>,
+    intentional_stop: Arc<AtomicBool>,
 ) {
     let mut pending: HashMap<u64, (String, oneshot::Sender<Result<Value, BrowserError>>)> =
         HashMap::new();
 
-    let websocket_closed_event = loop {
-        tokio::select! {
-            Some(request) = request_rx.recv() => {
-                let text = request.payload.to_string();
-                match socket.send(Message::Text(text.into())).await {
-                    Ok(()) => {
-                        pending.insert(request.id, (request.method, request.response_tx));
-                    }
-                    Err(error) => {
-                        let _ = request.response_tx.send(Err(BrowserError::Transport(error.to_string())));
-                    }
-                }
-            }
-            message = socket.next() => {
-                let Some(message) = message else {
-                    break cdp_websocket_closed_event("websocket_stream_ended", None);
-                };
-                let payload = match message {
-                    Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
-                        Ok(payload) => payload,
+    loop {
+        let websocket_closed_event = loop {
+            tokio::select! {
+                Some(request) = request_rx.recv() => {
+                    let text = request.payload.to_string();
+                    match socket.send(Message::Text(text.into())).await {
+                        Ok(()) => {
+                            pending.insert(request.id, (request.method, request.response_tx));
+                        }
                         Err(error) => {
-                            let _ = event_tx.send(CdpEvent {
-                                method: "browser-use-rs.invalid-json".to_owned(),
-                                params: json!({ "error": error.to_string() }),
-                                session_id: None,
-                            });
-                            continue;
+                            let _ = request.response_tx.send(Err(BrowserError::Transport(error.to_string())));
                         }
-                    },
-                    Ok(_) => continue,
-                    Err(error) => {
-                        let error = error.to_string();
-                        let transport_error = BrowserError::Transport(error.clone());
-                        for (_, (_, response_tx)) in pending.drain() {
-                            let _ = response_tx.send(Err(transport_error.clone()));
-                        }
-                        break cdp_websocket_closed_event("websocket_error", Some(error));
                     }
-                };
-
-                if let Some(id) = payload.get("id").and_then(Value::as_u64) {
-                    let Some((method, response_tx)) = pending.remove(&id) else {
-                        continue;
-                    };
-                    let result = if let Some(error) = payload.get("error") {
-                        let message = error
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown CDP error")
-                            .to_owned();
-                        Err(BrowserError::CommandFailed { method, message })
-                    } else {
-                        payload
-                            .get("result")
-                            .cloned()
-                            .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} result")))
-                    };
-                    let _ = response_tx.send(result);
-                    continue;
                 }
+                message = socket.next() => {
+                    let Some(message) = message else {
+                        break cdp_websocket_closed_event("websocket_stream_ended", None);
+                    };
+                    let payload = match message {
+                        Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
+                            Ok(payload) => payload,
+                            Err(error) => {
+                                let _ = event_tx.send(CdpEvent {
+                                    method: "browser-use-rs.invalid-json".to_owned(),
+                                    params: json!({ "error": error.to_string() }),
+                                    session_id: None,
+                                });
+                                continue;
+                            }
+                        },
+                        Ok(_) => continue,
+                        Err(error) => {
+                            let error = error.to_string();
+                            let transport_error = BrowserError::Transport(error.clone());
+                            for (_, (_, response_tx)) in pending.drain() {
+                                let _ = response_tx.send(Err(transport_error.clone()));
+                            }
+                            break cdp_websocket_closed_event("websocket_error", Some(error));
+                        }
+                    };
 
-                if let Some(method) = payload.get("method").and_then(Value::as_str) {
-                    let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
-                    let session_id = payload
-                        .get("sessionId")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                    let _ = event_tx.send(CdpEvent {
-                        method: method.to_owned(),
-                        params,
-                        session_id,
-                    });
+                    if let Some(id) = payload.get("id").and_then(Value::as_u64) {
+                        let Some((method, response_tx)) = pending.remove(&id) else {
+                            continue;
+                        };
+                        let result = if let Some(error) = payload.get("error") {
+                            let message = error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown CDP error")
+                                .to_owned();
+                            Err(BrowserError::CommandFailed { method, message })
+                        } else {
+                            payload
+                                .get("result")
+                                .cloned()
+                                .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} result")))
+                        };
+                        let _ = response_tx.send(result);
+                        continue;
+                    }
+
+                    if let Some(method) = payload.get("method").and_then(Value::as_str) {
+                        let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
+                        let session_id = payload
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        let _ = event_tx.send(CdpEvent {
+                            method: method.to_owned(),
+                            params,
+                            session_id,
+                        });
+                    }
+                }
+                else => {
+                    break cdp_websocket_closed_event("connection_actor_stopped", None);
                 }
             }
-            else => {
-                break cdp_websocket_closed_event("connection_actor_stopped", None);
-            },
+        };
+
+        let _ = event_tx.send(websocket_closed_event.clone());
+
+        for (_, (_, response_tx)) in pending.drain() {
+            let _ = response_tx.send(Err(BrowserError::Transport(
+                "CDP websocket closed while waiting for response".to_owned(),
+            )));
         }
-    };
 
-    let _ = event_tx.send(websocket_closed_event);
+        if !should_reconnect_after_websocket_event(
+            &websocket_closed_event,
+            intentional_stop.load(Ordering::Relaxed),
+            request_rx.is_closed(),
+        ) {
+            break;
+        }
 
-    for (_, (_, response_tx)) in pending {
-        let _ = response_tx.send(Err(BrowserError::Transport(
-            "CDP websocket closed while waiting for response".to_owned(),
-        )));
+        match reconnect_cdp_socket(&cdp_url, &websocket_url, &event_tx).await {
+            Some(reconnected_socket) => {
+                socket = reconnected_socket;
+            }
+            None => break,
+        }
     }
+}
+
+async fn reconnect_cdp_socket(
+    cdp_url: &str,
+    websocket_url: &str,
+    event_tx: &broadcast::Sender<CdpEvent>,
+) -> Option<CdpSocket> {
+    let started_at = Instant::now();
+    let mut last_error = None;
+
+    for attempt in 1..=CDP_RECONNECT_MAX_ATTEMPTS {
+        let _ = event_tx.send(cdp_websocket_reconnecting_event(
+            cdp_url,
+            attempt,
+            CDP_RECONNECT_MAX_ATTEMPTS,
+        ));
+
+        match connect_cdp_socket(websocket_url).await {
+            Ok(socket) => {
+                let _ = event_tx.send(cdp_websocket_reconnected_event(
+                    cdp_url,
+                    attempt,
+                    started_at.elapsed(),
+                ));
+                return Some(socket);
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+                if attempt < CDP_RECONNECT_MAX_ATTEMPTS {
+                    sleep(cdp_reconnect_delay_for_attempt(attempt)).await;
+                }
+            }
+        }
+    }
+
+    let _ = event_tx.send(cdp_websocket_reconnect_failed_event(
+        cdp_url,
+        CDP_RECONNECT_MAX_ATTEMPTS,
+        started_at.elapsed(),
+        last_error,
+    ));
+    None
+}
+
+fn should_reconnect_after_websocket_event(
+    event: &CdpEvent,
+    intentional_stop: bool,
+    request_channel_closed: bool,
+) -> bool {
+    if intentional_stop || request_channel_closed {
+        return false;
+    }
+    event.method == "browser-use-rs.websocket-closed"
+        && event
+            .params
+            .get("reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| matches!(reason, "websocket_stream_ended" | "websocket_error"))
+}
+
+fn cdp_reconnect_delay_for_attempt(attempt: u32) -> Duration {
+    let index = attempt.saturating_sub(1) as usize;
+    Duration::from_millis(
+        CDP_RECONNECT_DELAYS_MS
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| *CDP_RECONNECT_DELAYS_MS.last().expect("nonempty delays")),
+    )
 }
 
 fn cdp_websocket_closed_event(reason: &str, error: Option<String>) -> CdpEvent {
@@ -2040,6 +2159,51 @@ fn cdp_websocket_closed_event(reason: &str, error: Option<String>) -> CdpEvent {
     }
     CdpEvent {
         method: "browser-use-rs.websocket-closed".to_owned(),
+        params,
+        session_id: None,
+    }
+}
+
+fn cdp_websocket_reconnecting_event(cdp_url: &str, attempt: u32, max_attempts: u32) -> CdpEvent {
+    CdpEvent {
+        method: "browser-use-rs.websocket-reconnecting".to_owned(),
+        params: json!({
+            "cdp_url": cdp_url,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+        }),
+        session_id: None,
+    }
+}
+
+fn cdp_websocket_reconnected_event(cdp_url: &str, attempt: u32, downtime: Duration) -> CdpEvent {
+    CdpEvent {
+        method: "browser-use-rs.websocket-reconnected".to_owned(),
+        params: json!({
+            "cdp_url": cdp_url,
+            "attempt": attempt,
+            "downtime_seconds": format!("{:.3}", downtime.as_secs_f64()),
+        }),
+        session_id: None,
+    }
+}
+
+fn cdp_websocket_reconnect_failed_event(
+    cdp_url: &str,
+    max_attempts: u32,
+    downtime: Duration,
+    error: Option<String>,
+) -> CdpEvent {
+    let mut params = json!({
+        "cdp_url": cdp_url,
+        "max_attempts": max_attempts,
+        "downtime_seconds": format!("{:.3}", downtime.as_secs_f64()),
+    });
+    if let Some(error) = error {
+        params["error"] = Value::String(error);
+    }
+    CdpEvent {
+        method: "browser-use-rs.websocket-reconnect-failed".to_owned(),
         params,
         session_id: None,
     }
@@ -2386,6 +2550,7 @@ impl CdpBrowserSession {
         if let Some(path) = &self.storage_state_path {
             self.save_storage_state(path).await?;
         }
+        self.connection.mark_intentional_stop();
         self.connection
             .command("Browser.close", json!({}), None)
             .await
@@ -3060,6 +3225,23 @@ async fn handle_lifecycle_cdp_event(
             )
             .await;
         }
+        "browser-use-rs.websocket-reconnecting" => {
+            if let Some(event) = lifecycle_event_for_websocket_reconnecting(&event) {
+                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+            }
+        }
+        "browser-use-rs.websocket-reconnected" => {
+            if let Some(event) = lifecycle_event_for_websocket_reconnected(&event) {
+                record_lifecycle_event_in_buffer(lifecycle_events, event).await;
+            }
+        }
+        "browser-use-rs.websocket-reconnect-failed" => {
+            record_lifecycle_event_in_buffer(
+                lifecycle_events,
+                lifecycle_event_for_websocket_reconnect_failed(&event),
+            )
+            .await;
+        }
         "Target.targetCrashed" | "Inspector.targetCrashed" => {
             record_lifecycle_events(lifecycle_events, lifecycle_events_for_target_crash(&event))
                 .await;
@@ -3206,6 +3388,68 @@ fn lifecycle_event_for_websocket_closed(event: &CdpEvent) -> BrowserLifecycleEve
         error,
         details,
         message,
+    )
+}
+
+fn lifecycle_event_for_websocket_reconnecting(event: &CdpEvent) -> Option<BrowserLifecycleEvent> {
+    let cdp_url = event.params.get("cdp_url")?.as_str()?;
+    let attempt = event.params.get("attempt")?.as_u64()? as u32;
+    let max_attempts = event.params.get("max_attempts")?.as_u64()? as u32;
+    Some(BrowserLifecycleEvent::browser_reconnecting(
+        cdp_url,
+        attempt,
+        max_attempts,
+    ))
+}
+
+fn lifecycle_event_for_websocket_reconnected(event: &CdpEvent) -> Option<BrowserLifecycleEvent> {
+    let cdp_url = event.params.get("cdp_url")?.as_str()?;
+    let attempt = event.params.get("attempt")?.as_u64()? as u32;
+    let downtime_seconds = event.params.get("downtime_seconds")?.as_str()?;
+    Some(BrowserLifecycleEvent::browser_reconnected(
+        cdp_url,
+        attempt,
+        downtime_seconds,
+    ))
+}
+
+fn lifecycle_event_for_websocket_reconnect_failed(event: &CdpEvent) -> BrowserLifecycleEvent {
+    let cdp_url = event
+        .params
+        .get("cdp_url")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let max_attempts = event
+        .params
+        .get("max_attempts")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let downtime_seconds = event
+        .params
+        .get("downtime_seconds")
+        .and_then(Value::as_str)
+        .unwrap_or("0.000");
+    let error = event
+        .params
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut details = BTreeMap::from([
+        ("cdp_url".to_owned(), cdp_url.to_owned()),
+        ("max_attempts".to_owned(), max_attempts.to_string()),
+        ("downtime_seconds".to_owned(), downtime_seconds.to_owned()),
+    ]);
+    if let Some(error) = &error {
+        details.insert("error".to_owned(), error.clone());
+    }
+    BrowserLifecycleEvent::new(
+        BrowserLifecycleEventKind::BrowserStopped,
+        None,
+        Some(cdp_url.to_owned()),
+        Some("reconnect_failed".to_owned()),
+        error,
+        details,
+        format!("CDP websocket failed to reconnect after {max_attempts} attempts"),
     )
 }
 
@@ -6676,6 +6920,78 @@ mod tests {
         );
         assert_eq!(websocket_closed.reason.as_deref(), Some("websocket_error"));
         assert_eq!(websocket_closed.error.as_deref(), Some("connection reset"));
+        assert!(should_reconnect_after_websocket_event(
+            &CdpEvent {
+                method: "browser-use-rs.websocket-closed".to_owned(),
+                params: json!({ "reason": "websocket_stream_ended" }),
+                session_id: None,
+            },
+            false,
+            false,
+        ));
+        assert!(!should_reconnect_after_websocket_event(
+            &CdpEvent {
+                method: "browser-use-rs.websocket-closed".to_owned(),
+                params: json!({ "reason": "connection_actor_stopped" }),
+                session_id: None,
+            },
+            false,
+            false,
+        ));
+        assert!(!should_reconnect_after_websocket_event(
+            &CdpEvent {
+                method: "browser-use-rs.websocket-closed".to_owned(),
+                params: json!({ "reason": "websocket_error" }),
+                session_id: None,
+            },
+            true,
+            false,
+        ));
+        assert_eq!(
+            cdp_reconnect_delay_for_attempt(4),
+            Duration::from_millis(4_000)
+        );
+
+        let reconnecting = lifecycle_event_for_websocket_reconnecting(
+            &cdp_websocket_reconnecting_event("http://127.0.0.1:9222", 2, 3),
+        )
+        .expect("reconnecting lifecycle event");
+        assert_eq!(
+            reconnecting.kind,
+            BrowserLifecycleEventKind::BrowserReconnecting
+        );
+        assert_eq!(reconnecting.details["attempt"], "2");
+        assert_eq!(reconnecting.details["max_attempts"], "3");
+
+        let reconnected =
+            lifecycle_event_for_websocket_reconnected(&cdp_websocket_reconnected_event(
+                "http://127.0.0.1:9222",
+                2,
+                Duration::from_millis(1_250),
+            ))
+            .expect("reconnected lifecycle event");
+        assert_eq!(
+            reconnected.kind,
+            BrowserLifecycleEventKind::BrowserReconnected
+        );
+        assert_eq!(reconnected.details["downtime_seconds"], "1.250");
+
+        let reconnect_failed =
+            lifecycle_event_for_websocket_reconnect_failed(&cdp_websocket_reconnect_failed_event(
+                "http://127.0.0.1:9222",
+                3,
+                Duration::from_millis(7_000),
+                Some("connection refused".to_owned()),
+            ));
+        assert_eq!(
+            reconnect_failed.kind,
+            BrowserLifecycleEventKind::BrowserStopped
+        );
+        assert_eq!(reconnect_failed.reason.as_deref(), Some("reconnect_failed"));
+        assert_eq!(
+            reconnect_failed.error.as_deref(),
+            Some("connection refused")
+        );
 
         let crash_event = CdpEvent {
             method: "Target.targetCrashed".to_owned(),

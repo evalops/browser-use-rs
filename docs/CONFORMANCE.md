@@ -57,11 +57,12 @@ JavaScript dialog, navigation failure, configured download events, and cookie
 plus current-origin storage-state save/load events. CDP websocket closure
 records a browser-stopped lifecycle diagnostic, and direct `Page.navigate`
 timeouts plus stuck HTTP(S) requests record network-timeout lifecycle
-diagnostics.
+diagnostics. Unexpected websocket drops trigger bounded actor-level reconnect
+attempts with reconnecting/reconnected/failure lifecycle diagnostics.
 
-Remaining lifecycle gaps are tracked in #30: active reconnect attempts with
-session rehydration, multi-origin storage discovery, and a full
-general-purpose event bus are still lighter than upstream.
+Remaining lifecycle gaps are tracked in #30: stale session rehydration after
+reconnect, multi-origin storage discovery, and a full general-purpose event bus
+are still lighter than upstream.
 
 ## Drift Policy
 
