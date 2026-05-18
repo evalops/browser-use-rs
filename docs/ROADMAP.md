@@ -5,8 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- No active tracked slice. The next compatibility gap should be opened as a
-  GitHub issue before implementation starts.
+- [#63 Reject excluded model actions before execution](https://github.com/evalops/browser-use-rs/issues/63)
 
 ## Completed Tracks
 
