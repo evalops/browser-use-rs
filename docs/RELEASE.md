@@ -27,10 +27,11 @@ browser-use/browser-use@933e28c599ddd74c15a48568f159da95547e40dd
   accessible names from labels, ARIA references, and image alt text, plus
   selected dropdown values, common ARIA widget roles, search affordance signals,
   small icon controls, input mask/autocomplete/date-format hints, JavaScript
-  click/pointer listener-backed
-  controls, cursor-pointer controls, decorative SVG child pruning, static
-  mouse/keyboard handler attributes, pagination affordance detection,
-  configurable prompt-visible attributes, and the upstream empty-DOM load hint.
+  click/pointer listener-backed controls, cursor-pointer controls, decorative
+  SVG child pruning, static
+  mouse/keyboard handler attributes, contained duplicate-descendant pruning for
+  action containers, pagination affordance detection, configurable
+  prompt-visible attributes, and the upstream empty-DOM load hint.
 - Built-in actions for search, navigate, back navigation, 4-character tab-id
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and

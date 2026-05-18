@@ -151,6 +151,45 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['style', 'script', 'head', 'meta', 'link', 'title'].includes(tag);
   };
+  const isPropagatingActionContainer = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    return tag === 'a'
+      || tag === 'button'
+      || ((tag === 'div' || tag === 'span') && (role === 'button' || role === 'combobox'))
+      || (tag === 'input' && role === 'combobox');
+  };
+  const shouldKeepContainedDescendant = (el) => {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    if (['input', 'select', 'textarea', 'label'].includes(tag)) return true;
+    if (isPropagatingActionContainer(el)) return true;
+    if (el.hasAttribute('onclick')) return true;
+    if (String(el.getAttribute('aria-label') || '').trim()) return true;
+    return ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(role);
+  };
+  const parentElementOrShadowHost = (node) => {
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode?.();
+    return root?.host instanceof Element ? root.host : null;
+  };
+  const containedByRect = (childRect, parentRect) => {
+    const childArea = childRect.width * childRect.height;
+    if (childArea <= 0) return false;
+    const xOverlap = Math.max(0, Math.min(childRect.x + childRect.width, parentRect.x + parentRect.width) - Math.max(childRect.x, parentRect.x));
+    const yOverlap = Math.max(0, Math.min(childRect.y + childRect.height, parentRect.y + parentRect.height) - Math.max(childRect.y, parentRect.y));
+    return (xOverlap * yOverlap) / childArea >= 0.99;
+  };
+  const isContainedByPropagatingActionContainer = (el) => {
+    if (shouldKeepContainedDescendant(el)) return false;
+    const rect = el.getBoundingClientRect();
+    let ancestor = parentElementOrShadowHost(el);
+    while (ancestor) {
+      if (isPropagatingActionContainer(ancestor) && isVisible(ancestor) && containedByRect(rect, ancestor.getBoundingClientRect())) return true;
+      ancestor = parentElementOrShadowHost(ancestor);
+    }
+    return false;
+  };
   const isDisabledOrHidden = (el) => {
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   };
@@ -280,7 +319,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (tag === 'iframe' || tag === 'frame') stats.iframes += 1;
     if (tag === 'img') stats.images += 1;
     if (isScrollable(node)) stats.scroll_containers += 1;
-    const interactive = (isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node);
+    const interactive = (isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node) && !isContainedByPropagatingActionContainer(node);
     if (interactive) {
       stats.interactive_elements += 1;
       elements.push({ el: node, offset });
@@ -510,6 +549,45 @@ fn element_eval_js(index: u32, body: &str) -> String {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     return ['style', 'script', 'head', 'meta', 'link', 'title'].includes(tag);
   }};
+  const isPropagatingActionContainer = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    return tag === 'a'
+      || tag === 'button'
+      || ((tag === 'div' || tag === 'span') && (role === 'button' || role === 'combobox'))
+      || (tag === 'input' && role === 'combobox');
+  }};
+  const shouldKeepContainedDescendant = (el) => {{
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    if (['input', 'select', 'textarea', 'label'].includes(tag)) return true;
+    if (isPropagatingActionContainer(el)) return true;
+    if (el.hasAttribute('onclick')) return true;
+    if (String(el.getAttribute('aria-label') || '').trim()) return true;
+    return ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(role);
+  }};
+  const parentElementOrShadowHost = (node) => {{
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode?.();
+    return root?.host instanceof Element ? root.host : null;
+  }};
+  const containedByRect = (childRect, parentRect) => {{
+    const childArea = childRect.width * childRect.height;
+    if (childArea <= 0) return false;
+    const xOverlap = Math.max(0, Math.min(childRect.x + childRect.width, parentRect.x + parentRect.width) - Math.max(childRect.x, parentRect.x));
+    const yOverlap = Math.max(0, Math.min(childRect.y + childRect.height, parentRect.y + parentRect.height) - Math.max(childRect.y, parentRect.y));
+    return (xOverlap * yOverlap) / childArea >= 0.99;
+  }};
+  const isContainedByPropagatingActionContainer = (el) => {{
+    if (shouldKeepContainedDescendant(el)) return false;
+    const rect = el.getBoundingClientRect();
+    let ancestor = parentElementOrShadowHost(el);
+    while (ancestor) {{
+      if (isPropagatingActionContainer(ancestor) && isVisible(ancestor) && containedByRect(rect, ancestor.getBoundingClientRect())) return true;
+      ancestor = parentElementOrShadowHost(ancestor);
+    }}
+    return false;
+  }};
   const isDisabledOrHidden = (el) => {{
     return isBrowserUseExcluded(el) || el.hidden || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true';
   }};
@@ -584,7 +662,7 @@ fn element_eval_js(index: u32, body: &str) -> String {
     if (isDecorativeSvgChild(node)) return;
     if (isNonContentTag(node)) return;
     if (isBrowserUseExcluded(node)) return;
-    if ((isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node)) elements.push(node);
+    if ((isInteractive(node) || shouldIndexScrollable(node)) && isVisible(node) && !isContainedByPropagatingActionContainer(node)) elements.push(node);
     if (node.shadowRoot) visitChildren(node.shadowRoot, offset);
     if (node.tagName && node.tagName.toLowerCase() === 'iframe') visitFrame(node, offset);
     visitChildren(node, offset);
@@ -4212,6 +4290,22 @@ mod tests {
     }
 
     #[test]
+    fn interactive_snapshot_prunes_contained_action_descendants() {
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isPropagatingActionContainer"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("isContainedByPropagatingActionContainer"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("shouldKeepContainedDescendant"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("containedByRect"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains(">= 0.99"));
+
+        let action_script = click_element_js(1);
+        assert!(action_script.contains("isPropagatingActionContainer"));
+        assert!(action_script.contains("isContainedByPropagatingActionContainer"));
+        assert!(action_script.contains("shouldKeepContainedDescendant"));
+        assert!(action_script.contains("containedByRect"));
+        assert!(action_script.contains(">= 0.99"));
+    }
+
+    #[test]
     fn interactive_snapshot_detects_javascript_click_listeners() {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("getEventListeners"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("hasJsClickListener"));
@@ -5678,6 +5772,73 @@ mod tests {
             .await
             .expect("clicked flag");
         assert_eq!(clicked.as_str(), Some("true"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium installed on the local machine"]
+    async fn cdp_session_prunes_contained_action_descendants() {
+        let profile = BrowserProfile::default();
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch CDP session");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>contained descendants</title></head><body><button id='outer-button' onclick=\"document.body.dataset.clicked='outer'\" style='width:160px;height:44px'><span id='button-icon' class='icon' style='display:inline-block;width:20px;height:20px'>x</span>Open</button><a id='outer-link' href='https://example.com/docs' style='display:inline-block;width:160px;height:44px'><span id='link-icon' class='icon' style='display:inline-block;width:20px;height:20px'>x</span>Docs</a><button id='labelled-outer' style='width:160px;height:44px'><span id='labelled-child' aria-label='Inner dismiss' style='display:inline-block;width:20px;height:20px'>x</span></button></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate");
+        sleep(Duration::from_millis(100)).await;
+
+        let state = session.state(false).await.expect("state");
+        let ids = state
+            .dom_state
+            .selector_map
+            .values()
+            .filter_map(|element| element.attributes.get("id").map(String::as_str))
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "outer-button",
+            "outer-link",
+            "labelled-outer",
+            "labelled-child",
+        ] {
+            assert!(
+                ids.contains(&expected),
+                "DOM state missing {expected}: {}",
+                state.dom_state.llm_representation()
+            );
+        }
+        for pruned in ["button-icon", "link-icon"] {
+            assert!(
+                !ids.contains(&pruned),
+                "contained generic descendant should be pruned: {pruned}; ids={ids:?}"
+            );
+        }
+
+        let outer_index = state
+            .dom_state
+            .selector_map
+            .values()
+            .find(|element| {
+                element
+                    .attributes
+                    .get("id")
+                    .is_some_and(|id| id == "outer-button")
+            })
+            .map(|element| element.index)
+            .expect("outer button index");
+        session
+            .click(outer_index)
+            .await
+            .expect("click outer button by index");
+        let clicked = session
+            .evaluate_json("document.body.dataset.clicked")
+            .await
+            .expect("clicked flag");
+        assert_eq!(clicked.as_str(), Some("outer"));
     }
 
     #[tokio::test]
