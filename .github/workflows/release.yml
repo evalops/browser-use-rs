@@ -86,6 +86,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 14
           name: browser-use-rs-${{ matrix.label }}
           path: dist/*.tar.gz
 
@@ -138,6 +139,7 @@ jobs:
       - name: Upload release bundle artifact
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 14
           name: browser-use-rs-release
           path: |
             dist/*.tar.gz
