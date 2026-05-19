@@ -28,7 +28,9 @@ includes:
   launch flags, typed `profile_directory` flags for persistent profiles, and
   `chromium_sandbox=false` no-sandbox/container flags, plus explicit
   `window_size` and `window_position` launch geometry flags, and a typed
-  `devtools` launch flag with the upstream headless conflict guard,
+  `devtools` launch flag with the upstream headless conflict guard, typed
+  `env` launch-process overrides with upstream-style string/number/bool JSON
+  coercion,
   upstream-style default Chrome launch args, `ignore_default_args` list/true
   suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
   `permissions` grants for upstream's default `clipboardReadWrite` and

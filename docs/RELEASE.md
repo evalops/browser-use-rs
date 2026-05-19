@@ -21,7 +21,10 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
   `--window-size` and `--window-position` launch geometry flags.
   `BrowserProfile.devtools` emits `--auto-open-devtools-for-tabs` for headful
   launches and rejects the upstream-invalid `headless=true` plus
-  `devtools=true` combination before spawning Chrome. Launch plans include the
+  `devtools=true` combination before spawning Chrome. `BrowserProfile.env`
+  carries launch-process environment overrides into the local Chrome command;
+  serde accepts upstream-style string, number, and boolean JSON env values and
+  coerces them to the process strings Chrome receives. Launch plans include the
   frozen upstream `CHROME_DEFAULT_ARGS` baseline, `BrowserProfile.ignore_default_args`
   list/true suppression, upstream-style merged `--disable-features` values, and
   last-wins switch de-dupe so raw caller args can override typed generated
