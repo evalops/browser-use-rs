@@ -106,8 +106,11 @@ lifecycle diagnostics. Direct PDF viewer URLs are marked as PDF state and, when
 `BrowserProfile.accept_downloads` and `auto_download_pdfs` remain enabled, are
 downloaded once per session with safe filenames and `auto_download=true`
 lifecycle metadata. Accepted sessions use an explicit `downloads_path` or a
-session-owned temporary directory; `accept_downloads=false` skips CDP download
-setup and PDF auto-download writes even if `downloads_path` is configured. The
+session-owned temporary directory; upstream `downloads_dir` and
+`save_downloads_path` profile aliases resolve into the same canonical
+`downloads_path` field before download behavior is configured.
+`accept_downloads=false` skips CDP download setup and PDF auto-download writes
+even if `downloads_path` is configured. The
 direct-CDP path first uses `Network.responseReceived` metadata and
 `Network.getResponseBody` bytes when Chrome exposes the PDF response, including
 content-disposition filenames, then falls back to the conservative direct-URL

@@ -75,7 +75,9 @@ includes:
   `BROWSER_USE_CHROME` override is supplied.
   Launch profiles accept downloads by default, using an explicit
   `downloads_path` or a session-owned temporary directory to enable Chrome
-  download behavior. `accept_downloads=false` skips CDP download setup and PDF
+  download behavior. Upstream aliases `downloads_dir` and
+  `save_downloads_path` deserialize into the same canonical `downloads_path`
+  field. `accept_downloads=false` skips CDP download setup and PDF
   auto-download writes. Browser-level download lifecycle events use safe
   basename normalization for page-controlled filenames, and upstream-default
   `auto_download_pdfs=true` direct-PDF downloads are backed by CDP response

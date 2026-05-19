@@ -85,7 +85,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   failures, JavaScript dialog, sanitized download filenames, and storage-state event shapes.
   `BrowserProfile.accept_downloads` defaults to `true`; accepted sessions use
   an explicit `downloads_path` or a session-owned temporary directory to enable
-  browser download behavior and CDP download lifecycle events. Setting
+  browser download behavior and CDP download lifecycle events. Upstream
+  `downloads_dir` and `save_downloads_path` aliases deserialize into the same
+  canonical `downloads_path` field and serialize back as `downloads_path`.
+  Setting
   `accept_downloads=false` skips CDP download setup and PDF auto-download
   writes even when `downloads_path` is configured. Page-controlled download
   filenames from CDP events are reduced to safe basenames and containment

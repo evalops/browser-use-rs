@@ -1754,7 +1754,12 @@ pub struct BrowserProfile {
     pub user_data_dir: Option<PathBuf>,
     #[serde(default = "default_profile_directory")]
     pub profile_directory: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "downloads_dir",
+        alias = "save_downloads_path",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub downloads_path: Option<PathBuf>,
     #[serde(default = "default_accept_downloads")]
     pub accept_downloads: bool,
@@ -10510,6 +10515,44 @@ mod tests {
             serde_json::to_value(disabled).expect("disabled profile json")["accept_downloads"],
             json!(false)
         );
+    }
+
+    #[test]
+    fn browser_profile_downloads_path_aliases_match_upstream() {
+        let canonical_path = "/tmp/browser-use-rs-downloads";
+        let canonical: BrowserProfile = serde_json::from_value(json!({
+            "downloads_path": canonical_path
+        }))
+        .expect("canonical downloads path profile");
+        assert_eq!(
+            canonical.downloads_path.as_deref(),
+            Some(Path::new(canonical_path))
+        );
+
+        let downloads_dir_path = "/tmp/browser-use-rs-downloads-dir";
+        let downloads_dir: BrowserProfile = serde_json::from_value(json!({
+            "downloads_dir": downloads_dir_path
+        }))
+        .expect("downloads_dir alias profile");
+        assert_eq!(
+            downloads_dir.downloads_path.as_deref(),
+            Some(Path::new(downloads_dir_path))
+        );
+
+        let save_downloads_path = "/tmp/browser-use-rs-save-downloads-path";
+        let save_downloads: BrowserProfile = serde_json::from_value(json!({
+            "save_downloads_path": save_downloads_path
+        }))
+        .expect("save_downloads_path alias profile");
+        assert_eq!(
+            save_downloads.downloads_path.as_deref(),
+            Some(Path::new(save_downloads_path))
+        );
+
+        let encoded = serde_json::to_value(save_downloads).expect("canonical profile json");
+        assert_eq!(encoded["downloads_path"], json!(save_downloads_path));
+        assert!(encoded.get("downloads_dir").is_none());
+        assert!(encoded.get("save_downloads_path").is_none());
     }
 
     #[test]

@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#128 Add BrowserProfile downloads_path alias parity](https://github.com/evalops/browser-use-rs/issues/128)
+- Next upstream parity slice after #128 lands and CI is green.
 
 ## Completed Tracks
 
+- [#128 Add BrowserProfile downloads_path alias parity](https://github.com/evalops/browser-use-rs/issues/128)
 - [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
 - [#126 Add BrowserProfile paint_order_filtering DOM parity](https://github.com/evalops/browser-use-rs/issues/126)
 - [#125 Add BrowserProfile browser channel launch parity](https://github.com/evalops/browser-use-rs/issues/125)
@@ -188,7 +189,9 @@ Implemented:
   no explicit executable path or `BROWSER_USE_CHROME` override is supplied.
   `BrowserProfile.accept_downloads` defaults to true; accepted sessions use an
   explicit `downloads_path` or a session-owned `browser-use-downloads-*`
-  temporary directory for Chrome download behavior. Setting
+  temporary directory for Chrome download behavior. Upstream aliases
+  `downloads_dir` and `save_downloads_path` deserialize into the same canonical
+  `downloads_path` field and serialize back as `downloads_path`. Setting
   `accept_downloads=false` skips that CDP download setup and PDF auto-download
   writes even if `downloads_path` is configured.
 - Browser Use Cloud creation and stop request/response contracts, including
