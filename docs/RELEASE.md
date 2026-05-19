@@ -380,7 +380,9 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 - Raw full AX snapshots are intentionally not emitted into normal prompt or
   state surfaces by default; the compact DOM carries the browser-use AX fields
   needed for action selection, evaluator context, hidden/disabled suppression,
-  and conformance fixtures.
+  and conformance fixtures. The source-backed DOM/AX audit is recorded in
+  `docs/CONFORMANCE.md` with implemented action-relevant parity and explicit
+  raw-AX non-goals.
 - Agent history now captures compact interacted-element metadata for indexed
   actions and exposes current-page rematching plus action-level replay
   remapping diagnostics, replay-plan construction, generic replay-plan

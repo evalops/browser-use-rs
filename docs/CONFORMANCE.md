@@ -67,12 +67,53 @@ keeps normal hidden, disabled, layout-size, and CSS visibility checks while
 allowing visually covered elements to remain in the selector map for debugging
 or conformance captures.
 
-This boundary is deliberately narrower than a full browser-use AX object graph.
-The port does not currently serialize AX child-id relationships, ignored
-reasons, related-node source chains, or raw AX snapshots into normal prompts.
-Those fields should only be added when they improve action selection,
-evaluation, or deterministic conformance fixtures without destabilizing compact
-DOM rendering.
+### DOM/AX Parity Checklist
+
+The frozen upstream DOM/AX audit covered `browser_use/dom/views.py`,
+`browser_use/dom/serializer/serializer.py`,
+`browser_use/dom/serializer/eval_serializer.py`,
+`browser_use/dom/serializer/clickable_elements.py`, and
+`browser_use/dom/serializer/paint_order.py`.
+
+Action-relevant parity is implemented for:
+
+- Indexed selector maps and compact LLM/eval tree rendering instead of raw CDP
+  dumps.
+- DOM attributes used by upstream for action selection: form values, ids/names,
+  roles, placeholders, labels, input masks, autocomplete, date-format hints,
+  validation attributes, rich-text/editable hints, file-accept metadata, ARIA
+  state/value aliases, and key shortcuts.
+- Interactive detection from native controls, ARIA roles, JS click/pointer
+  listeners where Chrome exposes them, labels/wrappers around form controls,
+  search affordances, small icon controls, scroll containers, and media or
+  compound controls.
+- Visibility and pruning behavior: hidden/disabled/AX-hidden vetoes,
+  decorative SVG child suppression, non-content DOM tag suppression,
+  contained-action descendant pruning, long duplicate attribute pruning,
+  configurable paint-order occlusion filtering, and bounded lifecycle-safe
+  diagnostics rather than prompt metadata.
+- Frame and shadow behavior: same-origin iframe traversal, attached OOPIF
+  target content, open shadow-root controls, backend/frontend node identity,
+  and merged target-aware cached-node action fallback.
+- AX enrichment needed by the model and evaluator: role, name, description,
+  top-level value/description, common state/value properties, quiet
+  focusable/editable/settable metadata, `ax_name`/`ax_description`, and
+  action-history rematching via exact/stable hash, XPath, AX name, and unique
+  attributes.
+
+Intentional non-goals are raw full AX object graphs in normal prompts or
+state/action replies: AX child-id relationship graphs, ignored-reason trees,
+related-node source chains, and full unfiltered CDP `Accessibility` or
+`DOMSnapshot` payloads. Those are kept out unless a future fixture proves they
+improve action selection, evaluation, or deterministic replay without bloating
+the compact browser-use prompt contract.
+
+Fixture coverage lives in `mixed_interactive_state.json`,
+`frame_shadow_state.json`, `eval_tree_state.txt`, browser lifecycle fixtures,
+and focused CDP/browser tests for accessibility-tree enrichment, ARIA widgets,
+labels, selected options, media controls, hidden file inputs, iframe targets,
+shadow DOM, JS listener controls, occlusion filtering, scroll containers, and
+cached-node fallback.
 
 ## Browser/Profile Lifecycle Audit
 

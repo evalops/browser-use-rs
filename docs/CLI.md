@@ -270,7 +270,9 @@ templates live under `packaging/`; see
   mask/autocomplete/date-format hints, ARIA keyshortcut rendering, read-only
   state, plus duplicate long-attribute pruning and JavaScript click/pointer
   listener-backed control detection when Chrome exposes command-line inspection
-  APIs. Full browser-use DOM/AX snapshot parity is still tracked separately.
+  APIs. The source-backed DOM/AX parity audit is complete for action-relevant
+  compact prompts; raw full AX object graphs remain an intentional non-goal for
+  normal CLI, MCP, and agent replies.
 - Agent runs currently support OpenAI-compatible Chat Completions plus
   DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
   Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output

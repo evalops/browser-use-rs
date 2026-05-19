@@ -5,12 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#140 Complete DOM and accessibility snapshot parity audit](https://github.com/evalops/browser-use-rs/issues/140)
 - [#141 Complete provider structured-output fallback parity](https://github.com/evalops/browser-use-rs/issues/141)
 - [#142 Resolve Playwright trace artifact parity boundary](https://github.com/evalops/browser-use-rs/issues/142)
 
 ## Completed Tracks
 
+- [#140 Complete DOM and accessibility snapshot parity audit](https://github.com/evalops/browser-use-rs/issues/140)
 - [#139 Resolve storage-state profile-wide origin parity gap](https://github.com/evalops/browser-use-rs/issues/139)
 - [#138 Refresh upstream target to 1577793 and pin daemon socket permission audit](https://github.com/evalops/browser-use-rs/issues/138)
 - [#137 Add upstream MP4/WebM video encoding parity](https://github.com/evalops/browser-use-rs/issues/137)
@@ -420,7 +420,9 @@ Implemented:
   controls including `tabindex="-1"`, renders human-readable value text, prunes
   non-content
   `head`/`script`/`style`/metadata tags, and excludes hidden, disabled, or
-  `data-browser-use-exclude` subtrees from the selector map.
+  `data-browser-use-exclude` subtrees from the selector map. The source-backed
+  DOM/AX parity checklist in `docs/CONFORMANCE.md` records implemented
+  action-relevant parity and explicit raw-AX non-goals.
 - `browser-use-dom` now also exposes a tree-shaped eval/judge representation
   that mirrors upstream `DOMEvalSerializer` markers for backend-node
   interactives, shadow roots, iframe contents, compact key attributes, scroll
