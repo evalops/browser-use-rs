@@ -103,14 +103,16 @@ handshakes and reconnect handshakes; they are not injected as page request
 headers. CDP websocket closure records a browser-stopped lifecycle diagnostic, and direct
 `Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
 lifecycle diagnostics. Direct PDF viewer URLs are marked as PDF state and, when
-`BrowserProfile.auto_download_pdfs` remains enabled and `downloads_path` is
-configured, are downloaded once per session with safe filenames and
-`auto_download=true` lifecycle metadata. The direct-CDP path first uses
-`Network.responseReceived` metadata and `Network.getResponseBody` bytes when
-Chrome exposes the PDF response, including content-disposition filenames, then
-falls back to the conservative direct-URL path. Explicit
-`auto_download_pdfs=false` preserves normal download events but skips that PDF
-auto-download path.
+`BrowserProfile.accept_downloads` and `auto_download_pdfs` remain enabled, are
+downloaded once per session with safe filenames and `auto_download=true`
+lifecycle metadata. Accepted sessions use an explicit `downloads_path` or a
+session-owned temporary directory; `accept_downloads=false` skips CDP download
+setup and PDF auto-download writes even if `downloads_path` is configured. The
+direct-CDP path first uses `Network.responseReceived` metadata and
+`Network.getResponseBody` bytes when Chrome exposes the PDF response, including
+content-disposition filenames, then falls back to the conservative direct-URL
+path. Explicit `auto_download_pdfs=false` preserves normal download events but
+skips that PDF auto-download path.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail

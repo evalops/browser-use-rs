@@ -73,11 +73,13 @@ includes:
   such as `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
   channel-specific executable candidates when no explicit executable path or
   `BROWSER_USE_CHROME` override is supplied.
-  Launch profiles can set `downloads_path` to enable Chrome download behavior,
-  browser-level download lifecycle events with safe basename normalization for
-  page-controlled filenames, and upstream-default `auto_download_pdfs=true`
-  direct-PDF downloads backed by CDP response bodies where available, while
-  `storage_state_path` can
+  Launch profiles accept downloads by default, using an explicit
+  `downloads_path` or a session-owned temporary directory to enable Chrome
+  download behavior. `accept_downloads=false` skips CDP download setup and PDF
+  auto-download writes. Browser-level download lifecycle events use safe
+  basename normalization for page-controlled filenames, and upstream-default
+  `auto_download_pdfs=true` direct-PDF downloads are backed by CDP response
+  bodies where available, while `storage_state_path` can
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
   the attached frame tree is outside the safe CDP boundary documented in

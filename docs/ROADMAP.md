@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
+- Next upstream parity slice after #127 lands and CI is green.
 
 ## Completed Tracks
 
+- [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
 - [#126 Add BrowserProfile paint_order_filtering DOM parity](https://github.com/evalops/browser-use-rs/issues/126)
 - [#125 Add BrowserProfile browser channel launch parity](https://github.com/evalops/browser-use-rs/issues/125)
 - [#124 Add BrowserProfile CDP connection headers parity](https://github.com/evalops/browser-use-rs/issues/124)
@@ -185,6 +186,11 @@ Implemented:
   remote browser endpoints. `BrowserProfile.channel` preserves upstream
   browser-channel strings and uses channel-specific executable candidates when
   no explicit executable path or `BROWSER_USE_CHROME` override is supplied.
+  `BrowserProfile.accept_downloads` defaults to true; accepted sessions use an
+  explicit `downloads_path` or a session-owned `browser-use-downloads-*`
+  temporary directory for Chrome download behavior. Setting
+  `accept_downloads=false` skips that CDP download setup and PDF auto-download
+  writes even if `downloads_path` is configured.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
@@ -210,10 +216,10 @@ Implemented:
   Live CDP wiring records target crash, JavaScript dialog, navigation failure,
   configured download events, cookie plus attached frame-tree origin
   storage-state save/load events, direct PDF viewer state and one-per-session
-  `auto_download_pdfs` PDF downloads into `downloads_path` using CDP response
-  metadata and `Network.getResponseBody` where available, CDP websocket closure
-  diagnostics, and direct `Page.navigate` plus stuck HTTP(S) request timeout
-  diagnostics. Unexpected
+  `auto_download_pdfs` PDF downloads into the effective accepted downloads path
+  using CDP response metadata and `Network.getResponseBody` where available,
+  CDP websocket closure diagnostics, and direct `Page.navigate` plus stuck
+  HTTP(S) request timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with
   reconnecting/reconnected/failure lifecycle diagnostics, and registered CDP
   target sessions are invalidated after reconnect so stale session-scoped

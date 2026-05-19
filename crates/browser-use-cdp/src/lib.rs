@@ -1756,6 +1756,8 @@ pub struct BrowserProfile {
     pub profile_directory: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub downloads_path: Option<PathBuf>,
+    #[serde(default = "default_accept_downloads")]
+    pub accept_downloads: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_state_path: Option<PathBuf>,
     #[serde(default = "default_auto_download_pdfs")]
@@ -1846,6 +1848,7 @@ impl Default for BrowserProfile {
             user_data_dir: None,
             profile_directory: default_profile_directory(),
             downloads_path: None,
+            accept_downloads: default_accept_downloads(),
             storage_state_path: None,
             auto_download_pdfs: default_auto_download_pdfs(),
             args: Vec::new(),
@@ -1902,6 +1905,10 @@ fn default_browser_permissions() -> Vec<String> {
 }
 
 fn default_auto_download_pdfs() -> bool {
+    true
+}
+
+fn default_accept_downloads() -> bool {
     true
 }
 
@@ -4253,6 +4260,37 @@ pub struct CdpBrowserSession {
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
+    _downloads_dir: Option<TempDir>,
+}
+
+struct SessionDownloads {
+    path: Option<PathBuf>,
+    temp_dir: Option<TempDir>,
+}
+
+impl SessionDownloads {
+    fn from_profile(profile: &BrowserProfile) -> Result<Self, BrowserError> {
+        if !profile.accept_downloads {
+            return Ok(Self {
+                path: None,
+                temp_dir: None,
+            });
+        }
+        if let Some(downloads_path) = &profile.downloads_path {
+            return Ok(Self {
+                path: Some(downloads_path.clone()),
+                temp_dir: None,
+            });
+        }
+        let temp_dir = tempfile::Builder::new()
+            .prefix("browser-use-downloads-")
+            .tempdir()
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        Ok(Self {
+            path: Some(temp_dir.path().to_path_buf()),
+            temp_dir: Some(temp_dir),
+        })
+    }
 }
 
 impl CdpBrowserSession {
@@ -4264,11 +4302,12 @@ impl CdpBrowserSession {
         endpoint: DevToolsEndpoint,
         profile: &BrowserProfile,
     ) -> Result<Self, BrowserError> {
+        let downloads = SessionDownloads::from_profile(profile)?;
         let connection =
             CdpConnection::connect_with_headers(&endpoint, profile.headers.as_ref()).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
-        if let Some(downloads_path) = &profile.downloads_path {
+        if let Some(downloads_path) = &downloads.path {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
@@ -4281,8 +4320,11 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
-        let cdp_auto_pdf_download =
-            CdpAutoPdfDownloadState::from_profile(profile, auto_pdf_downloads.clone());
+        let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
+            profile.auto_download_pdfs,
+            downloads.path.as_deref(),
+            auto_pdf_downloads.clone(),
+        );
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -4319,7 +4361,7 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait,
             network_activity,
-            downloads_path: profile.downloads_path.clone(),
+            downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
             storage_state_path: None,
@@ -4327,10 +4369,12 @@ impl CdpBrowserSession {
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: None,
             _launched_browser: None,
+            _downloads_dir: downloads.temp_dir,
         })
     }
 
     pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
+        let downloads = SessionDownloads::from_profile(profile)?;
         let url_policy = UrlAccessPolicy::from_profile(profile);
         let (endpoint, launched_browser) = if profile.uses_cloud() {
             (profile.create_cloud_devtools_endpoint().await?, None)
@@ -4350,7 +4394,7 @@ impl CdpBrowserSession {
             CdpConnection::connect_with_headers(&endpoint, profile.headers.as_ref()).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
-        if let Some(downloads_path) = &profile.downloads_path {
+        if let Some(downloads_path) = &downloads.path {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
@@ -4377,8 +4421,11 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
-        let cdp_auto_pdf_download =
-            CdpAutoPdfDownloadState::from_profile(profile, auto_pdf_downloads.clone());
+        let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
+            profile.auto_download_pdfs,
+            downloads.path.as_deref(),
+            auto_pdf_downloads.clone(),
+        );
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -4430,7 +4477,7 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait: PageLoadWaitConfig::from_profile(profile),
             network_activity,
-            downloads_path: profile.downloads_path.clone(),
+            downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
             storage_state_path: profile.storage_state_path.clone(),
@@ -4438,6 +4485,7 @@ impl CdpBrowserSession {
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: security_watchdog,
             _launched_browser: launched_browser,
+            _downloads_dir: downloads.temp_dir,
         })
     }
 
@@ -5447,16 +5495,17 @@ struct CdpAutoPdfDownloadState {
 }
 
 impl CdpAutoPdfDownloadState {
-    fn from_profile(
-        profile: &BrowserProfile,
+    fn from_downloads(
+        auto_download_pdfs: bool,
+        downloads_path: Option<&Path>,
         downloaded_urls: Arc<Mutex<BTreeMap<String, PathBuf>>>,
     ) -> Option<Arc<Self>> {
-        if !profile.auto_download_pdfs {
+        if !auto_download_pdfs {
             return None;
         }
-        profile.downloads_path.clone().map(|downloads_path| {
+        downloads_path.map(|downloads_path| {
             Arc::new(Self {
-                downloads_path,
+                downloads_path: downloads_path.to_path_buf(),
                 downloaded_urls,
                 candidates: Mutex::new(BTreeMap::new()),
             })
@@ -9408,6 +9457,7 @@ mod tests {
             },
             _security_watchdog: None,
             _launched_browser: None,
+            _downloads_dir: None,
         }
     }
 
@@ -9952,7 +10002,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_connect_grants_default_permissions_before_target_attach() {
-        let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
+        let (endpoint, command_log) = cdp_command_test_server(None, 7).await;
         let session = CdpBrowserSession::connect(endpoint)
             .await
             .expect("connect session");
@@ -9965,6 +10015,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Browser.grantPermissions",
+                "Browser.setDownloadBehavior",
                 "Target.getTargets",
                 "Target.attachToTarget",
                 "Page.enable",
@@ -9978,11 +10029,25 @@ mod tests {
                 "permissions": ["clipboardReadWrite", "notifications"]
             })
         );
-        assert_eq!(commands[3].session_id.as_deref(), Some("session-1"));
+        assert_eq!(commands[1].params["behavior"], "allow");
+        assert_eq!(commands[1].params["eventsEnabled"], true);
+        assert!(
+            commands[1].params["downloadPath"]
+                .as_str()
+                .is_some_and(|path| path.contains("browser-use-downloads-"))
+        );
+        assert!(
+            session
+                .downloads_path
+                .as_ref()
+                .is_some_and(|path| path.exists())
+        );
+        assert!(session._downloads_dir.is_some());
         assert_eq!(commands[4].session_id.as_deref(), Some("session-1"));
         assert_eq!(commands[5].session_id.as_deref(), Some("session-1"));
+        assert_eq!(commands[6].session_id.as_deref(), Some("session-1"));
         assert_eq!(
-            commands[5].params,
+            commands[6].params,
             json!({
                 "width": 1280,
                 "height": 720,
@@ -10006,6 +10071,7 @@ mod tests {
         let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
         let profile = BrowserProfile {
             permissions: Vec::new(),
+            accept_downloads: false,
             ..BrowserProfile::default()
         };
         let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
@@ -10060,6 +10126,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_connect_generates_session_owned_downloads_path_when_accepted() {
+        let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
+        let profile = BrowserProfile {
+            permissions: Vec::new(),
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let downloads_path = session
+            .downloads_path
+            .clone()
+            .expect("generated downloads path");
+        assert!(downloads_path.exists());
+        assert!(session._downloads_dir.is_some());
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(commands[0].method, "Browser.setDownloadBehavior");
+        assert_eq!(
+            commands[0].params,
+            json!({
+                "behavior": "allow",
+                "downloadPath": downloads_path.display().to_string(),
+                "eventsEnabled": true
+            })
+        );
+
+        drop(session);
+        assert!(!downloads_path.exists());
+    }
+
+    #[tokio::test]
+    async fn direct_connect_accept_downloads_false_disables_download_path() {
+        let downloads_dir = TempDir::new().expect("downloads temp dir");
+        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
+        let profile = BrowserProfile {
+            permissions: Vec::new(),
+            downloads_path: Some(downloads_dir.path().to_path_buf()),
+            accept_downloads: false,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert!(
+            !commands
+                .iter()
+                .any(|command| command.method == "Browser.setDownloadBehavior")
+        );
+        assert!(session.downloads_path.is_none());
+        assert!(session._downloads_dir.is_none());
+
+        session
+            .auto_download_pdf_if_needed("https://example.test/report.pdf")
+            .await;
+        assert!(
+            std::fs::read_dir(downloads_dir.path())
+                .expect("downloads dir entries")
+                .next()
+                .is_none()
+        );
+        assert!(
+            session
+                .lifecycle_events()
+                .await
+                .iter()
+                .all(|event| event.reason.as_deref() != Some("pdf_auto_download"))
+        );
+    }
+
+    #[tokio::test]
     async fn direct_connect_sends_profile_headers_in_websocket_handshake() {
         let (endpoint, command_log) = cdp_command_header_test_server(5).await;
         let profile = BrowserProfile {
@@ -10068,6 +10208,7 @@ mod tests {
                 ("X-Browser-Use-Test".to_owned(), "handshake".to_owned()),
             ])),
             permissions: Vec::new(),
+            accept_downloads: false,
             ..BrowserProfile::default()
         };
         let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
@@ -10103,6 +10244,7 @@ mod tests {
         let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
         let profile = BrowserProfile {
             permissions: Vec::new(),
+            accept_downloads: false,
             viewport: BrowserViewport {
                 width: 1024,
                 height: 768,
@@ -10136,6 +10278,7 @@ mod tests {
         let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
         let profile = BrowserProfile {
             no_viewport: true,
+            accept_downloads: false,
             ..BrowserProfile::default()
         };
         let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
@@ -10153,14 +10296,15 @@ mod tests {
     #[tokio::test]
     async fn direct_connect_records_permission_grant_failures_without_failing() {
         let (endpoint, command_log) =
-            cdp_command_test_server(Some("permission grant denied"), 6).await;
+            cdp_command_test_server(Some("permission grant denied"), 7).await;
         let session = CdpBrowserSession::connect(endpoint)
             .await
             .expect("connect session despite grant failure");
 
         let commands = command_log.await.expect("cdp command log");
         assert_eq!(commands[0].method, "Browser.grantPermissions");
-        assert_eq!(commands[1].method, "Target.getTargets");
+        assert_eq!(commands[1].method, "Browser.setDownloadBehavior");
+        assert_eq!(commands[2].method, "Target.getTargets");
 
         let lifecycle_events = session.lifecycle_events().await;
         let event = lifecycle_events
@@ -10344,6 +10488,26 @@ mod tests {
         assert!(!disabled.auto_download_pdfs);
         assert_eq!(
             serde_json::to_value(disabled).expect("disabled profile json")["auto_download_pdfs"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn browser_profile_accept_downloads_defaults_true_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(decoded.accept_downloads);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["accept_downloads"], json!(true));
+
+        let disabled: BrowserProfile = serde_json::from_value(json!({
+            "accept_downloads": false,
+            "downloads_path": "/tmp/browser-use-rs-disabled-downloads"
+        }))
+        .expect("disabled downloads profile");
+        assert!(!disabled.accept_downloads);
+        assert_eq!(
+            serde_json::to_value(disabled).expect("disabled profile json")["accept_downloads"],
             json!(false)
         );
     }

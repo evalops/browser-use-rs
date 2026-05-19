@@ -83,13 +83,17 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   navigation failure/timeout, target crash, URL-policy block/reset/popup
   outcomes, reconnect, non-fatal browser diagnostics such as permission-grant
   failures, JavaScript dialog, sanitized download filenames, and storage-state event shapes.
-  `BrowserProfile.downloads_path` enables browser download behavior and
-  CDP download lifecycle events for launched sessions; page-controlled download
-  filenames from CDP events are reduced to safe basenames and containment helpers
-  reject paths outside the configured downloads directory model.
-  `BrowserProfile.auto_download_pdfs` defaults to `true`; when `downloads_path`
-  is configured, direct PDF viewer URLs are downloaded once per session into
-  that directory with safe filenames and `auto_download=true` lifecycle
+  `BrowserProfile.accept_downloads` defaults to `true`; accepted sessions use
+  an explicit `downloads_path` or a session-owned temporary directory to enable
+  browser download behavior and CDP download lifecycle events. Setting
+  `accept_downloads=false` skips CDP download setup and PDF auto-download
+  writes even when `downloads_path` is configured. Page-controlled download
+  filenames from CDP events are reduced to safe basenames and containment
+  helpers reject paths outside the effective downloads directory model.
+  `BrowserProfile.auto_download_pdfs` defaults to `true`; when downloads are
+  accepted, direct PDF viewer URLs are downloaded once per session into the
+  effective downloads directory with safe filenames and `auto_download=true`
+  lifecycle
   metadata. The direct-CDP path uses `Network.responseReceived` metadata and
   `Network.getResponseBody` bytes where Chrome exposes them, including
   content-disposition filenames, before falling back to conservative direct-URL
