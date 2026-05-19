@@ -51,10 +51,8 @@ RELEASE_WORTHY_EXACT_PATHS = {
     "LICENSE",
     "NOTICE",
     "rust-toolchain.toml",
-    ".github/workflows/release.yml",
     "packaging/homebrew/browser-use-rs.rb.template",
     "packaging/homebrew/publish-tap.sh",
-    "scripts/release-version.py",
 }
 RELEASE_WORTHY_PREFIXES = (
     "crates/",
@@ -348,7 +346,7 @@ def classify_auto_release(commits: list[Commit], changed_files: tuple[str, ...])
         return "minor", f"feature commit with Rust crate changes: {feature_subjects[0]}"
     if code_files and not fix_only:
         return "minor", "Rust crate behavior changed"
-    return "patch", "release-worthy fix, packaging, or release automation changed"
+    return "patch", "release-worthy fix or packaged install asset changed"
 
 
 def plan_auto_release(root: Path) -> ReleasePlan:

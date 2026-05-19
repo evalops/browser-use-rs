@@ -1,15 +1,23 @@
 # Release Automation
 
 The `Release` workflow owns both version cutting and release publication. It
-can run automatically on `main` pushes, manually from Actions, or on release
-tags.
+runs automatically only for meaningful `main` pushes, manually from Actions, or
+on release tags.
 
 ## Automatic Update Releases
 
-Every push to `main` runs `release_type=auto`. Auto mode compares `HEAD` with
-the latest stable `vX.Y.Z` tag, skips roadmap, documentation-only, CI-only, and
+Meaningful `main` pushes are changes that can affect the published binary,
+packaged install assets, Cargo resolution, or release artifact contents:
+workspace manifests and lockfiles, Rust crates, packaged Homebrew/systemd/launchd
+assets, license/notice files, and the Rust toolchain pin. Roadmap, docs, CI,
+release workflow, and release-helper maintenance continue through CI but do not
+wake the release publisher.
+
+When one of those meaningful paths changes, the workflow runs `release_type=auto`.
+Auto mode compares `HEAD` with the latest stable `vX.Y.Z` tag, skips
 release-bookkeeping churn, and cuts a release only when release-worthy files
-changed.
+changed. The script keeps this second guard so manual reruns and historical
+workflow changes still avoid accidental empty releases.
 
 Auto mode chooses:
 
@@ -17,11 +25,10 @@ Auto mode chooses:
   `BREAKING CHANGE` or a Conventional Commit `!`.
 - `minor` when Rust crate behavior changed and the unreleased commits look like
   feature or public-surface additions.
-- `patch` for release-worthy fixes, packaging changes, and release automation
-  changes.
+- `patch` for release-worthy fixes and packaged install asset changes.
 
-If there is nothing release-worthy after the latest stable tag, the push-driven
-run exits successfully without committing, tagging, building, or publishing.
+If a manual auto run finds nothing release-worthy after the latest stable tag,
+the run exits successfully without committing, tagging, building, or publishing.
 When it does publish, the GitHub release body starts with the commits since the
 previous stable tag and then appends the release support matrix.
 

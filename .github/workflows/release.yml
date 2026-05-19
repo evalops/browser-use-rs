@@ -6,6 +6,16 @@ on:
       - main
     tags:
       - "v*"
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "LICENSE"
+      - "NOTICE"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "packaging/homebrew/**"
+      - "packaging/launchd/**"
+      - "packaging/systemd/**"
   workflow_dispatch:
     inputs:
       release_type:
