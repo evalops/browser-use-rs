@@ -64,7 +64,10 @@ includes:
   `navigation_timeout_ms` bounds direct `Page.navigate` calls and records
   network-timeout lifecycle diagnostics when they hang.
   `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
-  requests that remain active beyond the watchdog budget.
+  requests that remain active beyond the watchdog budget. Upstream-style
+  `minimum_wait_page_load_time` and `wait_for_network_idle_page_load_time`
+  settle state capture and successful navigations, with zero values disabling
+  each wait.
   Launch profiles can set `downloads_path` to enable Chrome download behavior
   and browser-level download lifecycle events with safe basename normalization
   for page-controlled filenames, and `storage_state_path` to

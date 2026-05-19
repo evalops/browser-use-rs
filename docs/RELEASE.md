@@ -33,6 +33,11 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `Browser.close` over CDP. Omitted/null/false `keep_alive` preserves the
   previous owned-child drop behavior. Direct CDP and cloud sessions do not own a
   local child process and are unaffected.
+  `BrowserProfile.minimum_wait_page_load_time` and
+  `BrowserProfile.wait_for_network_idle_page_load_time` default to upstream's
+  `0.25` and `0.5` second settle waits before browser-state capture and after
+  successful navigation. Setting either value to `0` opts out of that wait, and
+  negative or non-finite values are rejected during profile deserialization.
   `BrowserProfile.devtools` emits `--auto-open-devtools-for-tabs` for headful
   launches and rejects the upstream-invalid `headless=true` plus
   `devtools=true` combination before spawning Chrome. `BrowserProfile.env`
@@ -87,6 +92,8 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   and records network-timeout lifecycle diagnostics on timeout.
   `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
   requests that remain active beyond the watchdog budget.
+  Page-load settle waits share the same CDP network-event stream without adding
+  those per-request details to normal lifecycle output.
 - Browser state with URL, title, tabs plus browser-use-style short tab ids,
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable

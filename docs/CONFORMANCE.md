@@ -123,6 +123,17 @@ switches, stale-session reattachments, and replacement pages selected after the
 focused tab closes. `no_viewport=true` intentionally leaves page content to the
 real browser window and skips the CDP override.
 
+## Page-Load Wait Boundary
+
+`BrowserProfile.minimum_wait_page_load_time` and
+`wait_for_network_idle_page_load_time` are preserved with upstream-compatible
+defaults of `0.25` and `0.5` seconds. The Rust CDP session applies the minimum
+delay before browser-state capture and after successful navigation, then waits
+for the shared CDP network-event tracker to observe the configured idle window.
+Setting either value to `0` disables that part of the settle path. The wait is
+bounded by the configured idle duration and does not expose per-request network
+activity in normal agent replies.
+
 ## OOPIF Stale-Node Fallback Boundary
 
 Cached observed-node actions first resolve the original backend/frontend node

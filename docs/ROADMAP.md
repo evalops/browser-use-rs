@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#119 Add BrowserProfile page-load wait timing parity](https://github.com/evalops/browser-use-rs/issues/119)
+- Next upstream parity slice after #119 lands and CI is green.
 
 ## Completed Tracks
 
+- [#119 Add BrowserProfile page-load wait timing parity](https://github.com/evalops/browser-use-rs/issues/119)
 - [#120 Add BrowserProfile keep_alive launch ownership parity](https://github.com/evalops/browser-use-rs/issues/120)
 - [#118 Add BrowserProfile viewport emulation controls](https://github.com/evalops/browser-use-rs/issues/118)
 - [#117 Add BrowserProfile iframe traversal limits](https://github.com/evalops/browser-use-rs/issues/117)
@@ -169,7 +170,10 @@ Implemented:
   `device_scale_factor` profile controls, and CDP device-metrics override
   application for attached tabs when viewport emulation is active, plus
   upstream-style `keep_alive=true` detachment for locally launched browser
-  ownership.
+  ownership. `minimum_wait_page_load_time` and
+  `wait_for_network_idle_page_load_time` preserve upstream settle delays before
+  state capture and after successful navigation, with zero values disabling the
+  corresponding waits.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
