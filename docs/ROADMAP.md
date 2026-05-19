@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#112 Add BrowserProfile permissions grant parity](https://github.com/evalops/browser-use-rs/issues/112)
+- Next upstream parity slice after #112 lands and CI is green.
 
 ## Completed Tracks
 
+- [#112 Add BrowserProfile permissions grant parity](https://github.com/evalops/browser-use-rs/issues/112)
 - [#111 Refresh upstream target to ac2ef54 and pin upload_file containment parity](https://github.com/evalops/browser-use-rs/issues/111)
 - [#110 Add BrowserProfile devtools launch parity](https://github.com/evalops/browser-use-rs/issues/110)
 - [#109 Add BrowserProfile window_size and window_position launch parity](https://github.com/evalops/browser-use-rs/issues/109)

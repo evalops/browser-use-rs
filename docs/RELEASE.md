@@ -21,7 +21,11 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
   `--window-size` and `--window-position` launch geometry flags.
   `BrowserProfile.devtools` emits `--auto-open-devtools-for-tabs` for headful
   launches and rejects the upstream-invalid `headless=true` plus
-  `devtools=true` combination before spawning Chrome.
+  `devtools=true` combination before spawning Chrome. `BrowserProfile.permissions`
+  defaults to upstream's `clipboardReadWrite` and `notifications` permissions,
+  sends root CDP `Browser.grantPermissions` before target attach/create for
+  launched and directly connected sessions, skips empty lists, and records
+  non-fatal lifecycle diagnostics when Chrome rejects the grant.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
@@ -41,8 +45,9 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
   active. CDP sessions expose bounded `BrowserLifecycleEvent` diagnostics for
   browser connect/close, target create/switch/close, navigation start/complete,
   navigation failure/timeout, target crash, URL-policy block/reset/popup
-  outcomes, reconnect, JavaScript dialog, download, and storage-state event
-  shapes. `BrowserProfile.downloads_path` enables browser download behavior and
+  outcomes, reconnect, non-fatal browser diagnostics such as permission-grant
+  failures, JavaScript dialog, download, and storage-state event shapes.
+  `BrowserProfile.downloads_path` enables browser download behavior and
   CDP download lifecycle events for launched sessions; `storage_state_path`
   loads and saves browser cookie plus attached frame-tree origin local/session
   storage state with storage lifecycle events.

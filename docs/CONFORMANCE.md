@@ -74,21 +74,24 @@ The frozen upstream target exposes a broad browser event bus with
 `BrowserStoppedEvent`, `TabCreatedEvent`, `TabClosedEvent`,
 `AgentFocusChangedEvent`, `TargetCrashedEvent`, `NavigationStartedEvent`,
 `NavigationCompleteEvent`, `BrowserErrorEvent`, reconnection events, storage
-state events, download events, and JavaScript dialog handling through watchdogs.
+state events, download events, JavaScript dialog handling, and browser
+permission grants through watchdogs.
 
 The Rust port currently exposes bounded `BrowserLifecycleEvent` diagnostics for
 browser connect/close requests, target create/switch/close/crash, navigation
 start/complete/failure/timeout, URL-policy navigation blocks, current-tab
 resets, popup closes and popup close/reset failures, browser reconnects,
-JavaScript dialog handling, download start/progress/completion, and
-storage-state save/load notifications. These lifecycle events are available
+JavaScript dialog handling, download start/progress/completion, storage-state
+save/load notifications, and browser diagnostics for non-fatal permission-grant
+failures. These lifecycle events are available
 through the CDP session API and are intentionally kept out of normal agent
 replies; prompt state still only includes security-relevant recent events and
 closed-popup messages. The public JSON shape is locked by normal and
 exceptional lifecycle fixtures. Live CDP wiring records target crash,
 JavaScript dialog, navigation failure, configured download events, and cookie
-plus attached frame-tree origin storage-state save/load events. CDP websocket
-closure records a browser-stopped lifecycle diagnostic, and direct
+plus attached frame-tree origin storage-state save/load events. Root
+`Browser.grantPermissions` failures record browser diagnostics without failing
+startup. CDP websocket closure records a browser-stopped lifecycle diagnostic, and direct
 `Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
 lifecycle diagnostics. Unexpected websocket drops trigger bounded actor-level
 attempts with reconnecting/reconnected/failure lifecycle diagnostics. Registered

@@ -648,6 +648,10 @@ mod tests {
                 details: BTreeMap::new(),
                 message: "Browser connected at http://127.0.0.1:9222".to_owned(),
             },
+            BrowserLifecycleEvent::permissions_grant_failed(
+                &["clipboardReadWrite".to_owned(), "notifications".to_owned()],
+                "permission grant denied",
+            ),
             BrowserLifecycleEvent {
                 kind: BrowserLifecycleEventKind::TargetCreated,
                 target_id: Some("target-1".to_owned()),
@@ -769,6 +773,10 @@ mod tests {
     fn browser_lifecycle_adapter_events_match_golden_fixture() {
         let lifecycle_events = vec![
             BrowserLifecycleEvent::browser_connected("http://127.0.0.1:9222"),
+            BrowserLifecycleEvent::permissions_grant_failed(
+                &["clipboardReadWrite".to_owned(), "notifications".to_owned()],
+                "permission grant denied",
+            ),
             BrowserLifecycleEvent::target_created("target-1", "https://example.test/report"),
             BrowserLifecycleEvent::target_switched("target-1"),
             BrowserLifecycleEvent::navigation_completed(

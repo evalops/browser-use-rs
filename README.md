@@ -29,7 +29,9 @@ includes:
   `chromium_sandbox=false` no-sandbox/container flags, plus explicit
   `window_size` and `window_position` launch geometry flags, and a typed
   `devtools` launch flag with the upstream headless conflict guard, typed
-  Browser Use Cloud creation/stop parameters, current-session
+  `permissions` grants for upstream's default `clipboardReadWrite` and
+  `notifications` browser permissions over root CDP, typed Browser Use Cloud
+  creation/stop parameters, current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint
   conversion that preserve upstream's omitted/null/proxy-country distinction,
@@ -38,7 +40,8 @@ includes:
   available. CDP sessions expose a bounded public lifecycle event history for
   browser connect/close, target create/switch/close, navigation
   start/complete/failure/timeout, target crash, URL-policy reset/popup
-  diagnostics, reconnect, JavaScript dialog, download, and storage-state
+  diagnostics, reconnect, non-fatal permission-grant diagnostics,
+  JavaScript dialog, download, and storage-state
   diagnostics plus a `BrowserLifecycleEventSubscription` returned by
   `subscribe_lifecycle_events`, with `recv`/`try_recv` lag and closed-stream
   handling, and a `BrowserLifecycleAdapterEventSubscription` that maps the

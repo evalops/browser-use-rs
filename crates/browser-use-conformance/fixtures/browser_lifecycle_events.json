@@ -5,6 +5,16 @@
     "url": "http://127.0.0.1:9222"
   },
   {
+    "details": {
+      "permissions": "clipboardReadWrite,notifications",
+      "permissions_count": "2"
+    },
+    "error": "permission grant denied",
+    "kind": "browser_diagnostic",
+    "message": "Browser permission grant failed: permission grant denied",
+    "reason": "permissions_grant_failed"
+  },
+  {
     "kind": "target_created",
     "message": "Target target-1 created for https://example.test/report",
     "target_id": "target-1",
