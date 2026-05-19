@@ -27,6 +27,12 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   skips the CDP device-metrics override, and launch planning rejects the
   upstream-invalid `headless=true` plus `no_viewport=true` combination before
   spawning Chrome.
+  `BrowserProfile.keep_alive=true` detaches the locally launched child process
+  from Rust session ownership so dropping a one-shot `CdpBrowserSession` leaves
+  Chrome running for reuse, while explicit `close_browser()` still sends
+  `Browser.close` over CDP. Omitted/null/false `keep_alive` preserves the
+  previous owned-child drop behavior. Direct CDP and cloud sessions do not own a
+  local child process and are unaffected.
   `BrowserProfile.devtools` emits `--auto-open-devtools-for-tabs` for headful
   launches and rejects the upstream-invalid `headless=true` plus
   `devtools=true` combination before spawning Chrome. `BrowserProfile.env`

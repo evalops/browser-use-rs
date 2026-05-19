@@ -31,8 +31,9 @@ includes:
   `devtools` launch flag with the upstream headless conflict guard, typed
   `screen`, `viewport`, `no_viewport`, and `device_scale_factor` controls that
   apply CDP device-metrics overrides to attached tabs unless viewport emulation
-  is disabled, typed `env` launch-process overrides with upstream-style
-  string/number/bool JSON coercion,
+  is disabled, upstream-style `keep_alive=true` ownership detachment for
+  locally launched browsers, typed `env` launch-process overrides with
+  upstream-style string/number/bool JSON coercion,
   upstream-style default Chrome launch args, `ignore_default_args` list/true
   suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
   `permissions` grants for upstream's default `clipboardReadWrite` and

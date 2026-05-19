@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#120 Add BrowserProfile keep_alive launch ownership parity](https://github.com/evalops/browser-use-rs/issues/120)
+- Next upstream parity slice after #120 lands and CI is green.
 
 ## Completed Tracks
 
+- [#120 Add BrowserProfile keep_alive launch ownership parity](https://github.com/evalops/browser-use-rs/issues/120)
 - [#118 Add BrowserProfile viewport emulation controls](https://github.com/evalops/browser-use-rs/issues/118)
 - [#117 Add BrowserProfile iframe traversal limits](https://github.com/evalops/browser-use-rs/issues/117)
 - [#116 Refresh upstream target to 18aae0b and pin security hardening parity](https://github.com/evalops/browser-use-rs/issues/116)
@@ -166,7 +167,9 @@ Implemented:
   proxy-bypass Chrome flags, Chrome `DevToolsActivePort` endpoint parsing,
   upstream-style `screen`, `viewport`, `no_viewport`, and
   `device_scale_factor` profile controls, and CDP device-metrics override
-  application for attached tabs when viewport emulation is active.
+  application for attached tabs when viewport emulation is active, plus
+  upstream-style `keep_alive=true` detachment for locally launched browser
+  ownership.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
