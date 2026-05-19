@@ -1,0 +1,81 @@
+name: Upstream Drift
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-drift
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check browser-use upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check upstream target
+        id: drift
+        run: |
+          python3 scripts/upstream-drift.py --body-file upstream-drift.md
+
+      - name: Create or update drift issue
+        if: steps.drift.outputs.drifted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_FILE: upstream-drift.md
+          DESIRED_TITLE: ${{ steps.drift.outputs.issue_title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh label create upstream-drift \
+            --repo "${GITHUB_REPOSITORY}" \
+            --color "D93F0B" \
+            --description "Upstream browser-use has moved beyond the frozen target" \
+            2>/dev/null || true
+
+          existing_number="$(
+            gh issue list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --state open \
+              --label upstream-drift \
+              --limit 20 \
+              --json number,title \
+              --jq 'map(select(.title | startswith("Refresh upstream target to "))) | .[0].number // ""'
+          )"
+
+          if [[ -z "${existing_number}" ]]; then
+            gh issue create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${DESIRED_TITLE}" \
+              --body-file "${BODY_FILE}" \
+              --label upstream-drift
+            exit 0
+          fi
+
+          current_title="$(gh issue view "${existing_number}" --repo "${GITHUB_REPOSITORY}" --json title --jq .title)"
+          current_body="$(gh issue view "${existing_number}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
+          desired_body="$(cat "${BODY_FILE}")"
+
+          if [[ "${current_title}" == "${DESIRED_TITLE}" && "${current_body}" == "${desired_body}" ]]; then
+            echo "Drift issue #${existing_number} is already current."
+            exit 0
+          fi
+
+          gh issue edit "${existing_number}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${DESIRED_TITLE}" \
+            --body-file "${BODY_FILE}"
+
+      - name: Report current target
+        if: steps.drift.outputs.drifted != 'true'
+        run: |
+          echo "Frozen upstream target is current at ${{ steps.drift.outputs.current_sha }}."
