@@ -5,6 +5,17 @@
 //! metadata, page metrics, indexed interactive elements, and compact text
 //! renderings that can be placed in an LLM prompt. The same structs are also
 //! used by history replay to rematch old element indexes against a fresh DOM.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     CDP["CDP DOM / AX / runtime snapshots"] --> Ref["DomElementRef selector_map"]
+//!     Ref --> Text["llm_representation"]
+//!     Ref --> Eval["DomEvalNode eval tree"]
+//!     Ref --> Fingerprint["DomInteractedElement fingerprints"]
+//!     Text --> Prompt["Agent prompt"]
+//!     Fingerprint --> Replay["history replay rematch"]
+//!     Eval --> Judge["judge/evaluation prompt"]
+//! ```
 
 use std::collections::BTreeMap;
 
@@ -425,6 +436,9 @@ fn interacted_element_hash(
     x_path: &str,
     class_mode: HashClassMode,
 ) -> u64 {
+    // The hash intentionally mixes structural hints and accessibility naming
+    // rather than only the transient browser-use index. That gives replay a
+    // stable identity when the page inserts or removes unrelated elements.
     let attributes = hash_attributes(element, class_mode);
     let attributes_string = attributes
         .iter()
@@ -467,6 +481,9 @@ fn hash_attributes(element: &DomElementRef, class_mode: HashClassMode) -> BTreeM
 }
 
 fn filter_dynamic_classes(class_value: &str) -> String {
+    // Utility CSS classes often describe state rather than identity. Filtering
+    // them for the stable hash lets replay survive hover/loading/open state
+    // changes without accepting a completely different element.
     let mut classes = class_value
         .split_whitespace()
         .filter(|class_name| {
@@ -543,6 +560,9 @@ pub fn rematch_interacted_element(
         });
     }
 
+    // Matching proceeds from strongest to weakest signal. Each strategy must
+    // produce exactly one candidate; ambiguity is reported instead of hidden so
+    // replay tooling can explain why a historical action cannot be trusted.
     if let Some(match_result) = unique_match(
         DomInteractedElementMatchLevel::Exact,
         None,
@@ -1412,6 +1432,9 @@ fn render_element_attributes_with_attribute_names(
             .is_some_and(|value| value.eq_ignore_ascii_case("password"));
     let text = render_element_text(element);
 
+    // Attribute rendering is intentionally lossy. The model needs useful
+    // interaction hints, not a full HTML dump, and prompt output must avoid
+    // duplicating labels or leaking password values.
     let rendered_attributes = include_attributes
         .iter()
         .filter_map(|attribute| {

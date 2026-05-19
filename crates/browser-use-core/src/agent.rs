@@ -3,6 +3,31 @@
 //! [`Agent`] is generic over a chat model and a browser session. That generic
 //! shape keeps the run loop independent from any specific LLM provider or
 //! browser backend while still allowing strongly typed tests and adapters.
+//!
+//! The run loop has three layers:
+//!
+//! 1. [`Agent::run`] owns stop conditions, retry accounting, and step budget
+//!    policy.
+//! 2. `step_recovering_model_errors_with_kind` turns browser state into an LLM
+//!    request and records provider or schema failures as history items.
+//! 3. `record_model_output` validates the accepted model output and delegates
+//!    browser side effects to [`BrowserActionExecutor`].
+//!
+//! ```mermaid
+//! flowchart TD
+//!     Start["Agent::run(max_steps)"] --> Initial["execute_initial_actions"]
+//!     Initial --> Loop{"steps remaining?"}
+//!     Loop -->|yes| State["capture BrowserStateSummary"]
+//!     State --> Prompt["build ChatRequest + AgentOutput schema"]
+//!     Prompt --> LLM["ChatModel::invoke_json"]
+//!     LLM --> Parse["parse AgentOutput"]
+//!     Parse --> Validate["callbacks, excluded actions, limits"]
+//!     Validate --> Execute["BrowserActionExecutor sequence"]
+//!     Execute --> Record["append AgentHistoryItem"]
+//!     Record --> Done{"done / loop / failures?"}
+//!     Done -->|continue| Loop
+//!     Done -->|terminal| Finish["return AgentHistory or AgentRunError"]
+//! ```
 
 use crate::{
     ActionResult, AgentCurrentState, AgentHistory, AgentHistoryItem, AgentOutput, AgentSettings,
@@ -748,6 +773,8 @@ where
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
 
+        // Stop/pause checks happen before synthetic step-zero actions so callers
+        // can safely construct an agent and immediately pause or cancel it.
         self.check_stop_requested().await?;
         self.execute_initial_actions().await?;
         if self
@@ -764,6 +791,10 @@ where
             let (is_done, has_error) = {
                 let seconds = self.settings.step_timeout_seconds;
                 let steps_used = step_index + 1;
+                // The final-step and budget-warning prompts are still normal
+                // steps from the browser executor's point of view. Only the
+                // model instruction/schema is narrowed so history shape stays
+                // compatible with upstream browser-use.
                 let step_kind = if steps_used == max_steps {
                     StepRequestKind::FinalStep { max_steps }
                 } else if should_inject_step_budget_warning(steps_used, max_steps) {
@@ -789,6 +820,9 @@ where
             if is_done {
                 return self.finish_successful_run().await;
             }
+            // Re-check after side effects so a stop request raised by a callback
+            // or surrounding runtime wins before loop detection/compaction does
+            // any extra work.
             self.check_stop_requested().await?;
 
             if self.settings.loop_detection_enabled
@@ -802,6 +836,9 @@ where
             if has_error {
                 consecutive_failures += 1;
                 if consecutive_failures >= self.settings.max_failures {
+                    // browser-use asks for one last model-authored done message
+                    // after repeated failures. That path is opt-in because some
+                    // integrations prefer a hard error over another model call.
                     if self.settings.final_response_after_failure {
                         let final_item = self
                             .record_final_response_after_failure(consecutive_failures)
@@ -846,6 +883,8 @@ where
             Some(self.executor.file_system()),
         )?;
         let request_for_transcript = request.clone();
+        // URL shortening is prompt-only. The transcript keeps the full request,
+        // and model output is restored before any browser action executes.
         let (request, url_replacements) =
             request_with_shortened_urls(request, self.settings.url_shortening_limit);
         let completion = self
@@ -903,6 +942,9 @@ where
             }
         };
         let request_for_transcript = request.clone();
+        // This recovery path records LLM/schema problems as ordinary history
+        // errors, which lets `run` apply browser-use failure accounting instead
+        // of aborting the entire run on the first malformed provider response.
         let (request, url_replacements) =
             request_with_shortened_urls(request, self.settings.url_shortening_limit);
         let completion = match self.invoke_json_with_fallback(request).await {
@@ -964,6 +1006,9 @@ where
         step_start_time: Option<f64>,
     ) -> Result<&AgentHistoryItem, AgentRunError> {
         if model_output.action.len() > self.settings.max_actions_per_step {
+            // Truncation mirrors upstream behavior: keep the model output shape,
+            // but execute only the configured prefix so the browser never sees
+            // more actions than the caller allowed.
             model_output
                 .action
                 .truncate(self.settings.max_actions_per_step);
@@ -977,6 +1022,9 @@ where
         if let Some(error) = excluded_action_error(&model_output.action, &self.settings) {
             return self.record_model_error(state, error, step_start_time);
         }
+        // The stored history keeps exactly what the model said. The execution
+        // copy may have secrets filled, extraction defaults injected, or prompt
+        // screenshot coordinates scaled back to the real viewport.
         let actions = actions_for_execution(&model_output.action, &self.settings, &state.url);
         let actions = scale_coordinate_click_actions_for_prompt(&actions, &self.settings, &state);
         let result = self.execute_agent_sequence(&actions).await?;
@@ -1004,6 +1052,9 @@ where
         for (index, action) in actions.iter().enumerate() {
             self.check_stop_requested().await?;
 
+            // A done action after another action is ignored because the first
+            // action may navigate or mutate the page. The next model step should
+            // observe that new state before deciding the task is done.
             if index > 0 && matches!(action, BrowserAction::Done(_)) {
                 break;
             }
@@ -1017,6 +1068,9 @@ where
 
             let needs_page_change_guard = !action.terminates_sequence();
             let before = if needs_page_change_guard {
+                // Non-terminating actions are guarded by a cheap pre/post state
+                // check. If the URL changes, the current action sequence stops
+                // so the next model call can reason about the new page.
                 match self.executor.session().state(false).await {
                     Ok(state) => Some(state),
                     Err(error) => {

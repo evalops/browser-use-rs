@@ -4,6 +4,16 @@
 //! structs into calls on a [`BrowserSession`]. It also owns action-batch stop
 //! rules, managed-file actions, per-action timeout handling, and replay
 //! execution against remapped history plans.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     Action["BrowserAction"] --> Executor["BrowserActionExecutor"]
+//!     Executor --> Session["BrowserSession methods"]
+//!     Executor --> Files["ManagedFileSystem"]
+//!     Session --> Result["ActionResult"]
+//!     Files --> Result
+//!     Result --> History["AgentHistoryItem.result"]
+//! ```
 
 use crate::{
     ActionResult, AgentHistory, AgentHistoryReplayExecution, AgentHistoryReplayExecutionItem,
@@ -1664,6 +1674,9 @@ where
 
     for (plan_index, item) in plan.actions.iter().enumerate() {
         let action = &item.remapped_action;
+        // Replay follows the same done-after-prior-action rule as normal agent
+        // execution: a terminal answer is only valid as the first action in a
+        // sequence, after the browser has already been observed.
         if plan_index > 0 && matches!(action, BrowserAction::Done(_)) {
             stop = Some(AgentHistoryReplayStop {
                 step_index: item.step_index,
@@ -1677,6 +1690,9 @@ where
         let result = executor.execute(action).await;
         let stop_reason = replay_stop_reason(action, &result);
         let stop_diagnostic = result.error.clone();
+        // Each execution row keeps both the original and remapped action. That
+        // makes replay auditable when an element index was adjusted before the
+        // browser side effect ran.
         items.push(AgentHistoryReplayExecutionItem {
             step_index: item.step_index,
             action_index: item.action_index,

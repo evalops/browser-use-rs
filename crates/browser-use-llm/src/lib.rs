@@ -5,6 +5,18 @@
 //! converts the common [`ChatRequest`] shape into that provider's HTTP API,
 //! parses the provider response back into JSON, and normalizes usage/error
 //! data for the rest of the system.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     Core["browser-use-core"] --> Request["ChatRequest"]
+//!     Request --> Adapter["provider adapter"]
+//!     Adapter --> Payload["HTTP payload"]
+//!     Payload --> Provider["OpenAI / Anthropic / Gemini / Ollama / compatible"]
+//!     Provider --> Raw["provider response"]
+//!     Raw --> Parse["JSON extraction + usage normalization"]
+//!     Parse --> Completion["ChatCompletion<Value>"]
+//!     Completion --> Core
+//! ```
 
 use async_trait::async_trait;
 use reqwest::{
@@ -717,6 +729,9 @@ fn openai_chat_payload(
         structured_output_mode,
         OpenAiStructuredOutputMode::JsonObject | OpenAiStructuredOutputMode::PromptOnly
     ) {
+        // Providers in JSON-object or prompt-only mode do not receive a strict
+        // schema envelope, so we append the schema as text to keep the model's
+        // target shape visible without changing the provider transport mode.
         if let Some(schema) = output_schema.as_ref() {
             append_json_schema_instruction(&mut request.messages, schema);
         }
@@ -744,6 +759,9 @@ fn openai_chat_payload(
                 payload["response_format"] = json!({ "type": "json_object" });
             }
             OpenAiStructuredOutputMode::ToolCall => {
+                // Tool-call mode is useful for OpenAI-compatible providers that
+                // implement function calling but not the newer json_schema
+                // response_format. The same schema is carried as parameters.
                 payload["tools"] = json!([
                     {
                         "type": "function",

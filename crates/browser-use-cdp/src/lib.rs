@@ -5,6 +5,22 @@
 //! entry point is [`CdpBrowserSession`], while the internal modules split CDP
 //! transport, DOM capture, input synthesis, launch profile handling, lifecycle
 //! events, recordings, storage state, URL policy, and watchdog behavior.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     Profile["BrowserProfile"] --> Launch["launch or connect"]
+//!     Launch --> Conn["CdpConnection"]
+//!     Conn --> Page["AttachedPage"]
+//!     Page --> State["BrowserSession::state"]
+//!     State --> Dom["interactive DOM + accessibility join"]
+//!     State --> Metrics["page info, tabs, events, screenshot"]
+//!     Dom --> Summary["BrowserStateSummary"]
+//!     Metrics --> Summary
+//!     Summary --> Core["browser-use-core Agent"]
+//!     Core --> Action["BrowserAction"]
+//!     Action --> Session["BrowserSession action methods"]
+//!     Session --> Conn
+//! ```
 
 #[cfg(test)]
 use std::collections::HashMap;
@@ -1600,15 +1616,28 @@ impl BrowserSession for CdpBrowserSession {
     }
 
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
+        // State capture is also the point where asynchronous policy/watchdog
+        // work becomes visible to the agent. Pending URL-policy violations are
+        // surfaced before any new DOM is trusted.
         self.enforce_open_tab_url_policy().await?;
+        // Waiting before reading URL/title/DOM keeps prompts from describing an
+        // intermediate navigation or loading spinner as if it were stable page
+        // state.
         self.wait_for_page_load_settle().await;
         let (url, title) = self.page_location().await?;
         let is_pdf_viewer = is_pdf_viewer_url(&url);
         if is_pdf_viewer {
+            // Chrome's built-in PDF viewer is visible as a page, but
+            // browser-use also wants the underlying PDF artifact when downloads
+            // are accepted. The download path is cached so repeated state calls
+            // do not re-fetch the same document.
             self.auto_download_pdf_if_needed(&url).await;
         }
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
+        // Action methods use the cached DOM to resolve the exact element the
+        // model saw. Updating the cache immediately after capture keeps the
+        // prompt and subsequent indexed actions tied to the same selector map.
         self.set_cached_dom_state(dom_state.clone()).await;
         self.apply_dom_highlights_if_enabled(&dom_state).await;
         let pagination_buttons = detect_pagination_buttons(&dom_state);
@@ -1624,6 +1653,9 @@ impl BrowserSession for CdpBrowserSession {
             None
         };
 
+        // Some connected-browser environments cannot enumerate tabs. Falling
+        // back to the current page still gives the agent a switchable tab id
+        // while preserving the full CDP target id for executor calls.
         Ok(BrowserStateSummary {
             dom_state,
             url: url.clone(),
