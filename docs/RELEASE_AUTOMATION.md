@@ -1,24 +1,22 @@
 # Release Automation
 
 The `Release` workflow owns both version cutting and release publication. It
-runs automatically only for meaningful `main` pushes, manually from Actions, or
-on release tags.
+runs automatically only for public-artifact `main` pushes, manually from
+Actions, or on release tags.
 
 ## Automatic Update Releases
 
 Candidate `main` pushes are changes that might affect the published binary,
-packaged install assets, Cargo resolution, release artifact docs, or the release
-planner itself. The workflow may wake for release-helper and workflow changes so
-GitHub exercises the current planner, but auto mode still performs a second
-guard in `scripts/release-version.py` before it commits, tags, builds, or
-publishes anything.
+packaged install assets, Cargo resolution, or release artifact docs. CI still
+validates release-helper and workflow changes, but those automation-only edits
+do not wake the release workflow on `main`.
 
 Release-worthy changes are public artifact changes: workspace manifests and
 lockfiles, Rust crates, packaged Homebrew/systemd/launchd assets, license/notice
 files, the Rust toolchain pin, README, and public docs that ship in the package
 or release support matrix. Roadmap-only, CI-only, release-workflow-only, and
-release-helper-only changes exit successfully without publishing unless a human
-manually dispatches a release.
+release-helper-only changes do not publish unless a human manually dispatches a
+release.
 
 When one of those candidate paths changes, the workflow runs `release_type=auto`.
 Auto mode compares `HEAD` with the latest stable `vX.Y.Z` tag, skips
@@ -30,12 +28,15 @@ Auto mode chooses:
 
 - `major` when an unreleased commit contains a breaking-change marker such as
   `BREAKING CHANGE` or a Conventional Commit `!`.
-- `minor` when Rust source changed and the unreleased commits look substantial:
-  Conventional Commit `feat:` subjects, browser/session/action/runtime parity,
-  public protocol/schema/API, CLI/MCP surface, or profile behavior.
+- `minor` when unreleased work has a substantial public-behavior signal:
+  `Release-Impact: minor`, a Conventional Commit `feat:` subject, source/test
+  changes paired with README/conformance/CLI/MCP/install/release docs for the
+  new capability, or broad cross-crate public-surface work.
 - `patch` for smaller release-worthy changes: fixes, dependency or toolchain
   refreshes, packaged install asset changes, README/support-matrix updates, and
-  public docs that should ship with the next artifact.
+  public docs that should ship with the next artifact. Small compatibility
+  aliases and narrowly scoped fixes should use `Release-Impact: patch` when
+  their commit message could otherwise look like new feature work.
 
 For ambiguous commits, add a trailer to the commit body:
 
@@ -48,7 +49,9 @@ Release-Impact: none
 `Release-Impact` trailers override the heuristic. Use `minor` for substantial
 new user-visible behavior, `patch` for small but releasable changes, and `none`
 for maintenance that should never publish by itself. If multiple unreleased
-commits request a release, the highest requested impact wins.
+commits request a release, the highest requested impact wins. This makes the
+workflow release by the meaning of the work, not by how many rollback commits
+have landed since the last tag.
 
 If a manual auto run finds nothing release-worthy after the latest stable tag,
 the run exits successfully without committing, tagging, building, or publishing.

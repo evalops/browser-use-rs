@@ -76,6 +76,24 @@ RELEASE_WORTHY_PREFIXES = (
     "packaging/launchd/",
     "packaging/systemd/",
 )
+PUBLIC_CAPABILITY_DOC_PATHS = {
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/CLI.md",
+    "docs/CONFORMANCE.md",
+    "docs/INSTALL.md",
+    "docs/MCP.md",
+    "docs/RELEASE.md",
+}
+PUBLIC_SOURCE_PREFIXES = (
+    "crates/browser-use-agent/src/",
+    "crates/browser-use-cdp/src/",
+    "crates/browser-use-cli/src/",
+    "crates/browser-use-dom/src/",
+    "crates/browser-use-llm/src/",
+    "crates/browser-use-mcp/src/",
+)
+PUBLIC_TEST_PREFIXES = tuple(prefix.replace("/src/", "/tests/") for prefix in PUBLIC_SOURCE_PREFIXES)
 RELEASE_TYPE_ORDER = {
     "patch": 1,
     "minor": 2,
@@ -355,6 +373,31 @@ def source_behavior_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(path for path in changed_files if is_source_behavior_path(path))
 
 
+def public_source_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        path
+        for path in changed_files
+        if path.endswith(".rs")
+        and any(
+            path.startswith(prefix)
+            for prefix in (*PUBLIC_SOURCE_PREFIXES, *PUBLIC_TEST_PREFIXES)
+        )
+    )
+
+
+def public_capability_doc_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(path for path in changed_files if path in PUBLIC_CAPABILITY_DOC_PATHS)
+
+
+def changed_workspace_crates(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    crates = set[str]()
+    for path in changed_files:
+        parts = path.split("/")
+        if len(parts) >= 2 and parts[0] == "crates":
+            crates.add(parts[1])
+    return tuple(sorted(crates))
+
+
 def commit_has_breaking_marker(commit: Commit) -> bool:
     return bool(
         CONVENTIONAL_BREAKING_RE.match(commit.subject)
@@ -386,6 +429,44 @@ def commit_requests_substantial_release(commit: Commit) -> bool:
     )
 
 
+def substantial_release_signal(
+    commits: list[Commit],
+    changed_files: tuple[str, ...],
+) -> str | None:
+    """Return a reason when the unreleased batch looks like new public behavior.
+
+    Auto mode should not infer a minor bump from cadence or from a source file
+    existing in the diff. A minor release needs either explicit maintainer
+    intent, Conventional Commit feature intent, or code movement paired with a
+    public artifact that documents the new capability.
+    """
+
+    feature_commit = next(
+        (commit.subject for commit in commits if CONVENTIONAL_FEATURE_RE.match(commit.subject)),
+        None,
+    )
+    if feature_commit:
+        return f"feature commit found: {feature_commit}"
+
+    public_sources = public_source_files(changed_files)
+    if not public_sources:
+        return None
+
+    capability_docs = public_capability_doc_files(changed_files)
+    substantial_subject = next(
+        (commit.subject for commit in commits if commit_requests_substantial_release(commit)),
+        None,
+    )
+    if capability_docs and substantial_subject:
+        return f"public capability update: {substantial_subject}"
+
+    crates = changed_workspace_crates(public_sources)
+    if len(public_sources) >= 4 and len(crates) >= 2 and substantial_subject:
+        return f"cross-crate public capability update: {substantial_subject}"
+
+    return None
+
+
 def classify_auto_release(
     commits: list[Commit],
     changed_files: tuple[str, ...],
@@ -406,14 +487,11 @@ def classify_auto_release(
     if any(commit_has_breaking_marker(commit) for commit in commits):
         return "major", "breaking-change marker found in unreleased commits"
 
-    behavior_files = source_behavior_files(changed_files)
-    substantial_subjects = tuple(
-        commit.subject for commit in commits if commit_requests_substantial_release(commit)
-    )
+    substantial_reason = substantial_release_signal(commits, changed_files)
+    if substantial_reason:
+        return "minor", substantial_reason
 
-    if behavior_files and substantial_subjects:
-        return "minor", f"substantial public-surface change: {substantial_subjects[0]}"
-    if behavior_files:
+    if source_behavior_files(changed_files):
         return "patch", "Rust crate fix or internal behavior change"
     return "patch", "release-worthy docs, dependency, or packaged install asset changed"
 
@@ -521,13 +599,33 @@ def run_self_tests() -> int:
             )
             self.assertEqual(release_type, "major")
 
-        def test_substantial_source_change_is_minor(self) -> None:
+        def test_substantial_public_capability_change_is_minor(self) -> None:
             release_type, reason = classify_auto_release(
                 [synthetic_commit("Add BrowserProfile accept_downloads parity")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "crates/browser-use-cdp/tests/browser_profile.rs",
+                    "docs/CONFORMANCE.md",
+                ),
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("public capability", reason)
+
+        def test_feature_commit_is_minor_even_without_docs(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("feat(cdp): support HAR recording")],
                 ("crates/browser-use-cdp/src/lib.rs",),
             )
             self.assertEqual(release_type, "minor")
-            self.assertIn("substantial", reason)
+            self.assertIn("feature commit", reason)
+
+        def test_additive_source_without_public_artifact_is_patch(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add internal BrowserProfile cache bookkeeping")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Rust crate", reason)
 
         def test_internal_source_or_docs_change_is_patch(self) -> None:
             source_release_type, _ = classify_auto_release(

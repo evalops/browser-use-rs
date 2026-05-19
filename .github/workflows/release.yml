@@ -7,7 +7,6 @@ on:
     tags:
       - "v*"
     paths:
-      - ".github/workflows/release.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "LICENSE"
@@ -20,13 +19,11 @@ on:
       - "docs/INSTALL.md"
       - "docs/MCP.md"
       - "docs/RELEASE.md"
-      - "docs/RELEASE_AUTOMATION.md"
       - "rust-toolchain.toml"
       - "crates/**"
       - "packaging/homebrew/**"
       - "packaging/launchd/**"
       - "packaging/systemd/**"
-      - "scripts/release-version.py"
   workflow_dispatch:
     inputs:
       release_type:
