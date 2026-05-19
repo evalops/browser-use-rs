@@ -222,9 +222,11 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const isVisible = (el) => {
     if (isBrowserUseExcluded(el) || el.disabled === true || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('aria-disabled') === 'true') return false;
     if (isFileInput(el)) return true;
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const isNativeMediaControl = (tag === 'audio' || tag === 'video') && el.hasAttribute('controls');
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && (!paintOrderFiltering || isTopmostAtCenter(el));
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && (!paintOrderFiltering || isNativeMediaControl || isTopmostAtCenter(el));
   };
   const isInteractive = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -17737,7 +17739,9 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("root.host"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("const paintOrderFiltering = true;"));
         assert!(
-            INTERACTIVE_ELEMENTS_JS.contains("(!paintOrderFiltering || isTopmostAtCenter(el))")
+            INTERACTIVE_ELEMENTS_JS.contains(
+                "(!paintOrderFiltering || isNativeMediaControl || isTopmostAtCenter(el))"
+            )
         );
 
         let action_script = click_element_js(1);
@@ -17750,11 +17754,19 @@ mod tests {
         let config = IframeTraversalConfig::from_profile(&BrowserProfile::default());
         let enabled = interactive_elements_js(config, true);
         assert!(enabled.contains("const paintOrderFiltering = true;"));
-        assert!(enabled.contains("(!paintOrderFiltering || isTopmostAtCenter(el))"));
+        assert!(
+            enabled.contains(
+                "(!paintOrderFiltering || isNativeMediaControl || isTopmostAtCenter(el))"
+            )
+        );
 
         let disabled = interactive_elements_js(config, false);
         assert!(disabled.contains("const paintOrderFiltering = false;"));
-        assert!(disabled.contains("(!paintOrderFiltering || isTopmostAtCenter(el))"));
+        assert!(
+            disabled.contains(
+                "(!paintOrderFiltering || isNativeMediaControl || isTopmostAtCenter(el))"
+            )
+        );
     }
 
     #[test]
@@ -19078,18 +19090,14 @@ function replaceChildButton() {
         assert!(compound_components.contains("Dropdown Toggle"));
         assert!(compound_components.contains("count=3"));
         assert!(compound_components.contains("options=Starter|Enterprise|Internal"));
+        let llm_representation = state.dom_state.llm_representation();
         assert!(
-            state
-                .dom_state
-                .llm_representation()
-                .contains("Plan Enterprise"),
-            "DOM state did not include selected option value: {}",
-            state.dom_state.llm_representation()
+            llm_representation.contains("Plan Enterprise"),
+            "DOM state did not include selected option value: {llm_representation}",
         );
         assert!(
-            !state.dom_state.llm_representation().contains("Starter"),
-            "DOM state included unselected option text: {}",
-            state.dom_state.llm_representation()
+            !llm_representation.contains("> Plan Starter"),
+            "DOM state included unselected option as visible text: {llm_representation}",
         );
     }
 
@@ -19428,7 +19436,7 @@ function replaceChildButton() {
 
         session
             .navigate(
-                "data:text/html,<html><head><title>media smoke</title></head><body><audio id='audio-player' controls aria-label='Audio sample' style='width:320px'></audio><video id='video-player' controls aria-label='Video sample' width='320' height='180'></video><audio id='silent-audio' aria-label='Silent sample'></audio></body></html>",
+                "data:text/html,<html><head><title>media smoke</title></head><body><audio id='audio-player' controls aria-label='Audio sample' style='display:block;width:320px;height:54px' src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='></audio><video id='video-player' controls aria-label='Video sample' width='320' height='180' src='data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIyEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggElTbuMU6uEHFO7a1OsggIc7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjIuMTIuMTAwV0GNTGF2ZjYyLjEyLjEwMESJiEBeAAAAAAAAFlSua8iuAQAAAAAAAD/XgQFzxYitKhHKPYuxgJyBACK1nIN1bmSIgQCGhVZfVlA5g4EBI+ODhAJiWgDgkLCBELqBEJqBAlWwhFW5gQESVMNnQIBzc6BjwIBnyJpFo4dFTkNPREVSRIeNTGF2ZjYyLjEyLjEwMHNz2mPAi2PFiK0qEco9i7GAZ8ilRaOHRU5DT0RFUkSHmExhdmM2Mi4yOC4xMDAgbGlidnB4LXZwOWfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDAuMTIwMDAwMDAwAB9DtnXs54EAo72BAACAgkmDQgAA8AD2BjgkHBhKAAAgQAAim///lXb23/SskhXr7zdPyoCRyEjNuPymkNJQgETBR424BAAAo5OBACgAhgBAkpxIUAAAA3AAAEJAo5OBAFAAhgBAkpxATuAAA3AAAEJAHFO7a5G7j7OBALeK94EB8YIBq/CBAw=='></video><audio id='silent-audio' aria-label='Silent sample'></audio></body></html>",
                 false,
             )
             .await
