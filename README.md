@@ -77,10 +77,13 @@ includes:
   each wait. `record_har_path`/`save_har_path` enables best-effort HAR 1.2
   capture for HTTPS CDP traffic, with upstream `record_har_mode=full|minimal`
   filtering and `record_har_content=omit|embed|attach` body handling flushed
-  on `close_browser()`. `BrowserProfile.channel` accepts upstream browser
-  channel names such as `chrome-beta`, `chrome-dev`, `chrome-canary`, and
-  `msedge`, and uses channel-specific executable candidates when no explicit
-  executable path or `BROWSER_USE_CHROME` override is supplied.
+  on `close_browser()`. Video recording config fields (`record_video_dir` with
+  `save_recording_path`, `record_video_size`, and `record_video_framerate`)
+  round-trip without changing launch behavior until runtime recording lands.
+  `BrowserProfile.channel` accepts upstream browser channel names such as
+  `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
+  channel-specific executable candidates when no explicit executable path or
+  `BROWSER_USE_CHROME` override is supplied.
   Launch profiles accept downloads by default, using an explicit
   `downloads_path` or a session-owned temporary directory to enable Chrome
   download behavior. Upstream aliases `downloads_dir` and

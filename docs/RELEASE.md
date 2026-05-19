@@ -76,6 +76,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `close_browser()` flush, including `full` vs `minimal` filtering and
   `omit`/`embed`/`attach` body representation. Video and trace recording remain
   separate future recording surfaces.
+- Video recording configuration parity for `record_video_dir` with upstream
+  `save_recording_path` alias, optional `record_video_size`, and
+  `record_video_framerate=30`. These profile fields round-trip without changing
+  direct-CDP launch behavior until runtime video recording is implemented.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

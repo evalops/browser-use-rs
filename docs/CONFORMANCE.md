@@ -125,6 +125,12 @@ keeps entries for the main page origin, `full` keeps captured HTTPS entries
 except favicon requests, and `omit`/`embed`/`attach` control response and
 request body representation. Video recording and Playwright trace surfaces
 remain separate future recording work.
+`BrowserProfile.record_video_dir` defaults to unset and accepts upstream
+`save_recording_path`; canonical JSON emits `record_video_dir`.
+`record_video_size` uses the same viewport-size shape, and
+`record_video_framerate` defaults to `30`. These fields are config-parity only
+in the current direct-CDP implementation and do not affect launch planning
+until the runtime video-recorder slice lands.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail

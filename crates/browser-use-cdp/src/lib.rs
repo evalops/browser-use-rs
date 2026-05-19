@@ -2079,6 +2079,16 @@ pub struct BrowserProfile {
     )]
     pub record_har_path: Option<PathBuf>,
     #[serde(
+        default,
+        alias = "save_recording_path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub record_video_dir: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_video_size: Option<BrowserViewport>,
+    #[serde(default = "default_record_video_framerate")]
+    pub record_video_framerate: u32,
+    #[serde(
         default = "default_minimum_wait_page_load_time",
         deserialize_with = "deserialize_non_negative_f64"
     )]
@@ -2158,6 +2168,9 @@ impl Default for BrowserProfile {
             record_har_content: RecordHarContent::default(),
             record_har_mode: RecordHarMode::default(),
             record_har_path: None,
+            record_video_dir: None,
+            record_video_size: None,
+            record_video_framerate: default_record_video_framerate(),
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             highlight_elements: default_highlight_elements(),
@@ -2185,6 +2198,10 @@ fn default_headless() -> bool {
 
 fn default_chromium_sandbox() -> bool {
     true
+}
+
+fn default_record_video_framerate() -> u32 {
+    30
 }
 
 fn default_profile_directory() -> String {
@@ -12077,6 +12094,55 @@ mod tests {
         let encoded = serde_json::to_value(alias).expect("canonical HAR profile json");
         assert_eq!(encoded["record_har_path"], json!(save_har_path));
         assert!(encoded.get("save_har_path").is_none());
+    }
+
+    #[test]
+    fn browser_profile_video_recording_config_matches_upstream_shape() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.record_video_dir, None);
+        assert_eq!(decoded.record_video_size, None);
+        assert_eq!(decoded.record_video_framerate, 30);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("record_video_dir").is_none());
+        assert!(encoded.get("record_video_size").is_none());
+        assert_eq!(encoded["record_video_framerate"], json!(30));
+
+        let save_recording_path = "/tmp/browser-use-rs/videos";
+        let configured: BrowserProfile = serde_json::from_value(json!({
+            "save_recording_path": save_recording_path,
+            "record_video_size": {
+                "width": 1024,
+                "height": 768
+            },
+            "record_video_framerate": 24
+        }))
+        .expect("video recording profile");
+        assert_eq!(
+            configured.record_video_dir.as_deref(),
+            Some(Path::new(save_recording_path))
+        );
+        assert_eq!(
+            configured.record_video_size,
+            Some(BrowserViewport {
+                width: 1024,
+                height: 768
+            })
+        );
+        assert_eq!(configured.record_video_framerate, 24);
+
+        let encoded = serde_json::to_value(&configured).expect("canonical video profile json");
+        assert_eq!(encoded["record_video_dir"], json!(save_recording_path));
+        assert!(encoded.get("save_recording_path").is_none());
+        assert_eq!(
+            encoded["record_video_size"],
+            json!({ "width": 1024, "height": 768 })
+        );
+        assert_eq!(encoded["record_video_framerate"], json!(24));
+        assert_eq!(
+            configured.launch_plan().args,
+            BrowserProfile::default().launch_plan().args
+        );
     }
 
     #[tokio::test]

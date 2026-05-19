@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream recording/profile parity slice after #132 lands and CI is green.
+- Next upstream recording/profile parity slice after #133 lands and CI is green.
 
 ## Completed Tracks
 
+- [#133 Add BrowserProfile video recording config parity](https://github.com/evalops/browser-use-rs/issues/133)
 - [#132 Add BrowserProfile HAR recording parity](https://github.com/evalops/browser-use-rs/issues/132)
 - [#131 Add BrowserProfile executable_path alias parity](https://github.com/evalops/browser-use-rs/issues/131)
 - [#130 Add BrowserProfile DOM highlight overlay parity](https://github.com/evalops/browser-use-rs/issues/130)
@@ -238,6 +239,9 @@ Implemented:
   configured `record_har_path`/`save_har_path` HAR 1.2 recording for HTTPS
   CDP traffic with upstream `full`/`minimal` filtering and
   `omit`/`embed`/`attach` body representation,
+  video recording config fields (`record_video_dir`/`save_recording_path`,
+  `record_video_size`, and `record_video_framerate`) as profile-only parity
+  pending runtime capture,
   CDP websocket closure diagnostics, and direct `Page.navigate` plus stuck
   HTTP(S) request timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with
