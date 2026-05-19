@@ -1612,6 +1612,8 @@ pub struct BrowserProfile {
     pub remote_debugging_port: Option<u16>,
     #[serde(default = "default_headless")]
     pub headless: bool,
+    #[serde(default)]
+    pub devtools: bool,
     #[serde(default = "default_chromium_sandbox")]
     pub chromium_sandbox: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1663,6 +1665,7 @@ impl Default for BrowserProfile {
             executable_path: None,
             remote_debugging_port: None,
             headless: default_headless(),
+            devtools: false,
             chromium_sandbox: default_chromium_sandbox(),
             user_data_dir: None,
             profile_directory: default_profile_directory(),
@@ -1804,8 +1807,13 @@ impl BrowserProfile {
         )
     }
 
-    #[must_use]
-    pub fn launch_plan(&self) -> BrowserLaunchPlan {
+    pub fn try_launch_plan(&self) -> Result<BrowserLaunchPlan, BrowserError> {
+        if self.headless && self.devtools {
+            return Err(BrowserError::LaunchFailed(
+                "headless=true and devtools=true cannot both be set".to_owned(),
+            ));
+        }
+
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
         let window_size = self.window_size.as_ref().unwrap_or(&self.viewport);
         let mut args = vec![
@@ -1824,6 +1832,10 @@ impl BrowserProfile {
 
         if self.headless {
             args.push("--headless=new".to_owned());
+        }
+
+        if self.devtools {
+            args.push("--auto-open-devtools-for-tabs".to_owned());
         }
 
         if let Some(user_data_dir) = &self.user_data_dir {
@@ -1871,10 +1883,15 @@ impl BrowserProfile {
 
         args.extend(self.args.iter().cloned());
 
-        BrowserLaunchPlan {
+        Ok(BrowserLaunchPlan {
             executable_path: self.executable_path.clone(),
             args,
-        }
+        })
+    }
+
+    #[must_use]
+    pub fn launch_plan(&self) -> BrowserLaunchPlan {
+        self.try_launch_plan().expect("valid browser launch plan")
     }
 
     pub async fn launch_local(&self) -> Result<LaunchedBrowser, BrowserError> {
@@ -1893,7 +1910,7 @@ impl BrowserProfile {
         let mut launch_profile = self.clone();
         launch_profile.executable_path = Some(executable_path.clone());
         launch_profile.user_data_dir = Some(user_data_dir.clone());
-        let plan = launch_profile.launch_plan();
+        let plan = launch_profile.try_launch_plan()?;
 
         let mut command = Command::new(&executable_path);
         command
@@ -7864,6 +7881,13 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert!(!profile.devtools);
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--auto-open-devtools-for-tabs")
+        );
         assert_eq!(profile.window_size, None);
         assert_eq!(profile.window_position, None);
         assert!(
@@ -7908,10 +7932,12 @@ mod tests {
     #[test]
     fn browser_profile_security_toggles_default_false_in_json() {
         let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(!decoded.devtools);
         assert!(!decoded.disable_security);
         assert!(!decoded.deterministic_rendering);
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["devtools"], json!(false));
         assert_eq!(encoded["disable_security"], json!(false));
         assert_eq!(encoded["deterministic_rendering"], json!(false));
     }
@@ -8481,6 +8507,61 @@ mod tests {
                 "generated chromium_sandbox=false launch arg {arg} should come before caller args"
             );
         }
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_devtools_flag_when_headful() {
+        let profile = BrowserProfile {
+            headless: false,
+            devtools: true,
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert!(
+            plan.args
+                .contains(&"--auto-open-devtools-for-tabs".to_owned())
+        );
+        assert!(!plan.args.contains(&"--headless=new".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_rejects_devtools_with_headless() {
+        let profile = BrowserProfile {
+            devtools: true,
+            ..BrowserProfile::default()
+        };
+
+        let error = profile
+            .try_launch_plan()
+            .expect_err("headless devtools should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("headless=true and devtools=true cannot both be set")
+        );
+    }
+
+    #[test]
+    fn launch_plan_keeps_devtools_flag_before_custom_args() {
+        let profile = BrowserProfile {
+            headless: false,
+            devtools: true,
+            args: vec![
+                "--auto-open-devtools-for-tabs=false".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let generated_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs");
+        let custom_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs=false");
+
+        assert!(generated_index < custom_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
