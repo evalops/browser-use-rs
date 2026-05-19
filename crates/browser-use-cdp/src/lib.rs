@@ -10131,6 +10131,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_connect_uses_downloads_path_alias_for_download_behavior() {
+        let downloads_dir = TempDir::new().expect("downloads temp dir");
+        let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
+        let profile: BrowserProfile = serde_json::from_value(json!({
+            "permissions": [],
+            "save_downloads_path": downloads_dir.path().display().to_string()
+        }))
+        .expect("deserialize alias profile");
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        assert_eq!(
+            session.downloads_path.as_deref(),
+            Some(downloads_dir.path())
+        );
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(commands[0].method, "Browser.setDownloadBehavior");
+        assert_eq!(
+            commands[0].params,
+            json!({
+                "behavior": "allow",
+                "downloadPath": downloads_dir.path().display().to_string(),
+                "eventsEnabled": true
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn direct_connect_generates_session_owned_downloads_path_when_accepted() {
         let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
         let profile = BrowserProfile {
