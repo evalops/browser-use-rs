@@ -126,9 +126,9 @@ Review risks:
 - URL shortening must not rewrite image URLs or non-user/assistant content.
 - Usage summaries must tolerate providers that omit partial usage fields.
 
-### `lib.rs`
+### `executor.rs`
 
-`lib.rs` re-exports the public core API and holds action execution helpers:
+`executor.rs` owns browser-action execution:
 
 - `ActionExecutor`;
 - `BrowserActionExecutor`;
@@ -143,6 +143,12 @@ Review risks:
   sequence-terminating actions.
 - Page-extraction LLM results should become `ActionResult` values, not agent
   control-flow errors.
+
+### `lib.rs`
+
+`lib.rs` declares modules, re-exports the public core API, and keeps
+crate-level compatibility shims for tests and sibling modules. New behavior
+should almost always live in one of the focused modules above.
 
 ## CDP Crate
 
@@ -161,23 +167,87 @@ Primary public surface:
 
 Responsibilities:
 
-- browser profile defaults, aliases, and launch plans;
-- Browser Use Cloud session creation/stop;
-- local Chrome executable discovery and launch;
 - direct CDP session creation and attach;
-- storage-state load/save;
-- HAR, video, and trace artifact recorders;
 - browser action methods for the `BrowserSession` trait;
 - root public re-exports for split modules.
 
 Review risks:
 
-- Profile serde aliases mirror upstream names. Preserve canonical output while
-  accepting upstream aliases.
-- Artifact recorders should report diagnostics without breaking normal browser
-  use when optional dependencies fail.
+- `CdpBrowserSession` owns live target state. Move pure profile, storage,
+  recording, DOM, transport, and watchdog behavior into the focused modules.
 - `BrowserSession` methods are consumed by `browser-use-core`; errors and
   side effects should stay action-shaped.
+
+### `cloud.rs`
+
+Responsibilities:
+
+- Browser Use Cloud create/stop requests;
+- API-key resolution from explicit settings, env, and auth config;
+- cloud HTTP headers and customer-facing error messages.
+
+Review risks:
+
+- Keep provider credentials out of serialized profile or tool input.
+- Preserve upstream request aliases and tri-state proxy-country behavior.
+
+### `profile.rs`
+
+Responsibilities:
+
+- `BrowserProfile` defaults, serde aliases, and validation;
+- Chrome executable discovery and channel candidates;
+- launch-plan argument construction and deduplication;
+- local browser process lifecycle and `DevToolsActivePort` parsing.
+
+Review risks:
+
+- Profile serde aliases mirror upstream names. Preserve canonical output while
+  accepting upstream aliases.
+- Launch argument ordering is tested because it affects upstream parity.
+
+### `lifecycle.rs`
+
+Responsibilities:
+
+- lifecycle event DTOs;
+- adapter-event taxonomy for upstream-shaped consumers;
+- subscription lag/closed semantics.
+
+Review risks:
+
+- Event names are integration surface. Add variants deliberately and test
+  adapter mapping.
+
+### `recording.rs`
+
+Responsibilities:
+
+- HAR event collection and file writing;
+- trace artifact generation;
+- video/GIF recording from screencast frames;
+- artifact-path deduplication and diagnostics.
+
+Review risks:
+
+- Artifact recorders should report diagnostics without breaking normal browser
+  use when optional dependencies fail.
+- Avoid leaking trace artifact paths into lifecycle JSON except through explicit
+  metadata fields.
+
+### `storage.rs`
+
+Responsibilities:
+
+- cookie and origin storage-state capture;
+- frame-origin discovery;
+- DOMStorage conversion;
+- storage-state load/apply/write helpers.
+
+Review risks:
+
+- Treat storage-state shape as public compatibility surface.
+- Origin scripts must not run on the wrong origin.
 
 ### `transport.rs`
 
@@ -362,11 +432,12 @@ Review risks:
 
 1. Add the action DTO and enum variant in `browser-use-tools`.
 2. Add prompt schema support in `browser-use-core/src/prompt.rs`.
-3. Add execution mapping in `browser-use-core/src/lib.rs`.
+3. Add execution mapping in `browser-use-core/src/executor.rs`.
 4. Add a `BrowserSession` trait method if the action needs browser side
    effects.
-5. Implement the CDP behavior in `browser-use-cdp/src/lib.rs` or supporting
-   modules.
+5. Implement the CDP behavior in the narrowest supporting module, usually
+   `dom.rs`, `profile.rs`, `recording.rs`, `storage.rs`, `watchdog.rs`, or the
+   session methods in `lib.rs`.
 6. Add unit tests for schema, prompt rendering, execution, and CDP behavior.
 7. Add CLI/MCP surfaces only if the action is user-facing there.
 

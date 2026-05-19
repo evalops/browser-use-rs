@@ -93,9 +93,10 @@ that downstream callers use, while private modules hold the implementation.
 | `history.rs` | `AgentHistory`, `AgentHistoryItem`, `AgentOutput`, action results, replay/rematch planning, compacted memory, usage summary shape, terminal-result helpers. |
 | `settings.rs` | `AgentSettings`, vision modes, action and wait timeout coercion, message compaction settings, generated GIF settings, sensitive data values. |
 | `file_system.rs` | Managed sandbox paths, file state serialization, text/PDF/DOCX/image file actions, result display helpers. |
+| `executor.rs` | `ActionExecutor`, `BrowserActionExecutor`, browser action side effects, page extraction preparation, screenshot/PDF output helpers, replay execution helpers. |
 | `urls.rs` | Task URL extraction, search URL building, prompt URL shortening, model-output URL restoration. |
 | `usage.rs` | Token and cost aggregation from provider usage metadata. |
-| `lib.rs` | Public re-exports, `ActionExecutor`, `BrowserActionExecutor`, browser action implementations, extraction helpers, replay execution helpers, tests. |
+| `lib.rs` | Public re-exports and crate-level compatibility shims for tests and sibling modules. |
 
 ### Agent Loop Ownership
 
@@ -110,7 +111,8 @@ that downstream callers use, while private modules hold the implementation.
 - when history compaction or judge validation runs.
 
 Prompt wording and schemas stay in `prompt.rs`. Browser action side effects
-stay in `lib.rs` through `BrowserActionExecutor` and the `BrowserSession` trait.
+stay in `executor.rs` through `BrowserActionExecutor` and the `BrowserSession`
+trait.
 
 ### Prompt Ownership
 
@@ -135,9 +137,14 @@ management and live CDP session behavior.
 
 | Module | Owns |
 | --- | --- |
-| `lib.rs` | Public browser/profile types, Browser Use Cloud client, Chrome launch plans, lifecycle event DTOs, CDP session state, HAR/video/trace recorders, storage state, action methods, `BrowserSession` trait. |
+| `lib.rs` | Public browser primitives, CDP session state, action methods, root re-exports, `BrowserSession` trait, and compatibility tests. |
+| `cloud.rs` | Browser Use Cloud request/response/client types, API-key discovery, auth-config lookup, cloud HTTP error rendering. |
+| `profile.rs` | Browser profile serde defaults and aliases, Chrome launch plans, executable discovery, local process launch, `DevToolsActivePort` parsing. |
+| `lifecycle.rs` | Lifecycle event DTOs, upstream adapter event mapping, lifecycle subscriptions, lag/closed stream errors. |
 | `transport.rs` | Websocket connection, CDP command actor, response routing, event broadcast, reconnect attempts, stale session generation checks, websocket header validation. |
 | `dom.rs` | Injected DOM/action JavaScript, element highlight scripts, DOMSnapshot and accessibility joins, iframe target merging, compact DOM parsing, pagination detection, cached-index target mapping. |
+| `recording.rs` | HAR capture, trace artifacts, screencast video/GIF writing, artifact path generation, recorder diagnostics. |
+| `storage.rs` | Cookie/origin storage save/load, frame-origin discovery, DOMStorage conversion, storage-state counts and file writes. |
 | `watchdog.rs` | Lifecycle watchdog, security watchdog, URL-policy actions, bounded event buffers, websocket lifecycle event mapping, network timeouts, download event mapping, auto-PDF download handling. |
 
 ### CDP Session Shape
@@ -206,6 +213,20 @@ Watchdogs are owned by `CdpBrowserSession`; dropping the session aborts their
 tasks. Watchdog diagnostics are available through lifecycle subscriptions and
 selected state fields, but they are not added to normal agent answers.
 
+### Profile, Recording, And Storage Boundaries
+
+`profile.rs` translates user-facing browser profile options into launch plans
+and cloud/local endpoints. It should not know about live target state after a
+session starts.
+
+`recording.rs` observes CDP events and writes optional artifacts. Recording
+failures become lifecycle diagnostics; they should not change browser action
+semantics unless a required CDP command fails.
+
+`storage.rs` owns the browser storage-state contract. Session methods may ask it
+to read, write, or apply state, but cookie/origin normalization should stay in
+that module.
+
 ## `browser-use-dom`
 
 `browser-use-dom` is intentionally data-focused. It defines:
@@ -273,12 +294,16 @@ Compatibility-sensitive public exports include:
 - New prompt text or schema: `browser-use-core/src/prompt.rs`.
 - New agent control-flow guard: `browser-use-core/src/agent.rs`.
 - New browser action schema: `browser-use-tools/src/lib.rs`.
-- New browser action execution: `browser-use-core/src/lib.rs` and the
+- New browser action execution: `browser-use-core/src/executor.rs` and the
   `BrowserSession` trait implementation in `browser-use-cdp/src/lib.rs`.
 - New DOM state field: `browser-use-dom/src/lib.rs` plus parser/rendering in
   `browser-use-cdp/src/dom.rs` and prompt use in `browser-use-core/src/prompt.rs`.
 - New CDP command transport behavior: `browser-use-cdp/src/transport.rs`.
 - New browser safety/lifecycle behavior: `browser-use-cdp/src/watchdog.rs`.
+- New profile/cloud launch behavior: `browser-use-cdp/src/profile.rs` or
+  `browser-use-cdp/src/cloud.rs`.
+- New artifact or storage behavior: `browser-use-cdp/src/recording.rs` or
+  `browser-use-cdp/src/storage.rs`.
 - New provider behavior: `browser-use-llm/src/lib.rs`.
 - New CLI/MCP surface: `browser-use-cli/src/main.rs` and
   `browser-use-mcp/src/lib.rs`.
