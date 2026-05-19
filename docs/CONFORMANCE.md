@@ -126,6 +126,15 @@ The fallback remains bounded to attached page and iframe target sessions that
 Chrome exposes through CDP. It does not use browser profile internals or unsafe
 cross-origin DOM reads outside those target sessions.
 
+`BrowserProfile.cross_origin_iframes`, `max_iframes`, and `max_iframe_depth`
+are honored at this boundary. Same-origin iframe document traversal is capped
+inside the injected DOM snapshot script. Chrome OOPIF target traversal keeps the
+parent iframe element visible, can be disabled with `cross_origin_iframes=false`,
+and caps direct iframe target fanout before attaching CDP sessions. The current
+direct-CDP implementation does not recursively reconstruct offsets for nested
+OOPIF target trees beyond attached page targets; deeper browser-profile
+internals stay out of scope until Chrome exposes a safe offset source.
+
 ## Profile-Wide Storage Boundary
 
 The supported storage-state boundary is intentionally the current page plus

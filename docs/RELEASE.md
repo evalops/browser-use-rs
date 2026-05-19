@@ -77,7 +77,14 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   screenshots, page metrics, compact DOM state, element bounds, open
   shadow-root indexing, same-origin iframe tag and content indexing, scrollable
   element metadata, Chrome OOPIF cross-origin iframe target content indexing
-  and cached-node actions, automation-friendly data/ARIA/value attributes,
+  and cached-node actions. `BrowserProfile.cross_origin_iframes`,
+  `max_iframes`, and `max_iframe_depth` use upstream-compatible defaults,
+  preserve parent iframe elements when cross-origin traversal is disabled, cap
+  same-origin iframe-document traversal inside the injected snapshot script,
+  and cap direct Chrome OOPIF target fanout before CDP attach. Nested OOPIF
+  offset stitching remains bounded to attached target pages Chrome exposes to
+  this direct-CDP path; the port does not infer deeper offsets from browser
+  profile internals. Automation-friendly data/ARIA/value attributes,
   native boolean/read-only state, validation patterns, `data-state`, static
   history-matching attributes, accessibility-tree
   role/name/description/state/value enrichment with compact

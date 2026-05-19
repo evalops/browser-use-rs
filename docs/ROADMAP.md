@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#117 Add BrowserProfile iframe traversal limits](https://github.com/evalops/browser-use-rs/issues/117)
+- Next upstream parity slice after #117 lands and CI is green.
 
 ## Completed Tracks
 
+- [#117 Add BrowserProfile iframe traversal limits](https://github.com/evalops/browser-use-rs/issues/117)
 - [#116 Refresh upstream target to 18aae0b and pin security hardening parity](https://github.com/evalops/browser-use-rs/issues/116)
 - [#115 Add BrowserProfile env launch parity](https://github.com/evalops/browser-use-rs/issues/115)
 - [#113 Add BrowserProfile ignore_default_args and default Chrome arg parity](https://github.com/evalops/browser-use-rs/issues/113)
@@ -311,7 +312,9 @@ Implemented:
   metadata checks.
 - DOM serializer marks scrollable indexed elements, indexes same-origin iframe
   tags and contents, indexes Chrome OOPIF cross-origin iframe targets with
-  cached-node actions, indexes common ARIA widget roles and disclosure elements,
+  cached-node actions, honors `BrowserProfile.cross_origin_iframes`,
+  `max_iframes`, and `max_iframe_depth` traversal controls with upstream
+  defaults, indexes common ARIA widget roles and disclosure elements,
   enriches indexed elements with browser accessibility-tree roles, names,
   descriptions, state/value properties, compact `ax_name`/`ax_description`
   metadata, AX hidden/disabled suppression, quiet AX

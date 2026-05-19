@@ -72,7 +72,10 @@ includes:
 - DOM and accessibility-oriented snapshot serialization for browser-use's
   numbered element/action model, including open shadow DOM, same-origin iframe
   tags and contents, Chrome OOPIF cross-origin iframe target contents and
-  cached-node actions, accessibility-tree role/name/description/state/value
+  cached-node actions. `BrowserProfile.cross_origin_iframes`,
+  `max_iframes`, and `max_iframe_depth` bound iframe traversal with upstream
+  defaults while preserving parent iframe elements when cross-origin traversal
+  is disabled. Accessibility-tree role/name/description/state/value
   enrichment, compact `ax_name`/`ax_description` metadata, AX hidden/disabled
   suppression,
   backend and frontend node ids, accessible labels, image-alt control names,
