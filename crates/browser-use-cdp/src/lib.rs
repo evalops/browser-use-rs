@@ -1595,6 +1595,19 @@ fn render_cloud_error_body(body: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IgnoreDefaultArgs {
+    All(bool),
+    List(Vec<String>),
+}
+
+impl Default for IgnoreDefaultArgs {
+    fn default() -> Self {
+        Self::List(default_ignore_default_args())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cdp_url: Option<String>,
@@ -1626,6 +1639,8 @@ pub struct BrowserProfile {
     pub storage_state_path: Option<PathBuf>,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub ignore_default_args: IgnoreDefaultArgs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
     #[serde(default = "default_browser_permissions")]
@@ -1674,6 +1689,7 @@ impl Default for BrowserProfile {
             downloads_path: None,
             storage_state_path: None,
             args: Vec::new(),
+            ignore_default_args: IgnoreDefaultArgs::default(),
             user_agent: None,
             permissions: default_browser_permissions(),
             allowed_domains: Vec::new(),
@@ -1715,6 +1731,13 @@ fn default_browser_permissions() -> Vec<String> {
         .collect()
 }
 
+fn default_ignore_default_args() -> Vec<String> {
+    DEFAULT_IGNORE_DEFAULT_ARGS
+        .iter()
+        .map(|arg| (*arg).to_owned())
+        .collect()
+}
+
 fn default_browser_start_timeout_ms() -> u64 {
     30_000
 }
@@ -1726,6 +1749,40 @@ fn default_navigation_timeout_ms() -> u64 {
 fn default_network_request_timeout_ms() -> u64 {
     10_000
 }
+
+const CHROME_DEFAULT_ARGS: &[&str] = &[
+    "--disable-field-trial-config",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-back-forward-cache",
+    "--disable-breakpad",
+    "--disable-client-side-phishing-detection",
+    "--disable-component-update",
+    "--no-default-browser-check",
+    "--disable-dev-shm-usage",
+    "--disable-hang-monitor",
+    "--disable-ipc-flooding-protection",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-renderer-backgrounding",
+    "--metrics-recording-only",
+    "--no-first-run",
+    "--no-service-autorun",
+    "--export-tagged-pdf",
+    "--disable-search-engine-choice-screen",
+    "--unsafely-disable-devtools-self-xss-warnings",
+    "--enable-features=NetworkService,NetworkServiceInProcess",
+    "--enable-network-information-downlink-max",
+    "--disable-sync",
+];
+
+const DEFAULT_IGNORE_DEFAULT_ARGS: &[&str] = &[
+    "--enable-automation",
+    "--disable-extensions",
+    "--hide-scrollbars",
+    "--disable-features=AcceptCHFrame,AutoExpandDetailsElement,AvoidUnnecessaryBeforeUnloadCheckSync,CertificateTransparencyComponentUpdater,DeferRendererTasksAfterInput,DestroyProfileOnBrowserClose,DialMediaRouteProvider,ExtensionManifestV2Disabled,GlobalMediaControls,HttpsUpgrades,ImprovedCookieControls,LazyFrameLoading,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate",
+];
 
 const CHROME_DISABLE_SECURITY_ARGS: &[&str] = &[
     "--disable-site-isolation-trials",
@@ -1835,12 +1892,12 @@ impl BrowserProfile {
     fn build_launch_plan(&self) -> BrowserLaunchPlan {
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
         let window_size = self.window_size.as_ref().unwrap_or(&self.viewport);
-        let mut args = vec![
-            format!("--remote-debugging-port={remote_debugging_port}"),
-            "--no-first-run".to_owned(),
-            "--no-default-browser-check".to_owned(),
-            format!("--window-size={},{}", window_size.width, window_size.height),
-        ];
+        let mut args = self.default_chrome_args();
+        args.push(format!("--remote-debugging-port={remote_debugging_port}"));
+        args.push(format!(
+            "--window-size={},{}",
+            window_size.width, window_size.height
+        ));
 
         if let Some(window_position) = &self.window_position {
             args.push(format!(
@@ -1901,10 +1958,26 @@ impl BrowserProfile {
         }
 
         args.extend(self.args.iter().cloned());
+        let args = normalize_launch_args(args);
 
         BrowserLaunchPlan {
             executable_path: self.executable_path.clone(),
             args,
+        }
+    }
+
+    fn default_chrome_args(&self) -> Vec<String> {
+        match &self.ignore_default_args {
+            IgnoreDefaultArgs::All(true) => Vec::new(),
+            IgnoreDefaultArgs::All(false) => CHROME_DEFAULT_ARGS
+                .iter()
+                .map(|arg| (*arg).to_owned())
+                .collect(),
+            IgnoreDefaultArgs::List(ignored_args) => CHROME_DEFAULT_ARGS
+                .iter()
+                .filter(|arg| !ignored_args.iter().any(|ignored| ignored == **arg))
+                .map(|arg| (*arg).to_owned())
+                .collect(),
         }
     }
 
@@ -1949,6 +2022,77 @@ impl BrowserProfile {
             }
         }
     }
+}
+
+fn normalize_launch_args(args: Vec<String>) -> Vec<String> {
+    dedupe_launch_args_by_switch(merge_disable_features_args(args))
+}
+
+fn merge_disable_features_args(args: Vec<String>) -> Vec<String> {
+    let mut feature_values = Vec::new();
+    let mut last_disable_features_index = None;
+
+    for (index, arg) in args.iter().enumerate() {
+        let Some(value) = disable_features_value(arg) else {
+            continue;
+        };
+        last_disable_features_index = Some(index);
+        feature_values.extend(value.split(',').map(str::to_owned));
+    }
+
+    let Some(last_disable_features_index) = last_disable_features_index else {
+        return args;
+    };
+    let Some(merged_features) = merged_disable_features_value(&feature_values) else {
+        return args
+            .into_iter()
+            .filter(|arg| disable_features_value(arg).is_none())
+            .collect();
+    };
+    let merged_arg = format!("--disable-features={merged_features}");
+
+    args.into_iter()
+        .enumerate()
+        .filter_map(|(index, arg)| {
+            if disable_features_value(&arg).is_none() {
+                return Some(arg);
+            }
+            (index == last_disable_features_index).then(|| merged_arg.clone())
+        })
+        .collect()
+}
+
+fn disable_features_value(arg: &str) -> Option<&str> {
+    arg.strip_prefix("--disable-features=")
+}
+
+fn merged_disable_features_value(values: &[String]) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    let mut unique_features = Vec::new();
+    for value in values {
+        let feature = value.trim();
+        if feature.is_empty() || !seen.insert(feature.to_owned()) {
+            continue;
+        }
+        unique_features.push(feature.to_owned());
+    }
+    (!unique_features.is_empty()).then(|| unique_features.join(","))
+}
+
+fn dedupe_launch_args_by_switch(args: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::new();
+    for arg in args.into_iter().rev() {
+        if seen.insert(launch_arg_key(&arg).to_owned()) {
+            deduped.push(arg);
+        }
+    }
+    deduped.reverse();
+    deduped
+}
+
+fn launch_arg_key(arg: &str) -> &str {
+    arg.split_once('=').map_or(arg, |(key, _)| key)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -8097,9 +8241,14 @@ mod tests {
                 .contains(&"--auto-open-devtools-for-tabs".to_owned())
         );
         assert!(
-            !CHROME_DOCKER_ARGS
-                .iter()
-                .any(|arg| plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg))
+            ![
+                "--no-sandbox",
+                "--disable-gpu-sandbox",
+                "--disable-setuid-sandbox",
+                "--no-xshm"
+            ]
+            .iter()
+            .any(|arg| plan.args.iter().any(|plan_arg| plan_arg.as_str() == *arg))
         );
         assert_eq!(profile.profile_directory, "Default");
         assert!(
@@ -8149,6 +8298,42 @@ mod tests {
         let explicit_empty: BrowserProfile =
             serde_json::from_value(json!({ "permissions": [] })).expect("empty permissions");
         assert!(explicit_empty.permissions.is_empty());
+    }
+
+    #[test]
+    fn default_profile_uses_upstream_ignore_default_args_shape() {
+        let profile = BrowserProfile::default();
+        let IgnoreDefaultArgs::List(ignored_args) = &profile.ignore_default_args else {
+            panic!("default ignore_default_args should be a list");
+        };
+        assert_eq!(ignored_args, &default_ignore_default_args());
+
+        let deserialized: BrowserProfile =
+            serde_json::from_value(json!({})).expect("deserialize default profile");
+        assert_eq!(
+            deserialized.ignore_default_args,
+            profile.ignore_default_args
+        );
+
+        let serialized = serde_json::to_value(&profile).expect("serialize profile");
+        assert_eq!(serialized["ignore_default_args"], json!(ignored_args));
+
+        let ignored_list: BrowserProfile = serde_json::from_value(json!({
+            "ignore_default_args": ["--disable-sync"]
+        }))
+        .expect("ignore list profile");
+        assert_eq!(
+            ignored_list.ignore_default_args,
+            IgnoreDefaultArgs::List(vec!["--disable-sync".to_owned()])
+        );
+
+        let ignored_all: BrowserProfile =
+            serde_json::from_value(json!({ "ignore_default_args": true }))
+                .expect("ignore all profile");
+        assert_eq!(
+            ignored_all.ignore_default_args,
+            IgnoreDefaultArgs::All(true)
+        );
     }
 
     #[test]
@@ -8764,6 +8949,138 @@ mod tests {
     }
 
     #[test]
+    fn launch_plan_emits_representative_upstream_default_args() {
+        let profile = BrowserProfile::default();
+        let plan = profile.launch_plan();
+
+        for arg in [
+            "--disable-background-networking",
+            "--disable-popup-blocking",
+            "--disable-sync",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+        ] {
+            assert!(
+                plan.args.iter().any(|plan_arg| plan_arg == arg),
+                "missing upstream default arg {arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_plan_suppresses_listed_default_args() {
+        let profile = BrowserProfile {
+            ignore_default_args: IgnoreDefaultArgs::List(vec![
+                "--disable-sync".to_owned(),
+                "--disable-popup-blocking".to_owned(),
+            ]),
+            ..BrowserProfile::default()
+        };
+        let plan = profile.launch_plan();
+
+        assert!(!plan.args.iter().any(|arg| arg == "--disable-sync"));
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--disable-popup-blocking")
+        );
+        assert!(
+            plan.args
+                .iter()
+                .any(|arg| arg == "--disable-background-networking")
+        );
+    }
+
+    #[test]
+    fn launch_plan_suppresses_all_default_args_when_requested() {
+        let profile = BrowserProfile {
+            ignore_default_args: IgnoreDefaultArgs::All(true),
+            ..BrowserProfile::default()
+        };
+        let plan = profile.launch_plan();
+
+        for arg in [
+            "--disable-background-networking",
+            "--disable-popup-blocking",
+            "--disable-sync",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ] {
+            assert!(
+                !plan.args.iter().any(|plan_arg| plan_arg == arg),
+                "default arg {arg} should be suppressed"
+            );
+        }
+        assert!(
+            plan.args
+                .iter()
+                .any(|arg| arg == "--remote-debugging-port=0")
+        );
+        assert!(plan.args.iter().any(|arg| arg == "--window-size=1280,720"));
+        assert!(plan.args.iter().any(|arg| arg == "--headless=new"));
+    }
+
+    #[test]
+    fn launch_plan_merges_disable_features_values_in_order() {
+        let profile = BrowserProfile {
+            disable_security: true,
+            args: vec![
+                "--disable-features=MediaRouter,Translate,IsolateOrigins".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        };
+        let plan = profile.launch_plan();
+        let disable_features_args = plan
+            .args
+            .iter()
+            .filter(|arg| arg.starts_with("--disable-features="))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            disable_features_args,
+            vec!["--disable-features=IsolateOrigins,site-per-process,MediaRouter,Translate"]
+        );
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_dedupes_duplicate_switches_with_last_value() {
+        let profile = BrowserProfile {
+            user_agent: Some("GeneratedAgent/1.0".to_owned()),
+            args: vec![
+                "--user-agent=CallerAgent/2.0".to_owned(),
+                "--remote-debugging-port=9333".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        };
+        let plan = profile.launch_plan();
+
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--user-agent=GeneratedAgent/1.0")
+        );
+        assert!(
+            plan.args
+                .iter()
+                .any(|arg| arg == "--user-agent=CallerAgent/2.0")
+        );
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--remote-debugging-port=0")
+        );
+        assert_eq!(
+            plan.args.last(),
+            Some(&"--remote-debugging-port=9333".to_owned())
+        );
+    }
+
+    #[test]
     fn launch_plan_emits_default_profile_directory_with_user_data_dir() {
         let profile = BrowserProfile {
             user_data_dir: Some(PathBuf::from("/tmp/browser-use-rs-profile")),
@@ -8820,13 +9137,17 @@ mod tests {
 
         let plan = profile.launch_plan();
         let user_data_index = arg_index(&plan.args, "--user-data-dir=/tmp/browser-use-rs-profile");
-        let profile_directory_index = arg_index(&plan.args, "--profile-directory=Profile 2");
         let security_index = arg_index(&plan.args, "--disable-site-isolation-trials");
         let custom_profile_directory_index = arg_index(&plan.args, "--profile-directory=Override");
 
-        assert_eq!(profile_directory_index, user_data_index + 1);
-        assert!(profile_directory_index < security_index);
-        assert!(profile_directory_index < custom_profile_directory_index);
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--profile-directory=Profile 2")
+        );
+        assert!(user_data_index < security_index);
+        assert!(security_index < custom_profile_directory_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
@@ -8858,16 +9179,19 @@ mod tests {
 
         let plan = profile.launch_plan();
         let profile_directory_index = arg_index(&plan.args, "--profile-directory=Default");
-        let sandbox_index = arg_index(&plan.args, "--no-sandbox");
         let first_custom_arg_index = arg_index(&plan.args, "--no-sandbox=false");
 
-        assert!(profile_directory_index < sandbox_index);
+        assert!(!plan.args.iter().any(|arg| arg == "--no-sandbox"));
         for arg in CHROME_DOCKER_ARGS {
+            if *arg == "--no-sandbox" {
+                continue;
+            }
             assert!(
                 arg_index(&plan.args, arg) < first_custom_arg_index,
                 "generated chromium_sandbox=false launch arg {arg} should come before caller args"
             );
         }
+        assert!(profile_directory_index < first_custom_arg_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
@@ -8920,10 +9244,15 @@ mod tests {
         };
 
         let plan = profile.try_launch_plan().expect("devtools launch plan");
-        let generated_devtools_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs");
         let custom_devtools_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs=false");
 
-        assert!(generated_devtools_index < custom_devtools_index);
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--auto-open-devtools-for-tabs")
+        );
+        assert!(custom_devtools_index < arg_index(&plan.args, "--custom-last"));
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
@@ -8979,13 +9308,11 @@ mod tests {
         };
 
         let plan = profile.launch_plan();
-        let generated_size_index = arg_index(&plan.args, "--window-size=1440,900");
-        let generated_position_index = arg_index(&plan.args, "--window-position=10,20");
         let custom_size_index = arg_index(&plan.args, "--window-size=1,1");
         let custom_position_index = arg_index(&plan.args, "--window-position=2,2");
 
-        assert!(generated_size_index < generated_position_index);
-        assert!(generated_position_index < custom_size_index);
+        assert!(!plan.args.iter().any(|arg| arg == "--window-size=1440,900"));
+        assert!(!plan.args.iter().any(|arg| arg == "--window-position=10,20"));
         assert!(custom_size_index < custom_position_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
@@ -9050,11 +9377,20 @@ mod tests {
             .iter()
             .chain(CHROME_DETERMINISTIC_RENDERING_ARGS.iter())
         {
+            if *arg == "--force-device-scale-factor=2" {
+                continue;
+            }
             assert!(
                 arg_index(&plan.args, arg) < first_custom_arg_index,
                 "generated launch arg {arg} should come before caller args"
             );
         }
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--force-device-scale-factor=2")
+        );
         assert!(
             arg_index(&plan.args, "--disable-site-isolation-trials")
                 < arg_index(&plan.args, "--deterministic-mode")
@@ -9095,11 +9431,15 @@ mod tests {
 
         let plan = profile.launch_plan();
         let proxy_index = arg_index(&plan.args, "--proxy-server=http://127.0.0.1:8080");
-        let generated_user_agent_index = arg_index(&plan.args, "--user-agent=BrowserUseRust/0.4");
         let custom_user_agent_index = arg_index(&plan.args, "--user-agent=OverrideAgent/1.0");
 
-        assert!(proxy_index < generated_user_agent_index);
-        assert!(generated_user_agent_index < custom_user_agent_index);
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--user-agent=BrowserUseRust/0.4")
+        );
+        assert!(proxy_index < custom_user_agent_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
