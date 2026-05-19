@@ -1976,7 +1976,12 @@ pub struct BrowserProfile {
     pub cloud_api_key: Option<String>,
     #[serde(default, deserialize_with = "deserialize_env_map")]
     pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "browser_binary_path",
+        alias = "chrome_binary_path",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub executable_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<BrowserChannel>,
@@ -10800,6 +10805,44 @@ mod tests {
     }
 
     #[test]
+    fn browser_profile_executable_path_aliases_match_upstream() {
+        let canonical_path = "/tmp/browser-use-rs-chrome";
+        let canonical: BrowserProfile = serde_json::from_value(json!({
+            "executable_path": canonical_path
+        }))
+        .expect("canonical executable path profile");
+        assert_eq!(
+            canonical.executable_path.as_deref(),
+            Some(Path::new(canonical_path))
+        );
+
+        let browser_binary_path = "/tmp/browser-use-rs-browser-binary";
+        let browser_binary: BrowserProfile = serde_json::from_value(json!({
+            "browser_binary_path": browser_binary_path
+        }))
+        .expect("browser_binary_path alias profile");
+        assert_eq!(
+            browser_binary.executable_path.as_deref(),
+            Some(Path::new(browser_binary_path))
+        );
+
+        let chrome_binary_path = "/tmp/browser-use-rs-chrome-binary";
+        let chrome_binary: BrowserProfile = serde_json::from_value(json!({
+            "chrome_binary_path": chrome_binary_path
+        }))
+        .expect("chrome_binary_path alias profile");
+        assert_eq!(
+            chrome_binary.executable_path.as_deref(),
+            Some(Path::new(chrome_binary_path))
+        );
+
+        let encoded = serde_json::to_value(chrome_binary).expect("canonical profile json");
+        assert_eq!(encoded["executable_path"], json!(chrome_binary_path));
+        assert!(encoded.get("browser_binary_path").is_none());
+        assert!(encoded.get("chrome_binary_path").is_none());
+    }
+
+    #[test]
     fn browser_profile_profile_directory_defaults_in_json() {
         let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
         assert_eq!(decoded.profile_directory, "Default");
@@ -15147,6 +15190,26 @@ mod tests {
             .expect("resolve executable");
 
         assert_eq!(resolved, current_exe);
+    }
+
+    #[test]
+    fn executable_path_alias_resolves_before_env_and_candidates() {
+        let alias_exe = std::env::current_exe().expect("current exe");
+        let env_exe = PathBuf::from("/definitely/not/env-chrome");
+        let candidate = PathBuf::from("/definitely/not/channel-browser");
+        let profile: BrowserProfile = serde_json::from_value(json!({
+            "browser_binary_path": alias_exe.display().to_string()
+        }))
+        .expect("browser binary alias profile");
+
+        let resolved = resolve_chrome_executable(
+            profile.executable_path.as_deref(),
+            Some(env_exe),
+            vec![candidate],
+        )
+        .expect("resolve alias executable");
+
+        assert_eq!(resolved, alias_exe);
     }
 
     #[test]

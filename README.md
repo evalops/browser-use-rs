@@ -25,8 +25,9 @@ includes:
   upstream-style proxy-server/proxy-bypass Chrome flags,
   `disable_security` insecure-content/certificate flags, and
   `deterministic_rendering` screenshot-stability flags, typed `user_agent`
-  launch flags, typed `profile_directory` flags for persistent profiles, and
-  `chromium_sandbox=false` no-sandbox/container flags, plus explicit
+  launch flags, typed `executable_path` with upstream `browser_binary_path`
+  and `chrome_binary_path` aliases, typed `profile_directory` flags for
+  persistent profiles, and `chromium_sandbox=false` no-sandbox/container flags, plus explicit
   `window_size` and upstream-default `window_position` launch geometry flags, and a typed
   `devtools` launch flag with the upstream headless conflict guard, typed
   `screen`, `viewport`, `no_viewport`, and `device_scale_factor` controls that

@@ -66,7 +66,9 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   connection-level authentication. `BrowserProfile.channel` round-trips
   upstream browser channel strings and constrains local executable resolution to
   channel-specific candidates when no explicit `executable_path` or
-  `BROWSER_USE_CHROME` override is supplied.
+  `BROWSER_USE_CHROME` override is supplied. Upstream `browser_binary_path`
+  and `chrome_binary_path` aliases deserialize into the same canonical
+  `executable_path` field.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

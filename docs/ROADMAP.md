@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#131 Add BrowserProfile executable_path alias parity](https://github.com/evalops/browser-use-rs/issues/131)
+- [#132 Add BrowserProfile HAR recording parity](https://github.com/evalops/browser-use-rs/issues/132)
 
 ## Completed Tracks
 
+- [#131 Add BrowserProfile executable_path alias parity](https://github.com/evalops/browser-use-rs/issues/131)
 - [#130 Add BrowserProfile DOM highlight overlay parity](https://github.com/evalops/browser-use-rs/issues/130)
 - [#129 Add BrowserProfile interaction highlight parity](https://github.com/evalops/browser-use-rs/issues/129)
 - [#128 Add BrowserProfile downloads_path alias parity](https://github.com/evalops/browser-use-rs/issues/128)
@@ -189,6 +190,9 @@ Implemented:
   remote browser endpoints. `BrowserProfile.channel` preserves upstream
   browser-channel strings and uses channel-specific executable candidates when
   no explicit executable path or `BROWSER_USE_CHROME` override is supplied.
+  Upstream `browser_binary_path` and `chrome_binary_path` aliases deserialize
+  into the same canonical `executable_path` field, and alias-resolved paths
+  keep explicit executable precedence over environment/channel candidates.
   `BrowserProfile.highlight_elements`, `interaction_highlight_color`, and
   `interaction_highlight_duration` preserve upstream defaults; indexed
   click/input actions and coordinate clicks attempt non-fatal temporary

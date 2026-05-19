@@ -140,7 +140,9 @@ conformance fixture.
 local executable search to channel-specific candidates when no explicit
 `executable_path` or `BROWSER_USE_CHROME` override is supplied. Explicit paths
 and the environment override retain precedence so existing local deployments do
-not change accidentally.
+not change accidentally. Upstream `browser_binary_path` and
+`chrome_binary_path` profile aliases deserialize into the same canonical
+`executable_path` field and serialize back as `executable_path`.
 
 `BrowserProfile.screen`, `viewport`, `no_viewport`, and `device_scale_factor`
 are preserved in the Rust profile contract. Launch planning uses `screen` as a
