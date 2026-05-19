@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #115 lands and CI is green.
+- [#116 Refresh upstream target to 18aae0b and pin security hardening parity](https://github.com/evalops/browser-use-rs/issues/116)
 
 ## Completed Tracks
 
