@@ -111,6 +111,18 @@ changed, navigation started/complete, browser errors, storage state, downloads,
 dialogs, reconnects, and browser diagnostics; its JSON shape is locked by a
 conformance fixture.
 
+## Viewport Emulation Boundary
+
+`BrowserProfile.screen`, `viewport`, `no_viewport`, and `device_scale_factor`
+are preserved in the Rust profile contract. Launch planning uses `screen` as a
+window-size fallback when no explicit `window_size` is set, rejects
+`headless=true` with `no_viewport=true`, and applies
+`Emulation.setDeviceMetricsOverride` with `mobile=false` whenever viewport mode
+is active. The override is applied to the initial page, new tabs, explicit tab
+switches, stale-session reattachments, and replacement pages selected after the
+focused tab closes. `no_viewport=true` intentionally leaves page content to the
+real browser window and skips the CDP override.
+
 ## OOPIF Stale-Node Fallback Boundary
 
 Cached observed-node actions first resolve the original backend/frontend node

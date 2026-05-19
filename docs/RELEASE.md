@@ -19,6 +19,14 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   Chrome flags for CI and Docker-style launches, and explicit
   `BrowserProfile.window_size` / `window_position` values emit typed
   `--window-size` and `--window-position` launch geometry flags.
+  `BrowserProfile.screen` can supply the launch window-size fallback, while
+  `BrowserProfile.viewport`, `no_viewport`, and `device_scale_factor` control
+  CDP `Emulation.setDeviceMetricsOverride` on initial attach, new-tab
+  creation, tab switch, stale-session reattach, and fallback attach after
+  closing the focused tab. `no_viewport=true` keeps launch window sizing but
+  skips the CDP device-metrics override, and launch planning rejects the
+  upstream-invalid `headless=true` plus `no_viewport=true` combination before
+  spawning Chrome.
   `BrowserProfile.devtools` emits `--auto-open-devtools-for-tabs` for headful
   launches and rejects the upstream-invalid `headless=true` plus
   `devtools=true` combination before spawning Chrome. `BrowserProfile.env`
