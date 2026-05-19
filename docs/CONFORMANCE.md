@@ -123,6 +123,14 @@ conformance fixture.
 
 ## Viewport Emulation Boundary
 
+`BrowserProfile.channel` preserves the upstream browser-channel strings
+(`chromium`, `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`,
+`msedge`, `msedge-beta`, `msedge-dev`, and `msedge-canary`) and constrains the
+local executable search to channel-specific candidates when no explicit
+`executable_path` or `BROWSER_USE_CHROME` override is supplied. Explicit paths
+and the environment override retain precedence so existing local deployments do
+not change accidentally.
+
 `BrowserProfile.screen`, `viewport`, `no_viewport`, and `device_scale_factor`
 are preserved in the Rust profile contract. Launch planning uses `screen` as a
 window-size fallback when no explicit `window_size` is set, rejects

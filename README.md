@@ -69,7 +69,10 @@ includes:
   requests that remain active beyond the watchdog budget. Upstream-style
   `minimum_wait_page_load_time` and `wait_for_network_idle_page_load_time`
   settle state capture and successful navigations, with zero values disabling
-  each wait.
+  each wait. `BrowserProfile.channel` accepts upstream browser channel names
+  such as `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
+  channel-specific executable candidates when no explicit executable path or
+  `BROWSER_USE_CHROME` override is supplied.
   Launch profiles can set `downloads_path` to enable Chrome download behavior,
   browser-level download lifecycle events with safe basename normalization for
   page-controlled filenames, and upstream-default `auto_download_pdfs=true`

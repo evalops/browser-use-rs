@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #124 release verification.
+- Next upstream parity slice after #125 release verification.
 
 ## Completed Tracks
 
+- [#125 Add BrowserProfile browser channel launch parity](https://github.com/evalops/browser-use-rs/issues/125)
 - [#124 Add BrowserProfile CDP connection headers parity](https://github.com/evalops/browser-use-rs/issues/124)
 - [#123 Detect PDF viewer state in CDP browser summaries](https://github.com/evalops/browser-use-rs/issues/123)
 - [#122 Add BrowserProfile auto_download_pdfs parity](https://github.com/evalops/browser-use-rs/issues/122)
@@ -180,7 +181,9 @@ Implemented:
   state capture and after successful navigation, with zero values disabling the
   corresponding waits. `BrowserProfile.headers` are preserved on the wire and
   sent on CDP websocket connection/reconnect handshakes for authenticated
-  remote browser endpoints.
+  remote browser endpoints. `BrowserProfile.channel` preserves upstream
+  browser-channel strings and uses channel-specific executable candidates when
+  no explicit executable path or `BROWSER_USE_CHROME` override is supplied.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

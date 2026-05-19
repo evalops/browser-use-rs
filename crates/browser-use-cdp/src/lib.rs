@@ -1695,6 +1695,28 @@ impl Default for IgnoreDefaultArgs {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum BrowserChannel {
+    #[serde(rename = "chromium")]
+    Chromium,
+    #[serde(rename = "chrome")]
+    Chrome,
+    #[serde(rename = "chrome-beta")]
+    ChromeBeta,
+    #[serde(rename = "chrome-dev")]
+    ChromeDev,
+    #[serde(rename = "chrome-canary")]
+    ChromeCanary,
+    #[serde(rename = "msedge")]
+    MsEdge,
+    #[serde(rename = "msedge-beta")]
+    MsEdgeBeta,
+    #[serde(rename = "msedge-dev")]
+    MsEdgeDev,
+    #[serde(rename = "msedge-canary")]
+    MsEdgeCanary,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1713,6 +1735,8 @@ pub struct BrowserProfile {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<BrowserChannel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_debugging_port: Option<u16>,
     #[serde(default = "default_headless")]
@@ -1807,6 +1831,7 @@ impl Default for BrowserProfile {
             cloud_api_key: None,
             env: BTreeMap::new(),
             executable_path: None,
+            channel: None,
             remote_debugging_port: None,
             headless: default_headless(),
             devtools: false,
@@ -2042,7 +2067,7 @@ impl BrowserProfile {
         resolve_chrome_executable(
             self.executable_path.as_deref(),
             std::env::var_os("BROWSER_USE_CHROME").map(PathBuf::from),
-            default_chrome_candidates(),
+            browser_executable_candidates(self.channel),
         )
     }
 
@@ -3015,6 +3040,175 @@ where
     }
 
     Err(BrowserError::ExecutableNotFound(checked))
+}
+
+#[must_use]
+pub fn browser_executable_candidates(channel: Option<BrowserChannel>) -> Vec<PathBuf> {
+    match channel {
+        Some(channel) => browser_channel_candidates(channel),
+        None => default_chrome_candidates(),
+    }
+}
+
+#[must_use]
+pub fn browser_channel_candidates(channel: BrowserChannel) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        match channel {
+            BrowserChannel::Chromium => candidates.push(PathBuf::from(
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            )),
+            BrowserChannel::Chrome => candidates.push(PathBuf::from(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            )),
+            BrowserChannel::ChromeBeta => candidates.push(PathBuf::from(
+                "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+            )),
+            BrowserChannel::ChromeDev => candidates.push(PathBuf::from(
+                "/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
+            )),
+            BrowserChannel::ChromeCanary => candidates.push(PathBuf::from(
+                "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            )),
+            BrowserChannel::MsEdge => candidates.push(PathBuf::from(
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            )),
+            BrowserChannel::MsEdgeBeta => candidates.push(PathBuf::from(
+                "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
+            )),
+            BrowserChannel::MsEdgeDev => candidates.push(PathBuf::from(
+                "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+            )),
+            BrowserChannel::MsEdgeCanary => candidates.push(PathBuf::from(
+                "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
+            )),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        match channel {
+            BrowserChannel::Chromium => {
+                candidates.push(PathBuf::from("/usr/bin/chromium"));
+                candidates.push(PathBuf::from("/usr/bin/chromium-browser"));
+            }
+            BrowserChannel::Chrome => {
+                candidates.push(PathBuf::from("/usr/bin/google-chrome"));
+                candidates.push(PathBuf::from("/usr/bin/google-chrome-stable"));
+            }
+            BrowserChannel::ChromeBeta => {
+                candidates.push(PathBuf::from("/usr/bin/google-chrome-beta"))
+            }
+            BrowserChannel::ChromeDev => {
+                candidates.push(PathBuf::from("/usr/bin/google-chrome-unstable"))
+            }
+            BrowserChannel::ChromeCanary => {
+                candidates.push(PathBuf::from("/usr/bin/google-chrome-canary"))
+            }
+            BrowserChannel::MsEdge => {
+                candidates.push(PathBuf::from("/usr/bin/microsoft-edge"));
+                candidates.push(PathBuf::from("/usr/bin/microsoft-edge-stable"));
+            }
+            BrowserChannel::MsEdgeBeta => {
+                candidates.push(PathBuf::from("/usr/bin/microsoft-edge-beta"))
+            }
+            BrowserChannel::MsEdgeDev => {
+                candidates.push(PathBuf::from("/usr/bin/microsoft-edge-dev"))
+            }
+            BrowserChannel::MsEdgeCanary => {
+                candidates.push(PathBuf::from("/usr/bin/microsoft-edge-canary"))
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let program_files = std::env::var_os("PROGRAMFILES").map(PathBuf::from);
+        let program_files_x86 = std::env::var_os("PROGRAMFILES(X86)").map(PathBuf::from);
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        match channel {
+            BrowserChannel::Chromium => {
+                if let Some(local_app_data) = &local_app_data {
+                    candidates.push(local_app_data.join("Chromium/Application/chrome.exe"));
+                }
+            }
+            BrowserChannel::Chrome => {
+                if let Some(program_files) = &program_files {
+                    candidates.push(program_files.join("Google/Chrome/Application/chrome.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates.push(program_files_x86.join("Google/Chrome/Application/chrome.exe"));
+                }
+                if let Some(local_app_data) = &local_app_data {
+                    candidates.push(local_app_data.join("Google/Chrome/Application/chrome.exe"));
+                }
+            }
+            BrowserChannel::ChromeBeta => {
+                if let Some(program_files) = &program_files {
+                    candidates
+                        .push(program_files.join("Google/Chrome Beta/Application/chrome.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates
+                        .push(program_files_x86.join("Google/Chrome Beta/Application/chrome.exe"));
+                }
+            }
+            BrowserChannel::ChromeDev => {
+                if let Some(program_files) = &program_files {
+                    candidates.push(program_files.join("Google/Chrome Dev/Application/chrome.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates
+                        .push(program_files_x86.join("Google/Chrome Dev/Application/chrome.exe"));
+                }
+            }
+            BrowserChannel::ChromeCanary => {
+                if let Some(local_app_data) = &local_app_data {
+                    candidates
+                        .push(local_app_data.join("Google/Chrome SxS/Application/chrome.exe"));
+                }
+            }
+            BrowserChannel::MsEdge => {
+                if let Some(program_files) = &program_files {
+                    candidates.push(program_files.join("Microsoft/Edge/Application/msedge.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates
+                        .push(program_files_x86.join("Microsoft/Edge/Application/msedge.exe"));
+                }
+            }
+            BrowserChannel::MsEdgeBeta => {
+                if let Some(program_files) = &program_files {
+                    candidates
+                        .push(program_files.join("Microsoft/Edge Beta/Application/msedge.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates
+                        .push(program_files_x86.join("Microsoft/Edge Beta/Application/msedge.exe"));
+                }
+            }
+            BrowserChannel::MsEdgeDev => {
+                if let Some(program_files) = &program_files {
+                    candidates
+                        .push(program_files.join("Microsoft/Edge Dev/Application/msedge.exe"));
+                }
+                if let Some(program_files_x86) = &program_files_x86 {
+                    candidates
+                        .push(program_files_x86.join("Microsoft/Edge Dev/Application/msedge.exe"));
+                }
+            }
+            BrowserChannel::MsEdgeCanary => {
+                if let Some(local_app_data) = &local_app_data {
+                    candidates
+                        .push(local_app_data.join("Microsoft/Edge SxS/Application/msedge.exe"));
+                }
+            }
+        }
+    }
+
+    candidates
 }
 
 #[must_use]
@@ -9963,6 +10157,21 @@ mod tests {
     }
 
     #[test]
+    fn browser_profile_channel_defaults_to_none_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.channel, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("channel").is_none());
+
+        let configured: BrowserProfile =
+            serde_json::from_value(json!({ "channel": "chrome-beta" })).expect("channel profile");
+        assert_eq!(configured.channel, Some(BrowserChannel::ChromeBeta));
+        let configured_json = serde_json::to_value(&configured).expect("configured profile json");
+        assert_eq!(configured_json["channel"], json!("chrome-beta"));
+    }
+
+    #[test]
     fn browser_profile_profile_directory_defaults_in_json() {
         let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
         assert_eq!(decoded.profile_directory, "Default");
@@ -14094,6 +14303,40 @@ mod tests {
             .expect("resolve executable");
 
         assert_eq!(resolved, current_exe);
+    }
+
+    #[test]
+    fn executable_resolution_prefers_env_before_candidates() {
+        let env_exe = std::env::current_exe().expect("current exe");
+        let candidate = PathBuf::from("/definitely/not/a/channel-browser");
+        let resolved = resolve_chrome_executable(None, Some(env_exe.clone()), vec![candidate])
+            .expect("resolve executable from env");
+
+        assert_eq!(resolved, env_exe);
+    }
+
+    #[test]
+    fn browser_channel_candidates_are_channel_specific() {
+        let beta_candidates = browser_channel_candidates(BrowserChannel::ChromeBeta);
+        assert!(!beta_candidates.is_empty());
+        assert_eq!(
+            browser_executable_candidates(Some(BrowserChannel::ChromeBeta)),
+            beta_candidates
+        );
+        assert_eq!(
+            browser_executable_candidates(None),
+            default_chrome_candidates()
+        );
+
+        let beta_candidate_text = beta_candidates
+            .iter()
+            .map(|path| path.display().to_string().to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            beta_candidate_text.contains("beta"),
+            "chrome-beta candidates should be beta-specific: {beta_candidates:?}"
+        );
     }
 
     #[test]
