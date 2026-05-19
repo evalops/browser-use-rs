@@ -12,7 +12,7 @@ use browser_use_core::{
 };
 use browser_use_llm::{
     AnthropicChatModel, ChatModel, GeminiChatModel, OllamaChatModel, OpenAiCompatibleChatModel,
-    OpenAiStructuredOutputMode,
+    OpenAiSchemaTransform, OpenAiStructuredOutputMode,
 };
 use clap::Parser;
 use schemars::schema_for;
@@ -2035,6 +2035,7 @@ struct OpenAiWireProviderConfig {
     default_model: Option<&'static str>,
     default_base_url: &'static str,
     structured_output_mode: OpenAiStructuredOutputMode,
+    schema_transform: OpenAiSchemaTransform,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2070,18 +2071,54 @@ fn configured_openai_wire_chat_model(
     let base_url = base_url
         .or_else(|| first_nonempty_env(config.base_url_env))
         .unwrap_or_else(|| config.default_base_url.to_owned());
+    let structured_output_mode =
+        default_structured_output_mode(config, &model, structured_output_mode_override);
 
     let mut llm = OpenAiCompatibleChatModel::new(api_key, model)
         .with_base_url(base_url)
         .with_provider_name(config.provider_name)
-        .with_structured_output_mode(
-            structured_output_mode_override.unwrap_or(config.structured_output_mode),
-        );
+        .with_structured_output_mode(structured_output_mode)
+        .with_schema_transform(config.schema_transform);
     for (name, value) in openai_wire_default_headers(config, first_nonempty_env) {
         llm = llm.try_with_default_header(name, value)?;
     }
 
     Ok(Box::new(llm))
+}
+
+fn default_structured_output_mode(
+    config: OpenAiWireProviderConfig,
+    model: &str,
+    override_mode: Option<OpenAiStructuredOutputMode>,
+) -> OpenAiStructuredOutputMode {
+    if let Some(mode) = override_mode {
+        return mode;
+    }
+
+    match config.provider_name {
+        "groq" if model == "moonshotai/kimi-k2-instruct" => OpenAiStructuredOutputMode::ToolCall,
+        "vercel" if vercel_prompt_fallback_model(model) => OpenAiStructuredOutputMode::PromptOnly,
+        _ => config.structured_output_mode,
+    }
+}
+
+fn vercel_prompt_fallback_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.starts_with("google/")
+        || lower.starts_with("anthropic/")
+        || [
+            "o1",
+            "o3",
+            "o4",
+            "gpt-oss",
+            "gpt-5.2-pro",
+            "gpt-5.4-pro",
+            "deepseek-r1",
+            "-thinking",
+            "perplexity/sonar-reasoning",
+        ]
+        .iter()
+        .any(|pattern| lower.contains(pattern))
 }
 
 fn openai_wire_default_headers<F>(
@@ -2109,6 +2146,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: None,
             default_base_url: "https://api.openai.com/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::DeepSeek => OpenAiWireProviderConfig {
             provider_name: "deepseek",
@@ -2119,6 +2157,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: Some("deepseek-chat"),
             default_base_url: "https://api.deepseek.com/v1",
             structured_output_mode: OpenAiStructuredOutputMode::ToolCall,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::Groq => OpenAiWireProviderConfig {
             provider_name: "groq",
@@ -2129,6 +2168,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: None,
             default_base_url: "https://api.groq.com/openai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::Cerebras => OpenAiWireProviderConfig {
             provider_name: "cerebras",
@@ -2139,6 +2179,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: Some("llama3.1-8b"),
             default_base_url: "https://api.cerebras.ai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::PromptOnly,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::Mistral => OpenAiWireProviderConfig {
             provider_name: "mistral",
@@ -2149,6 +2190,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: Some("mistral-medium-latest"),
             default_base_url: "https://api.mistral.ai/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::MistralCompatible,
         },
         LlmProvider::OpenRouter => OpenAiWireProviderConfig {
             provider_name: "openrouter",
@@ -2172,6 +2214,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: None,
             default_base_url: "https://openrouter.ai/api/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::Vercel => OpenAiWireProviderConfig {
             provider_name: "vercel",
@@ -2182,6 +2225,7 @@ fn openai_wire_provider_config(provider: LlmProvider) -> OpenAiWireProviderConfi
             default_model: None,
             default_base_url: "https://ai-gateway.vercel.sh/v1",
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::Default,
         },
         LlmProvider::Anthropic | LlmProvider::Gemini | LlmProvider::Ollama => {
             unreachable!("non-OpenAI-wire provider")
@@ -2544,10 +2588,53 @@ mod tests {
             openai_wire_provider_config(LlmProvider::Cerebras).structured_output_mode,
             OpenAiStructuredOutputMode::PromptOnly
         );
+        assert_eq!(
+            openai_wire_provider_config(LlmProvider::Mistral).schema_transform,
+            OpenAiSchemaTransform::MistralCompatible
+        );
         assert!(
             openai_wire_provider_config(LlmProvider::DeepSeek)
                 .default_headers
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn maps_provider_specific_structured_output_fallback_modes() {
+        let groq = openai_wire_provider_config(LlmProvider::Groq);
+        assert_eq!(
+            default_structured_output_mode(groq, "moonshotai/kimi-k2-instruct", None),
+            OpenAiStructuredOutputMode::ToolCall
+        );
+        assert_eq!(
+            default_structured_output_mode(groq, "meta-llama/llama-4-scout-17b-16e-instruct", None),
+            OpenAiStructuredOutputMode::JsonSchema
+        );
+
+        let vercel = openai_wire_provider_config(LlmProvider::Vercel);
+        assert_eq!(
+            default_structured_output_mode(vercel, "google/gemini-2.5-flash", None),
+            OpenAiStructuredOutputMode::PromptOnly
+        );
+        assert_eq!(
+            default_structured_output_mode(vercel, "anthropic/claude-sonnet-4.5", None),
+            OpenAiStructuredOutputMode::PromptOnly
+        );
+        assert_eq!(
+            default_structured_output_mode(vercel, "openai/gpt-oss-120b", None),
+            OpenAiStructuredOutputMode::PromptOnly
+        );
+        assert_eq!(
+            default_structured_output_mode(vercel, "openai/gpt-4o-mini", None),
+            OpenAiStructuredOutputMode::JsonSchema
+        );
+        assert_eq!(
+            default_structured_output_mode(
+                vercel,
+                "google/gemini-2.5-flash",
+                Some(OpenAiStructuredOutputMode::ToolCall)
+            ),
+            OpenAiStructuredOutputMode::ToolCall
         );
     }
 

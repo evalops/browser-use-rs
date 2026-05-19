@@ -31,10 +31,12 @@ browser-use where compatibility is claimed.
    conversation transcript saving, non-fatal judge trace validation, done
    semantics, and final history.
 5. Provider contracts: OpenAI-compatible Chat Completions, OpenAI-wire upstream
-   aliases, Anthropic, Gemini, and Ollama structured-output payloads first,
-   including DeepSeek forced tool-call guidance and Cerebras prompt-only
-   guidance, then deeper provider-specific fallback paths as compatibility
-   expands.
+   aliases, Anthropic, Gemini, and Ollama structured-output payloads and
+   fallback modes, including Anthropic forced tool-use, Gemini prompt fallback,
+   DeepSeek forced tool-call guidance, Groq model-specific tool-call routing,
+   Cerebras prompt-only guidance, Mistral schema sanitization, Vercel
+   model-specific prompt fallback, and permissive wrapped-JSON parsing for
+   prompt/provider fallback responses.
 6. CLI/MCP: persistent session lifecycle, JSON output stability, and error
    shapes.
 7. Browser/profile lifecycle: public lifecycle event JSON shape, bounded event

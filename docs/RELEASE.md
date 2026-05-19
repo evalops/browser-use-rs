@@ -320,9 +320,11 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output requests,
-  including DeepSeek forced tool-call, Cerebras prompt-only, and OpenAI-wire
-  output-mode override payload/parser modes, plus OpenRouter app attribution
-  headers.
+  including Anthropic forced tool-use, Gemini native-schema and prompt fallback,
+  DeepSeek forced tool-call, Groq model-specific JSON-schema/tool-call routing,
+  Cerebras prompt-only, Mistral schema sanitization, Vercel model-specific
+  prompt fallback, OpenAI-wire output-mode override payload/parser modes, and
+  OpenRouter app attribution headers.
 - CLI one-shot commands plus `actions`, `replay`, and `agent` with typed
   settings flags including conversation transcript saving, judge trace
   validation, available-file-path and sensitive-data placeholder context,
@@ -412,8 +414,12 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   secret before tagged releases publish there.
   Tagged releases now emit Linux and macOS tarballs, cross-tarball checksums,
   and a generated Homebrew formula artifact for the published triples.
-- Provider-specific structured-output fallbacks for non-chat-completions
-  providers are still partial; DeepSeek now has a forced tool-call fallback.
+- Provider-specific structured-output fallbacks are source-audited against the
+  frozen upstream target for exposed provider families: Anthropic forced
+  tool-use, Gemini prompt fallback, DeepSeek forced tool-call, Groq
+  model-specific tool-call routing, Cerebras prompt-only guidance, Mistral
+  schema sanitization, Vercel model-specific prompt fallback, Ollama `format`
+  schemas, and wrapped-JSON parsing are implemented and covered by unit tests.
 - Managed filesystem and agent checkpoint replay now cover serialized restore
   into a new agent, restored prompt context, restored `read_file`, todo
   context, extracted-content numbering, prior history, and initial-action

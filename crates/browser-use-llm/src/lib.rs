@@ -127,6 +127,12 @@ pub enum OpenAiStructuredOutputMode {
     ToolCall,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAiSchemaTransform {
+    Default,
+    MistralCompatible,
+}
+
 #[derive(Clone)]
 pub struct OpenAiCompatibleChatModel {
     api_key: String,
@@ -135,6 +141,7 @@ pub struct OpenAiCompatibleChatModel {
     provider_name: String,
     schema_name: String,
     structured_output_mode: OpenAiStructuredOutputMode,
+    schema_transform: OpenAiSchemaTransform,
     default_headers: HeaderMap,
     client: reqwest::Client,
 }
@@ -154,6 +161,7 @@ pub struct GeminiChatModel {
     api_key: String,
     model: String,
     base_url: String,
+    supports_structured_output: bool,
     client: reqwest::Client,
 }
 
@@ -242,6 +250,7 @@ impl GeminiChatModel {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_owned(),
+            supports_structured_output: true,
             client: reqwest::Client::new(),
         }
     }
@@ -255,6 +264,12 @@ impl GeminiChatModel {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
+        self
+    }
+
+    #[must_use]
+    pub fn with_structured_output_support(mut self, supports_structured_output: bool) -> Self {
+        self.supports_structured_output = supports_structured_output;
         self
     }
 
@@ -278,7 +293,8 @@ impl ChatModel for GeminiChatModel {
     }
 
     async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError> {
-        let payload = gemini_generate_content_payload(request);
+        let payload =
+            gemini_generate_content_payload_with_mode(request, self.supports_structured_output);
         let response = self
             .client
             .post(self.generate_content_url())
@@ -422,6 +438,7 @@ impl OpenAiCompatibleChatModel {
             provider_name: "openai-compatible".to_owned(),
             schema_name: "agent_output".to_owned(),
             structured_output_mode: OpenAiStructuredOutputMode::JsonSchema,
+            schema_transform: OpenAiSchemaTransform::Default,
             default_headers: HeaderMap::new(),
             client: reqwest::Client::new(),
         }
@@ -457,6 +474,12 @@ impl OpenAiCompatibleChatModel {
         structured_output_mode: OpenAiStructuredOutputMode,
     ) -> Self {
         self.structured_output_mode = structured_output_mode;
+        self
+    }
+
+    #[must_use]
+    pub fn with_schema_transform(mut self, schema_transform: OpenAiSchemaTransform) -> Self {
+        self.schema_transform = schema_transform;
         self
     }
 
@@ -509,6 +532,7 @@ impl ChatModel for OpenAiCompatibleChatModel {
             &self.model,
             &self.schema_name,
             self.structured_output_mode,
+            self.schema_transform,
             request,
         );
         let mut builder = self
@@ -530,6 +554,20 @@ impl ChatModel for OpenAiCompatibleChatModel {
             .map_err(|error| LlmError::Provider(error.to_string()))?;
 
         if !status.is_success() {
+            if self.provider_name == "groq" {
+                if let Some(content) = parse_groq_failed_generation_response(&raw_response)? {
+                    return Ok(ChatCompletion {
+                        model: raw_response
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&self.model)
+                            .to_owned(),
+                        content,
+                        raw_response: Some(raw_response),
+                    });
+                }
+            }
+
             let message = raw_response
                 .pointer("/error/message")
                 .and_then(Value::as_str)
@@ -558,9 +596,13 @@ fn openai_chat_payload(
     model: &str,
     schema_name: &str,
     structured_output_mode: OpenAiStructuredOutputMode,
+    schema_transform: OpenAiSchemaTransform,
     mut request: ChatRequest,
 ) -> Value {
-    let output_schema = request.output_schema.take();
+    let output_schema = request
+        .output_schema
+        .take()
+        .map(|schema| transform_schema(schema, schema_transform));
     if matches!(
         structured_output_mode,
         OpenAiStructuredOutputMode::JsonObject | OpenAiStructuredOutputMode::PromptOnly
@@ -615,6 +657,40 @@ fn openai_chat_payload(
     }
 
     payload
+}
+
+fn transform_schema(schema: Value, schema_transform: OpenAiSchemaTransform) -> Value {
+    match schema_transform {
+        OpenAiSchemaTransform::Default => schema,
+        OpenAiSchemaTransform::MistralCompatible => {
+            strip_mistral_unsupported_schema_keywords(schema)
+        }
+    }
+}
+
+fn strip_mistral_unsupported_schema_keywords(value: Value) -> Value {
+    const UNSUPPORTED: &[&str] = &["minLength", "maxLength", "pattern", "format"];
+
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .filter_map(|(key, value)| {
+                    if UNSUPPORTED.contains(&key.as_str()) {
+                        None
+                    } else {
+                        Some((key, strip_mistral_unsupported_schema_keywords(value)))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(strip_mistral_unsupported_schema_keywords)
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn append_json_schema_instruction(messages: &mut Vec<ChatMessage>, schema: &Value) {
@@ -752,7 +828,22 @@ fn ollama_image_part(part: ContentPart) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 fn gemini_generate_content_payload(request: ChatRequest) -> Value {
+    gemini_generate_content_payload_with_mode(request, true)
+}
+
+fn gemini_generate_content_payload_with_mode(
+    mut request: ChatRequest,
+    supports_structured_output: bool,
+) -> Value {
+    let output_schema = request.output_schema.take();
+    if !supports_structured_output {
+        if let Some(schema) = output_schema.as_ref() {
+            append_json_schema_instruction(&mut request.messages, schema);
+        }
+    }
+
     let mut system_parts = Vec::new();
     let mut contents = Vec::new();
 
@@ -778,7 +869,7 @@ fn gemini_generate_content_payload(request: ChatRequest) -> Value {
         });
     }
 
-    if let Some(schema) = request.output_schema {
+    if let Some(schema) = output_schema.filter(|_| supports_structured_output) {
         payload["generationConfig"] = json!({
             "responseFormat": {
                 "text": {
@@ -856,8 +947,7 @@ fn parse_openai_chat_completion(raw_response: &Value) -> Result<Value, LlmError>
         .ok_or_else(|| LlmError::Provider("missing chat completion content".to_owned()))?;
 
     match content {
-        Value::String(text) => serde_json::from_str(text)
-            .map_err(|error| LlmError::InvalidStructuredOutput(error.to_string())),
+        Value::String(text) => parse_json_object_text(text, "chat completion content"),
         Value::Array(_) | Value::Object(_) => Ok(content.clone()),
         _ => Err(LlmError::InvalidStructuredOutput(
             "chat completion content was not JSON-compatible".to_owned(),
@@ -876,9 +966,13 @@ fn openai_tool_call_arguments(message: &Value) -> Option<&Value> {
 
 fn parse_json_object_compatible(value: &Value, source: &str) -> Result<Value, LlmError> {
     let parsed = match value {
-        Value::String(text) => serde_json::from_str(text)
-            .map_err(|error| LlmError::InvalidStructuredOutput(format!("{source}: {error}")))?,
+        Value::String(text) => return parse_json_object_text(text, source),
         Value::Object(_) => value.clone(),
+        Value::Array(values)
+            if values.len() == 1 && values.first().is_some_and(Value::is_object) =>
+        {
+            values[0].clone()
+        }
         _ => {
             return Err(LlmError::InvalidStructuredOutput(format!(
                 "{source} were not a JSON object"
@@ -895,14 +989,106 @@ fn parse_json_object_compatible(value: &Value, source: &str) -> Result<Value, Ll
     }
 }
 
+fn parse_json_object_text(text: &str, source: &str) -> Result<Value, LlmError> {
+    let candidate = strip_json_code_fence(text.trim());
+    match parse_json_object_candidate(candidate, source) {
+        Ok(parsed) => Ok(parsed),
+        Err(first_error) => {
+            if let Some(extracted) = extract_balanced_json_object(candidate) {
+                return parse_json_object_candidate(extracted, source);
+            }
+            Err(first_error)
+        }
+    }
+}
+
+fn parse_json_object_candidate(candidate: &str, source: &str) -> Result<Value, LlmError> {
+    let parsed: Value = serde_json::from_str(candidate)
+        .map_err(|error| LlmError::InvalidStructuredOutput(format!("{source}: {error}")))?;
+    if parsed.is_object() {
+        return Ok(parsed);
+    }
+    if let Value::Array(values) = &parsed {
+        if values.len() == 1 && values.first().is_some_and(Value::is_object) {
+            return Ok(values[0].clone());
+        }
+    }
+    Err(LlmError::InvalidStructuredOutput(format!(
+        "{source} was not a JSON object"
+    )))
+}
+
+fn strip_json_code_fence(text: &str) -> &str {
+    let Some(stripped) = text.strip_prefix("```") else {
+        return text;
+    };
+    let Some(stripped) = stripped.strip_suffix("```") else {
+        return text;
+    };
+    let stripped = stripped.trim();
+    stripped.strip_prefix("json").unwrap_or(stripped).trim()
+}
+
+fn extract_balanced_json_object(text: &str) -> Option<&str> {
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in text.char_indices() {
+        if start.is_none() {
+            if ch == '{' {
+                start = Some(index);
+                depth = 1;
+            }
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start.expect("start set")..=index]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn parse_groq_failed_generation_response(raw_response: &Value) -> Result<Option<Value>, LlmError> {
+    let Some(failed_generation) = raw_response
+        .pointer("/error/failed_generation")
+        .and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+
+    parse_json_object_text(failed_generation, "Groq failed_generation").map(Some)
+}
+
 fn parse_ollama_chat_response(raw_response: &Value) -> Result<Value, LlmError> {
     let content = raw_response
         .pointer("/message/content")
         .and_then(Value::as_str)
         .ok_or_else(|| LlmError::Provider("missing Ollama message content".to_owned()))?;
 
-    serde_json::from_str(content)
-        .map_err(|error| LlmError::InvalidStructuredOutput(error.to_string()))
+    parse_json_object_text(content, "Ollama message content")
 }
 
 fn parse_gemini_generate_content(raw_response: &Value) -> Result<Value, LlmError> {
@@ -924,7 +1110,7 @@ fn parse_gemini_generate_content(raw_response: &Value) -> Result<Value, LlmError
         .find_map(|part| part.get("text").and_then(Value::as_str))
         .ok_or_else(|| LlmError::Provider("missing Gemini text content".to_owned()))?;
 
-    serde_json::from_str(text).map_err(|error| LlmError::InvalidStructuredOutput(error.to_string()))
+    parse_json_object_text(text, "Gemini text content")
 }
 
 fn anthropic_messages_payload(model: &str, max_tokens: u32, request: ChatRequest) -> Value {
@@ -950,11 +1136,23 @@ fn anthropic_messages_payload(model: &str, max_tokens: u32, request: ChatRequest
     }
 
     if let Some(schema) = request.output_schema {
-        payload["output_config"] = json!({
-            "format": {
-                "type": "json_schema",
-                "schema": schema,
+        let mut input_schema = schema;
+        if let Some(object) = input_schema.as_object_mut() {
+            object.remove("title");
+        }
+        payload["tools"] = json!([
+            {
+                "name": "agent_output",
+                "description": "Extract information in the format of agent_output",
+                "input_schema": input_schema,
+                "cache_control": {
+                    "type": "ephemeral"
+                }
             }
+        ]);
+        payload["tool_choice"] = json!({
+            "type": "tool",
+            "name": "agent_output"
         });
     }
 
@@ -1026,6 +1224,17 @@ fn parse_anthropic_message(raw_response: &Value) -> Result<Value, LlmError> {
         _ => {}
     }
 
+    if let Some(input) = raw_response
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|part| part.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .and_then(|part| part.get("input"))
+    {
+        return parse_json_object_compatible(input, "Anthropic tool input");
+    }
+
     let text = raw_response
         .get("content")
         .and_then(Value::as_array)
@@ -1033,9 +1242,11 @@ fn parse_anthropic_message(raw_response: &Value) -> Result<Value, LlmError> {
         .flatten()
         .find(|part| part.get("type").and_then(Value::as_str) == Some("text"))
         .and_then(|part| part.get("text").and_then(Value::as_str))
-        .ok_or_else(|| LlmError::Provider("missing Anthropic text content".to_owned()))?;
+        .ok_or_else(|| {
+            LlmError::Provider("missing Anthropic tool use or text content".to_owned())
+        })?;
 
-    serde_json::from_str(text).map_err(|error| LlmError::InvalidStructuredOutput(error.to_string()))
+    parse_json_object_text(text, "Anthropic text content")
 }
 
 #[cfg(test)]
@@ -1110,6 +1321,7 @@ mod tests {
             "gpt-test",
             "agent_output",
             OpenAiStructuredOutputMode::JsonSchema,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
                 output_schema: Some(json!({
@@ -1134,11 +1346,45 @@ mod tests {
     }
 
     #[test]
+    fn mistral_schema_transform_strips_unsupported_validation_keywords() {
+        let payload = openai_chat_payload(
+            "mistral-test",
+            "agent_output",
+            OpenAiStructuredOutputMode::JsonSchema,
+            OpenAiSchemaTransform::MistralCompatible,
+            ChatRequest {
+                messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "email": {
+                            "type": "string",
+                            "format": "email",
+                            "minLength": 3,
+                            "maxLength": 128,
+                            "pattern": ".+@.+"
+                        }
+                    },
+                    "required": ["email"]
+                })),
+            },
+        );
+
+        let schema = &payload["response_format"]["json_schema"]["schema"];
+        assert_eq!(schema["properties"]["email"]["type"], "string");
+        assert!(schema["properties"]["email"].get("format").is_none());
+        assert!(schema["properties"]["email"].get("minLength").is_none());
+        assert!(schema["properties"]["email"].get("maxLength").is_none());
+        assert!(schema["properties"]["email"].get("pattern").is_none());
+    }
+
+    #[test]
     fn openai_json_object_mode_embeds_schema_instruction() {
         let payload = openai_chat_payload(
             "deepseek-test",
             "agent_output",
             OpenAiStructuredOutputMode::JsonObject,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
                 output_schema: Some(json!({
@@ -1164,6 +1410,7 @@ mod tests {
             "cerebras-test",
             "agent_output",
             OpenAiStructuredOutputMode::PromptOnly,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage::text(MessageRole::User, "Extract the result")],
                 output_schema: Some(json!({
@@ -1188,6 +1435,7 @@ mod tests {
             "tool-call-test",
             "agent_output",
             OpenAiStructuredOutputMode::ToolCall,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage::text(MessageRole::User, "Return a tool call")],
                 output_schema: Some(json!({
@@ -1217,6 +1465,7 @@ mod tests {
             "gpt-test",
             "agent_output",
             OpenAiStructuredOutputMode::JsonSchema,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage {
                     role: MessageRole::User,
@@ -1244,6 +1493,7 @@ mod tests {
             "gpt-test",
             "agent_output",
             OpenAiStructuredOutputMode::JsonSchema,
+            OpenAiSchemaTransform::Default,
             ChatRequest {
                 messages: vec![ChatMessage {
                     role: MessageRole::User,
@@ -1336,11 +1586,14 @@ mod tests {
         assert_eq!(payload["system"], "Return JSON only");
         assert_eq!(payload["messages"][0]["role"], "user");
         assert_eq!(payload["messages"][0]["content"][0]["type"], "text");
-        assert_eq!(payload["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(payload["tools"][0]["name"], "agent_output");
+        assert_eq!(payload["tools"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(
-            payload["output_config"]["format"]["schema"]["properties"]["ok"]["type"],
+            payload["tools"][0]["input_schema"]["properties"]["ok"]["type"],
             "boolean"
         );
+        assert_eq!(payload["tool_choice"]["type"], "tool");
+        assert_eq!(payload["tool_choice"]["name"], "agent_output");
     }
 
     #[test]
@@ -1413,6 +1666,38 @@ mod tests {
     }
 
     #[test]
+    fn gemini_prompt_fallback_embeds_schema_instruction() {
+        let payload = gemini_generate_content_payload_with_mode(
+            ChatRequest {
+                messages: vec![
+                    ChatMessage::text(MessageRole::System, "Return JSON only"),
+                    ChatMessage::text(MessageRole::User, "Extract the result"),
+                ],
+                output_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"]
+                })),
+            },
+            false,
+        );
+
+        assert!(payload.get("generationConfig").is_none());
+        assert_eq!(
+            payload["systemInstruction"]["parts"][0]["text"],
+            "Return JSON only"
+        );
+        let prompt = payload["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .expect("fallback prompt");
+        assert!(prompt.contains("Extract the result"));
+        assert!(prompt.contains("valid JSON object"));
+        assert!(prompt.contains("\"ok\""));
+    }
+
+    #[test]
     fn gemini_payload_preserves_data_url_images() {
         let payload = gemini_generate_content_payload(ChatRequest {
             messages: vec![ChatMessage {
@@ -1458,6 +1743,21 @@ mod tests {
         let parsed = parse_openai_chat_completion(&raw).expect("parse completion");
 
         assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_prompt_fallback_json_wrappers() {
+        let fenced = parse_json_object_text("```json\n{\"ok\":true}\n```", "fenced")
+            .expect("parse fenced JSON");
+        let extracted =
+            parse_json_object_text("<function=AgentOutput>{\"ok\":true}</function>", "tagged")
+                .expect("parse tagged JSON");
+        let singleton =
+            parse_json_object_text("[{\"ok\":true}]", "singleton").expect("parse singleton array");
+
+        assert_eq!(fenced, json!({ "ok": true }));
+        assert_eq!(extracted, json!({ "ok": true }));
+        assert_eq!(singleton, json!({ "ok": true }));
     }
 
     #[test]
@@ -1593,6 +1893,42 @@ mod tests {
         });
 
         let parsed = parse_anthropic_message(&raw).expect("parse completion");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_anthropic_tool_use_message() {
+        let raw = json!({
+            "model": "claude-test",
+            "stop_reason": "tool_use",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "agent_output",
+                    "input": {
+                        "ok": true
+                    }
+                }
+            ]
+        });
+
+        let parsed = parse_anthropic_message(&raw).expect("parse tool use");
+
+        assert_eq!(parsed, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn parses_groq_failed_generation_json() {
+        let raw = json!({
+            "error": {
+                "failed_generation": "<function=AgentOutput>{\"ok\":true}</function>"
+            }
+        });
+
+        let parsed = parse_groq_failed_generation_response(&raw)
+            .expect("failed_generation parser")
+            .expect("failed_generation content");
 
         assert_eq!(parsed, json!({ "ok": true }));
     }

@@ -111,9 +111,12 @@ headers (`HTTP-Referer`, `X-Title`, and `X-OpenRouter-Title`). DeepSeek,
 Cerebras, and Mistral use their upstream default model names when `--model` is
 omitted. CLI `--api-key`, `--model`, and `--base-url` override the
 provider-specific environment values where they apply. Structured-output
-requests use JSON Schema for OpenAI, Groq, Mistral, OpenRouter, and Vercel AI
-Gateway, a forced schema function tool call for DeepSeek, and prompt-only
-schema guidance for Cerebras. The OpenAI-compatible adapter also supports
+requests use JSON Schema for OpenAI, Mistral, OpenRouter, and most Groq and
+Vercel models, a forced schema function tool call for DeepSeek and Groq's
+`moonshotai/kimi-k2-instruct`, prompt-only schema guidance for Cerebras and
+Vercel Google/Anthropic/reasoning models, Mistral-compatible schema
+sanitization, Anthropic forced tool-use, Gemini native schema or prompt
+fallback, and Ollama `format` schemas. The OpenAI-compatible adapter also supports
 `--structured-output-mode json-schema|json-object|prompt-only|tool-call` to
 override an OpenAI-wire provider when the default mode does not fit the selected
 model.
@@ -276,9 +279,11 @@ templates live under `packaging/`; see
 - Agent runs currently support OpenAI-compatible Chat Completions plus
   DeepSeek, Groq, Cerebras, Mistral, OpenRouter, and Vercel AI Gateway aliases,
   Anthropic Messages, Gemini GenerateContent, and Ollama Chat structured-output
-  adapters, with DeepSeek forced tool-call output, Cerebras prompt-only output,
-  explicit OpenAI-wire output-mode overrides for fallback paths, and
-  upstream-style excluded-action schema controls.
+  adapters, with Anthropic forced tool-use, Gemini prompt fallback, DeepSeek
+  forced tool-call output, Groq model-specific tool-call fallback, Cerebras
+  prompt-only output, Mistral schema sanitization, Vercel model-specific prompt
+  fallback, explicit OpenAI-wire output-mode overrides, and upstream-style
+  excluded-action schema controls.
 - MCP tools are real over stdio and can reuse in-process sessions by
   `session_id`; new `session_id` calls with a URL create persistent records,
   and calls without `session_id` stay one-shot and ephemeral.

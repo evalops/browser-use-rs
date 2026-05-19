@@ -5,10 +5,9 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#141 Complete provider structured-output fallback parity](https://github.com/evalops/browser-use-rs/issues/141)
-
 ## Completed Tracks
 
+- [#141 Complete provider structured-output fallback parity](https://github.com/evalops/browser-use-rs/issues/141)
 - [#142 Resolve Playwright trace artifact parity boundary](https://github.com/evalops/browser-use-rs/issues/142)
 - [#140 Complete DOM and accessibility snapshot parity audit](https://github.com/evalops/browser-use-rs/issues/140)
 - [#139 Resolve storage-state profile-wide origin parity gap](https://github.com/evalops/browser-use-rs/issues/139)
@@ -360,8 +359,11 @@ Implemented:
 - OpenAI-compatible Chat Completions plus DeepSeek, Groq, Cerebras, Mistral,
   OpenRouter, and Vercel AI Gateway aliases, Anthropic Messages, Gemini
   GenerateContent, and Ollama Chat providers with structured-output request
-  payloads, including DeepSeek forced tool-call, Cerebras prompt-only
-  structured-output modes, and OpenRouter app attribution headers.
+  payloads and upstream fallback modes, including Anthropic forced tool-use,
+  Gemini native-schema plus prompt fallback, DeepSeek forced tool-call, Groq
+  model-specific JSON-schema/tool-call routing, Cerebras prompt-only guidance,
+  Mistral schema sanitization, Vercel model-specific prompt fallback, and
+  OpenRouter app attribution headers.
 - One-shot CLI agent command backed by explicit provider selection and typed
   agent settings flags.
 - MCP tool input/output contract schemas and stdio JSON-RPC tool execution for
