@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #126 lands and CI is green.
+- [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
 
 ## Completed Tracks
 
