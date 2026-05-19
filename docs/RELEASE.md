@@ -69,6 +69,13 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `BROWSER_USE_CHROME` override is supplied. Upstream `browser_binary_path`
   and `chrome_binary_path` aliases deserialize into the same canonical
   `executable_path` field.
+- `BrowserProfile.record_har_content=embed`, `record_har_mode=full`, and
+  unset `record_har_path` defaults; `save_har_path` deserializes into canonical
+  `record_har_path`. Configured direct-CDP sessions record HTTPS
+  request/response/loading events into a HAR 1.2 file on best-effort
+  `close_browser()` flush, including `full` vs `minimal` filtering and
+  `omit`/`embed`/`attach` body representation. Video and trace recording remain
+  separate future recording surfaces.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

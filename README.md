@@ -74,10 +74,13 @@ includes:
   requests that remain active beyond the watchdog budget. Upstream-style
   `minimum_wait_page_load_time` and `wait_for_network_idle_page_load_time`
   settle state capture and successful navigations, with zero values disabling
-  each wait. `BrowserProfile.channel` accepts upstream browser channel names
-  such as `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
-  channel-specific executable candidates when no explicit executable path or
-  `BROWSER_USE_CHROME` override is supplied.
+  each wait. `record_har_path`/`save_har_path` enables best-effort HAR 1.2
+  capture for HTTPS CDP traffic, with upstream `record_har_mode=full|minimal`
+  filtering and `record_har_content=omit|embed|attach` body handling flushed
+  on `close_browser()`. `BrowserProfile.channel` accepts upstream browser
+  channel names such as `chrome-beta`, `chrome-dev`, `chrome-canary`, and
+  `msedge`, and uses channel-specific executable candidates when no explicit
+  executable path or `BROWSER_USE_CHROME` override is supplied.
   Launch profiles accept downloads by default, using an explicit
   `downloads_path` or a session-owned temporary directory to enable Chrome
   download behavior. Upstream aliases `downloads_dir` and

@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#132 Add BrowserProfile HAR recording parity](https://github.com/evalops/browser-use-rs/issues/132)
+- Next upstream recording/profile parity slice after #132 lands and CI is green.
 
 ## Completed Tracks
 
+- [#132 Add BrowserProfile HAR recording parity](https://github.com/evalops/browser-use-rs/issues/132)
 - [#131 Add BrowserProfile executable_path alias parity](https://github.com/evalops/browser-use-rs/issues/131)
 - [#130 Add BrowserProfile DOM highlight overlay parity](https://github.com/evalops/browser-use-rs/issues/130)
 - [#129 Add BrowserProfile interaction highlight parity](https://github.com/evalops/browser-use-rs/issues/129)
@@ -234,6 +235,9 @@ Implemented:
   storage-state save/load events, direct PDF viewer state and one-per-session
   `auto_download_pdfs` PDF downloads into the effective accepted downloads path
   using CDP response metadata and `Network.getResponseBody` where available,
+  configured `record_har_path`/`save_har_path` HAR 1.2 recording for HTTPS
+  CDP traffic with upstream `full`/`minimal` filtering and
+  `omit`/`embed`/`attach` body representation,
   CDP websocket closure diagnostics, and direct `Page.navigate` plus stuck
   HTTP(S) request timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with

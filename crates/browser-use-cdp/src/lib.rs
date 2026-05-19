@@ -20,6 +20,7 @@ use percent_encoding::percent_decode_str;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
+use sha1::{Digest, Sha1};
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -1960,6 +1961,23 @@ pub enum BrowserChannel {
     MsEdgeCanary,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordHarContent {
+    Omit,
+    #[default]
+    Embed,
+    Attach,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordHarMode {
+    #[default]
+    Full,
+    Minimal,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2050,6 +2068,16 @@ pub struct BrowserProfile {
         deserialize_with = "deserialize_non_negative_f64_option"
     )]
     pub device_scale_factor: Option<f64>,
+    #[serde(default)]
+    pub record_har_content: RecordHarContent,
+    #[serde(default)]
+    pub record_har_mode: RecordHarMode,
+    #[serde(
+        default,
+        alias = "save_har_path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub record_har_path: Option<PathBuf>,
     #[serde(
         default = "default_minimum_wait_page_load_time",
         deserialize_with = "deserialize_non_negative_f64"
@@ -2127,6 +2155,9 @@ impl Default for BrowserProfile {
             viewport: BrowserViewport::default(),
             no_viewport: false,
             device_scale_factor: None,
+            record_har_content: RecordHarContent::default(),
+            record_har_mode: RecordHarMode::default(),
+            record_har_path: None,
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             highlight_elements: default_highlight_elements(),
@@ -4320,6 +4351,873 @@ impl NetworkActivityState {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CdpHarConfig {
+    path: PathBuf,
+    content: RecordHarContent,
+    mode: RecordHarMode,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CdpHarState {
+    entries: BTreeMap<String, CdpHarEntryBuilder>,
+    pages: BTreeMap<String, CdpHarPageBuilder>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CdpHarEntryBuilder {
+    frame_id: Option<String>,
+    document_url: Option<String>,
+    url: Option<String>,
+    method: Option<String>,
+    request_headers: BTreeMap<String, String>,
+    post_data: Option<String>,
+    status: Option<u64>,
+    status_text: Option<String>,
+    response_headers: BTreeMap<String, String>,
+    mime_type: Option<String>,
+    encoded_data: Vec<u8>,
+    failed: bool,
+    ts_request: Option<f64>,
+    wall_time_request: Option<f64>,
+    ts_response: Option<f64>,
+    ts_finished: Option<f64>,
+    encoded_data_length: Option<i64>,
+    response_body: Option<Vec<u8>>,
+    content_length: Option<i64>,
+    protocol: Option<String>,
+    server_ip_address: Option<String>,
+    server_port: Option<i64>,
+    security_details: Option<Value>,
+    transfer_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CdpHarPageBuilder {
+    url: String,
+    title: String,
+    started_date_time: Option<f64>,
+    monotonic_start: Option<f64>,
+    on_content_load: Option<i64>,
+    on_load: Option<i64>,
+}
+
+#[derive(Debug)]
+struct CdpHarRecorder {
+    config: CdpHarConfig,
+    state: Mutex<CdpHarState>,
+}
+
+impl CdpHarRecorder {
+    fn from_profile(profile: &BrowserProfile) -> Option<Arc<Self>> {
+        profile.record_har_path.as_ref().map(|path| {
+            Arc::new(Self {
+                config: CdpHarConfig {
+                    path: path.clone(),
+                    content: profile.record_har_content,
+                    mode: profile.record_har_mode,
+                },
+                state: Mutex::new(CdpHarState::default()),
+            })
+        })
+    }
+
+    async fn observe_cdp_event(&self, connection: &CdpConnection, event: &CdpEvent) {
+        match event.method.as_str() {
+            "Network.requestWillBeSent" => self.observe_request_will_be_sent(event).await,
+            "Network.responseReceived" => self.observe_response_received(event).await,
+            "Network.dataReceived" => self.observe_data_received(event).await,
+            "Network.loadingFinished" => {
+                self.observe_loading_finished(connection, event).await;
+            }
+            "Network.loadingFailed" => self.observe_loading_failed(event).await,
+            "Page.lifecycleEvent" => self.observe_page_lifecycle(event).await,
+            "Page.frameNavigated" => self.observe_frame_navigated(event).await,
+            _ => {}
+        }
+    }
+
+    async fn observe_request_will_be_sent(&self, event: &CdpEvent) {
+        if event
+            .params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_none()
+        {
+            return;
+        }
+        let Some(request) = event.params.get("request") else {
+            return;
+        };
+        let Some(url) = request.get("url").and_then(Value::as_str) else {
+            return;
+        };
+        if !is_har_https(url) {
+            return;
+        }
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or("GET")
+            .to_owned();
+        let post_data = request
+            .get("postData")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let frame_id = event
+            .params
+            .get("frameId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let document_url = event
+            .params
+            .get("documentURL")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let ts_request = event.params.get("timestamp").and_then(Value::as_f64);
+        let wall_time_request = event.params.get("wallTime").and_then(Value::as_f64);
+        let resource_type = event.params.get("type").and_then(Value::as_str);
+        let is_same_document = event
+            .params
+            .get("isSameDocument")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        let mut state = self.state.lock().await;
+        let entry = state
+            .entries
+            .entry(request_key)
+            .or_insert_with(CdpHarEntryBuilder::default);
+        entry.url = Some(url.to_owned());
+        entry.method = Some(method);
+        entry.post_data = post_data;
+        entry.request_headers = har_headers_map(request.get("headers"));
+        entry.frame_id = frame_id.clone();
+        entry.document_url = document_url;
+        entry.ts_request = ts_request;
+        entry.wall_time_request = wall_time_request;
+
+        if resource_type == Some("Document") && !is_same_document {
+            if let Some(frame_id) = frame_id {
+                let page = state
+                    .pages
+                    .entry(frame_id)
+                    .or_insert_with(|| CdpHarPageBuilder {
+                        url: url.to_owned(),
+                        title: url.to_owned(),
+                        started_date_time: wall_time_request,
+                        monotonic_start: ts_request,
+                        on_content_load: None,
+                        on_load: None,
+                    });
+                if wall_time_request.is_some()
+                    && (page.started_date_time.is_none()
+                        || wall_time_request < page.started_date_time)
+                {
+                    page.url = url.to_owned();
+                    page.title = url.to_owned();
+                    page.started_date_time = wall_time_request;
+                    page.monotonic_start = ts_request;
+                }
+            }
+        }
+    }
+
+    async fn observe_response_received(&self, event: &CdpEvent) {
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+        let Some(response) = event.params.get("response") else {
+            return;
+        };
+
+        let headers = har_headers_map(response.get("headers"));
+        let mut state = self.state.lock().await;
+        let Some(entry) = state.entries.get_mut(&request_key) else {
+            return;
+        };
+        entry.status = response.get("status").and_then(Value::as_u64);
+        entry.status_text = response
+            .get("statusText")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        entry.content_length = headers
+            .get("content-length")
+            .and_then(|value| value.parse::<i64>().ok());
+        entry.response_headers = headers;
+        entry.mime_type = response
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        entry.ts_response = event.params.get("timestamp").and_then(Value::as_f64);
+        entry.protocol = response
+            .get("protocol")
+            .and_then(Value::as_str)
+            .map(har_http_version);
+        entry.server_ip_address = response
+            .get("remoteIPAddress")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        entry.server_port = response.get("remotePort").and_then(Value::as_i64);
+        entry.security_details = response.get("securityDetails").cloned();
+    }
+
+    async fn observe_data_received(&self, event: &CdpEvent) {
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+        let Some(data) = event.params.get("data").and_then(Value::as_str) else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        if let Some(entry) = state.entries.get_mut(&request_key) {
+            entry.encoded_data.extend_from_slice(data.as_bytes());
+        }
+    }
+
+    async fn observe_loading_finished(&self, connection: &CdpConnection, event: &CdpEvent) {
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+        let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {
+            return;
+        };
+        let should_fetch_body = {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.entries.get_mut(&request_key) else {
+                return;
+            };
+            entry.ts_finished = event.params.get("timestamp").and_then(Value::as_f64);
+            if let Some(encoded_data_length) = event
+                .params
+                .get("encodedDataLength")
+                .and_then(Value::as_i64)
+            {
+                entry.encoded_data_length = Some(encoded_data_length);
+                entry.transfer_size = Some(encoded_data_length);
+            }
+            self.config.content != RecordHarContent::Omit
+        };
+
+        if should_fetch_body {
+            let body = connection
+                .command(
+                    "Network.getResponseBody",
+                    json!({ "requestId": request_id }),
+                    event.session_id.as_deref(),
+                )
+                .await
+                .ok()
+                .and_then(cdp_response_body_bytes_from_value);
+            if let Some(body) = body {
+                let mut state = self.state.lock().await;
+                if let Some(entry) = state.entries.get_mut(&request_key) {
+                    entry.response_body = Some(body);
+                }
+            }
+        }
+    }
+
+    async fn observe_loading_failed(&self, event: &CdpEvent) {
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        if let Some(entry) = state.entries.get_mut(&request_key) {
+            entry.failed = true;
+        }
+    }
+
+    async fn observe_page_lifecycle(&self, event: &CdpEvent) {
+        let Some(frame_id) = event.params.get("frameId").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(name) = event.params.get("name").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(timestamp) = event.params.get("timestamp").and_then(Value::as_f64) else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        let Some(page) = state.pages.get_mut(frame_id) else {
+            return;
+        };
+        let Some(start) = page.monotonic_start else {
+            return;
+        };
+        let elapsed_ms = ((timestamp - start) * 1_000.0).round().max(0.0) as i64;
+        match name {
+            "DOMContentLoaded" => page.on_content_load = Some(elapsed_ms),
+            "load" => page.on_load = Some(elapsed_ms),
+            _ => {}
+        }
+    }
+
+    async fn observe_frame_navigated(&self, event: &CdpEvent) {
+        let Some(frame) = event.params.get("frame") else {
+            return;
+        };
+        let Some(frame_id) = frame.get("id").and_then(Value::as_str) else {
+            return;
+        };
+        let title = frame
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .or_else(|| frame.get("url").and_then(Value::as_str))
+            .map(str::to_owned);
+        let Some(title) = title else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        if let Some(page) = state.pages.get_mut(frame_id) {
+            page.title = title;
+        }
+    }
+
+    async fn write_har(&self) -> Result<(), BrowserError> {
+        let state = self.state.lock().await.clone();
+        let har_dir = self
+            .config
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        tokio::fs::create_dir_all(&har_dir)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+
+        let sidecar_dir = if self.config.content == RecordHarContent::Attach {
+            let dir = har_dir.join(format!(
+                "{}_har_parts",
+                self.config
+                    .path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("recording")
+            ));
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+            Some(dir)
+        } else {
+            None
+        };
+
+        let mut entries = Vec::new();
+        for entry in state
+            .entries
+            .values()
+            .filter(|entry| self.include_entry(entry, &state.pages))
+        {
+            entries.push(self.har_entry_json(entry, sidecar_dir.as_deref()).await?);
+        }
+
+        let pages = state
+            .pages
+            .iter()
+            .map(|(frame_id, page)| {
+                let mut page_timings = serde_json::Map::new();
+                if let Some(on_content_load) = page.on_content_load {
+                    page_timings.insert("onContentLoad".to_owned(), json!(on_content_load));
+                }
+                if let Some(on_load) = page.on_load {
+                    page_timings.insert("onLoad".to_owned(), json!(on_load));
+                }
+                json!({
+                    "id": format!("page@{frame_id}"),
+                    "title": page.title,
+                    "startedDateTime": format_har_timestamp(page.started_date_time),
+                    "pageTimings": page_timings,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let har = json!({
+            "log": {
+                "version": "1.2",
+                "creator": {
+                    "name": "browser-use-rs",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+                "browser": {
+                    "name": "Chromium",
+                    "version": "",
+                },
+                "pages": pages,
+                "entries": entries,
+            }
+        });
+
+        let bytes = serde_json::to_vec_pretty(&har)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let tmp_path = self.config.path.with_extension(format!(
+            "{}tmp",
+            self.config
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| format!("{extension}."))
+                .unwrap_or_default()
+        ));
+        tokio::fs::write(&tmp_path, bytes)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        tokio::fs::rename(&tmp_path, &self.config.path)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        Ok(())
+    }
+
+    async fn har_entry_json(
+        &self,
+        entry: &CdpHarEntryBuilder,
+        sidecar_dir: Option<&Path>,
+    ) -> Result<Value, BrowserError> {
+        let body_bytes = entry
+            .response_body
+            .as_deref()
+            .unwrap_or(entry.encoded_data.as_slice());
+        let content_size = i64::try_from(body_bytes.len()).unwrap_or(i64::MAX);
+        let compression = match (entry.content_length, entry.encoded_data_length) {
+            (Some(content_length), Some(encoded_data_length)) => {
+                Some((content_length - encoded_data_length).max(0))
+            }
+            _ => None,
+        };
+        let content = self
+            .har_content_json(
+                body_bytes,
+                entry.mime_type.as_deref(),
+                compression,
+                sidecar_dir,
+            )
+            .await?;
+        let request_headers = har_header_list(&entry.request_headers);
+        let response_headers = har_header_list(&entry.response_headers);
+        let request_post_data = self
+            .har_request_post_data(entry, sidecar_dir)
+            .await?
+            .unwrap_or(Value::Null);
+        let (started_date_time, total_time_ms, timings) = har_timings(entry);
+        let http_version = entry.protocol.as_deref().unwrap_or("HTTP/1.1");
+        let response_body_size = entry
+            .transfer_size
+            .or(entry.encoded_data_length)
+            .unwrap_or(if content_size > 0 { content_size } else { -1 });
+
+        let mut entry_json = json!({
+            "startedDateTime": started_date_time,
+            "time": total_time_ms,
+            "request": {
+                "method": entry.method.as_deref().unwrap_or("GET"),
+                "url": entry.url.as_deref().unwrap_or_default(),
+                "httpVersion": http_version,
+                "headers": request_headers,
+                "queryString": [],
+                "cookies": [],
+                "headersSize": har_headers_size(
+                    entry.method.as_deref(),
+                    entry.url.as_deref(),
+                    &entry.request_headers
+                ),
+                "bodySize": har_request_body_size(entry),
+                "postData": request_post_data,
+            },
+            "response": {
+                "status": entry.status.unwrap_or(0),
+                "statusText": entry.status_text.as_deref().unwrap_or_default(),
+                "httpVersion": http_version,
+                "headers": response_headers,
+                "cookies": [],
+                "content": content,
+                "redirectURL": "",
+                "headersSize": har_headers_size(None, None, &entry.response_headers),
+                "bodySize": response_body_size,
+            },
+            "cache": {},
+            "timings": timings,
+            "pageref": entry.frame_id.as_ref().and_then(|frame_id| {
+                entry_has_page_ref(frame_id, entry, None)
+            }),
+        });
+
+        if let Some(frame_id) = &entry.frame_id {
+            if let Some(pageref) = entry_has_page_ref(frame_id, entry, Some(frame_id)) {
+                entry_json["pageref"] = json!(pageref);
+            }
+        }
+        if let Some(server_ip_address) = &entry.server_ip_address {
+            entry_json["serverIPAddress"] = json!(server_ip_address);
+        }
+        if let Some(server_port) = entry.server_port {
+            entry_json["_serverPort"] = json!(server_port);
+        }
+        if let Some(security_details) = har_security_details(entry.security_details.as_ref()) {
+            entry_json["_securityDetails"] = security_details;
+        }
+        if let Some(transfer_size) = entry.transfer_size {
+            entry_json["response"]["_transferSize"] = json!(transfer_size);
+        }
+
+        Ok(entry_json)
+    }
+
+    async fn har_content_json(
+        &self,
+        body_bytes: &[u8],
+        mime_type: Option<&str>,
+        compression: Option<i64>,
+        sidecar_dir: Option<&Path>,
+    ) -> Result<Value, BrowserError> {
+        let mut content = serde_json::Map::from_iter([(
+            "mimeType".to_owned(),
+            json!(mime_type.unwrap_or_default()),
+        )]);
+        let content_size = i64::try_from(body_bytes.len()).unwrap_or(i64::MAX);
+        content.insert("size".to_owned(), json!(content_size));
+
+        match self.config.content {
+            RecordHarContent::Embed if !body_bytes.is_empty() => {
+                match std::str::from_utf8(body_bytes) {
+                    Ok(text) => {
+                        content.insert("text".to_owned(), json!(text));
+                    }
+                    Err(_) => {
+                        content.insert(
+                            "text".to_owned(),
+                            json!(base64::engine::general_purpose::STANDARD.encode(body_bytes)),
+                        );
+                        content.insert("encoding".to_owned(), json!("base64"));
+                    }
+                }
+            }
+            RecordHarContent::Attach if !body_bytes.is_empty() => {
+                if let Some(sidecar_dir) = sidecar_dir {
+                    let filename = har_attachment_filename(body_bytes, mime_type);
+                    tokio::fs::write(sidecar_dir.join(&filename), body_bytes)
+                        .await
+                        .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+                    content.insert("_file".to_owned(), json!(filename));
+                }
+            }
+            RecordHarContent::Omit | RecordHarContent::Embed | RecordHarContent::Attach => {}
+        }
+
+        if content_size > 0 {
+            if let Some(compression) = compression {
+                content.insert("compression".to_owned(), json!(compression));
+            }
+        }
+        Ok(Value::Object(content))
+    }
+
+    async fn har_request_post_data(
+        &self,
+        entry: &CdpHarEntryBuilder,
+        sidecar_dir: Option<&Path>,
+    ) -> Result<Option<Value>, BrowserError> {
+        let Some(post_data) = &entry.post_data else {
+            return Ok(None);
+        };
+        if self.config.content == RecordHarContent::Omit {
+            return Ok(None);
+        }
+        let mime_type = entry
+            .request_headers
+            .get("content-type")
+            .map(String::as_str)
+            .unwrap_or("text/plain");
+        if self.config.content == RecordHarContent::Attach {
+            let post_data_bytes = post_data.as_bytes();
+            let filename = har_attachment_filename(post_data_bytes, Some(mime_type));
+            if let Some(sidecar_dir) = sidecar_dir {
+                tokio::fs::write(sidecar_dir.join(&filename), post_data_bytes)
+                    .await
+                    .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+            }
+            return Ok(Some(json!({
+                "mimeType": mime_type,
+                "_file": filename,
+            })));
+        }
+        Ok(Some(json!({
+            "mimeType": mime_type,
+            "text": post_data,
+        })))
+    }
+
+    fn include_entry(
+        &self,
+        entry: &CdpHarEntryBuilder,
+        pages: &BTreeMap<String, CdpHarPageBuilder>,
+    ) -> bool {
+        let Some(url) = entry.url.as_deref() else {
+            return false;
+        };
+        if !is_har_https(url) || url.to_ascii_lowercase().contains("/favicon.ico") {
+            return false;
+        }
+        if self.config.mode == RecordHarMode::Full {
+            return true;
+        }
+        let Some(frame_id) = &entry.frame_id else {
+            return false;
+        };
+        let Some(page) = pages.get(frame_id) else {
+            return false;
+        };
+        har_origin(url) == har_origin(&page.url)
+    }
+}
+
+fn is_har_https(url: &str) -> bool {
+    url.to_ascii_lowercase().starts_with("https://")
+}
+
+fn cdp_response_body_bytes_from_value(response: Value) -> Option<Vec<u8>> {
+    let body = response.get("body").and_then(Value::as_str)?;
+    if response
+        .get("base64Encoded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        base64::engine::general_purpose::STANDARD.decode(body).ok()
+    } else {
+        Some(body.as_bytes().to_vec())
+    }
+}
+
+fn har_headers_map(headers: Option<&Value>) -> BTreeMap<String, String> {
+    let Some(headers) = headers else {
+        return BTreeMap::new();
+    };
+    match headers {
+        Value::Object(headers) => headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_ascii_lowercase(),
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string()),
+                )
+            })
+            .collect(),
+        Value::Array(headers) => headers
+            .iter()
+            .filter_map(|header| {
+                let name = header.get("name")?.as_str()?;
+                let value = header
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Some((name.to_ascii_lowercase(), value.to_owned()))
+            })
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+fn har_header_list(headers: &BTreeMap<String, String>) -> Vec<Value> {
+    headers
+        .iter()
+        .map(|(name, value)| json!({ "name": name, "value": value }))
+        .collect()
+}
+
+fn har_headers_size(
+    method: Option<&str>,
+    url: Option<&str>,
+    headers: &BTreeMap<String, String>,
+) -> i64 {
+    let mut size = 0i64;
+    if let (Some(method), Some(url)) = (method, url) {
+        size += format!("{method} {url} HTTP/1.1\r\n").len() as i64;
+    }
+    for (name, value) in headers {
+        size += format!("{name}: {value}\r\n").len() as i64;
+    }
+    size + 2
+}
+
+fn har_request_body_size(entry: &CdpHarEntryBuilder) -> i64 {
+    if let Some(content_length) = entry
+        .request_headers
+        .get("content-length")
+        .and_then(|value| value.parse::<i64>().ok())
+    {
+        return content_length;
+    }
+    if let Some(post_data) = &entry.post_data {
+        return i64::try_from(post_data.len()).unwrap_or(i64::MAX);
+    }
+    if matches!(entry.method.as_deref(), Some("GET" | "HEAD")) {
+        return 0;
+    }
+    -1
+}
+
+fn har_http_version(protocol: &str) -> String {
+    let protocol = protocol.to_ascii_lowercase();
+    if protocol == "h2" || protocol.starts_with("http/2") {
+        "HTTP/2.0".to_owned()
+    } else if protocol.starts_with("http/1.1") {
+        "HTTP/1.1".to_owned()
+    } else if protocol.starts_with("http/1.0") {
+        "HTTP/1.0".to_owned()
+    } else {
+        protocol.to_ascii_uppercase()
+    }
+}
+
+fn har_timings(entry: &CdpHarEntryBuilder) -> (String, i64, Value) {
+    let wait_ms = entry
+        .ts_request
+        .zip(entry.ts_response)
+        .map(|(start, response)| ((response - start) * 1_000.0).round().max(0.0) as i64)
+        .unwrap_or(0);
+    let receive_ms = entry
+        .ts_response
+        .zip(entry.ts_finished)
+        .map(|(response, finished)| ((finished - response) * 1_000.0).round().max(0.0) as i64)
+        .unwrap_or(0);
+    let total = wait_ms + receive_ms;
+    (
+        format_har_timestamp(entry.wall_time_request),
+        total,
+        json!({
+            "dns": 0,
+            "connect": 0,
+            "ssl": 0,
+            "send": 0,
+            "wait": wait_ms,
+            "receive": receive_ms,
+        }),
+    )
+}
+
+fn har_security_details(security_details: Option<&Value>) -> Option<Value> {
+    let security_details = security_details?.as_object()?;
+    let mut filtered = serde_json::Map::new();
+    for key in ["protocol", "subjectName", "issuer", "validFrom", "validTo"] {
+        if let Some(value) = security_details.get(key) {
+            filtered.insert(key.to_owned(), value.clone());
+        }
+    }
+    (!filtered.is_empty()).then_some(Value::Object(filtered))
+}
+
+fn entry_has_page_ref(
+    frame_id: &str,
+    entry: &CdpHarEntryBuilder,
+    known_frame_id: Option<&String>,
+) -> Option<String> {
+    if known_frame_id.is_some() || entry.frame_id.as_deref() == Some(frame_id) {
+        Some(format!("page@{frame_id}"))
+    } else {
+        None
+    }
+}
+
+fn har_origin(raw_url: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw_url).ok()?;
+    let host = parsed.host_str()?;
+    let port = parsed
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    Some(format!("{}://{host}{port}", parsed.scheme()))
+}
+
+fn har_attachment_filename(content: &[u8], mime_type: Option<&str>) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(content);
+    let hash = format!("{:x}", hasher.finalize());
+    format!("{hash}.{}", har_mime_extension(mime_type))
+}
+
+fn har_mime_extension(mime_type: Option<&str>) -> &'static str {
+    let Some(mime_type) = mime_type else {
+        return "bin";
+    };
+    match mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "text/html" => "html",
+        "text/css" => "css",
+        "text/javascript" | "application/javascript" | "application/x-javascript" => "js",
+        "application/json" => "json",
+        "application/xml" | "text/xml" => "xml",
+        "text/plain" => "txt",
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/x-icon" => "ico",
+        "font/woff" | "application/font-woff" | "application/x-font-woff" => "woff",
+        "font/woff2" | "application/font-woff2" | "application/x-font-woff2" => "woff2",
+        "font/ttf" | "application/x-font-ttf" => "ttf",
+        "font/otf" | "application/x-font-opentype" => "otf",
+        "application/pdf" => "pdf",
+        "application/zip" | "application/x-zip-compressed" => "zip",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" => "wav",
+        "audio/ogg" => "ogg",
+        _ => "bin",
+    }
+}
+
+fn format_har_timestamp(timestamp: Option<f64>) -> String {
+    let Some(timestamp) = timestamp else {
+        return String::new();
+    };
+    if !timestamp.is_finite() || timestamp < 0.0 {
+        return String::new();
+    }
+    let total_millis = (timestamp * 1_000.0).round() as i64;
+    let total_seconds = total_millis.div_euclid(1_000);
+    let millis = total_millis.rem_euclid(1_000);
+    let days = total_seconds.div_euclid(86_400);
+    let seconds_of_day = total_seconds.rem_euclid(86_400);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    let (year, month, day) = civil_from_unix_days(days);
+    if millis == 0 {
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    } else {
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+    }
+}
+
+fn civil_from_unix_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month, day)
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FrameOffset {
     x: i32,
@@ -4600,6 +5498,7 @@ pub struct CdpBrowserSession {
     interaction_highlight: InteractionHighlightConfig,
     dom_highlight: DomHighlightConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
+    har_recorder: Option<Arc<CdpHarRecorder>>,
     downloads_path: Option<PathBuf>,
     auto_download_pdfs: bool,
     auto_pdf_downloads: Arc<Mutex<BTreeMap<String, PathBuf>>>,
@@ -4667,6 +5566,7 @@ impl CdpBrowserSession {
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
+        let har_recorder = CdpHarRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
             profile.auto_download_pdfs,
@@ -4692,6 +5592,7 @@ impl CdpBrowserSession {
             profile.network_request_timeout_ms,
             network_activity.clone(),
             cdp_auto_pdf_download,
+            har_recorder.clone(),
         );
         let page_load_wait = PageLoadWaitConfig::from_profile(profile);
 
@@ -4711,6 +5612,7 @@ impl CdpBrowserSession {
             interaction_highlight: InteractionHighlightConfig::from_profile(profile),
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
+            har_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
@@ -4770,6 +5672,7 @@ impl CdpBrowserSession {
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
+        let har_recorder = CdpHarRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
             profile.auto_download_pdfs,
@@ -4798,6 +5701,7 @@ impl CdpBrowserSession {
             profile.network_request_timeout_ms,
             network_activity.clone(),
             cdp_auto_pdf_download,
+            har_recorder.clone(),
         );
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
@@ -4829,6 +5733,7 @@ impl CdpBrowserSession {
             interaction_highlight: InteractionHighlightConfig::from_profile(profile),
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
+            har_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
@@ -4846,6 +5751,9 @@ impl CdpBrowserSession {
             .await;
         if let Some(path) = &self.storage_state_path {
             self.save_storage_state(path).await?;
+        }
+        if let Some(har_recorder) = &self.har_recorder {
+            let _ = har_recorder.write_har().await;
         }
         self.connection.mark_intentional_stop();
         self.connection
@@ -5670,8 +6578,13 @@ impl BrowserLifecycleWatchdog {
         network_request_timeout_ms: u64,
         network_activity: Arc<Mutex<NetworkActivityState>>,
         cdp_auto_pdf_download: Option<Arc<CdpAutoPdfDownloadState>>,
+        har_recorder: Option<Arc<CdpHarRecorder>>,
     ) -> Self {
         let mut events = connection.subscribe_events();
+        let lifecycle_event_sink = LifecycleEventSink {
+            events: lifecycle_events,
+            event_tx: lifecycle_event_tx,
+        };
         let handle = tokio::spawn(async move {
             let mut active_network_requests = HashMap::new();
             let mut interval = tokio::time::interval(Duration::from_millis(1_000));
@@ -5685,11 +6598,11 @@ impl BrowserLifecycleWatchdog {
                             Ok(event) => {
                                 handle_lifecycle_cdp_event(
                                     &connection,
-                                    &lifecycle_events,
-                                    &lifecycle_event_tx,
+                                    &lifecycle_event_sink,
                                     &mut active_network_requests,
                                     &network_activity,
                                     &cdp_auto_pdf_download,
+                                    &har_recorder,
                                     event,
                                 )
                                 .await;
@@ -5705,7 +6618,12 @@ impl BrowserLifecycleWatchdog {
                             Instant::now(),
                             timeout,
                         );
-                        record_lifecycle_events(&lifecycle_events, &lifecycle_event_tx, events).await;
+                        record_lifecycle_events(
+                            &lifecycle_event_sink.events,
+                            &lifecycle_event_sink.event_tx,
+                            events,
+                        )
+                        .await;
                     }
                 }
             }
@@ -5732,13 +6650,17 @@ struct ActiveNetworkRequest {
 
 async fn handle_lifecycle_cdp_event(
     connection: &CdpConnection,
-    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
-    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
+    lifecycle_event_sink: &LifecycleEventSink,
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     network_activity: &Arc<Mutex<NetworkActivityState>>,
     cdp_auto_pdf_download: &Option<Arc<CdpAutoPdfDownloadState>>,
+    har_recorder: &Option<Arc<CdpHarRecorder>>,
     event: CdpEvent,
 ) {
+    if let Some(har_recorder) = har_recorder {
+        har_recorder.observe_cdp_event(connection, &event).await;
+    }
+
     match event.method.as_str() {
         "Network.requestWillBeSent" => {
             track_network_request(active_network_requests, &event);
@@ -5751,8 +6673,7 @@ async fn handle_lifecycle_cdp_event(
                 if let Some(event) =
                     cdp_auto_pdf_lifecycle_event(connection, cdp_auto_pdf_download, &event).await
                 {
-                    record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event)
-                        .await;
+                    lifecycle_event_sink.push(event).await;
                 }
             } else if let Some(cdp_auto_pdf_download) = cdp_auto_pdf_download {
                 cdp_auto_pdf_download.forget_candidate(&event).await;
@@ -5764,52 +6685,46 @@ async fn handle_lifecycle_cdp_event(
             }
         }
         "browser-use-rs.websocket-closed" => {
-            record_lifecycle_event_in_buffer(
-                lifecycle_events,
-                lifecycle_event_tx,
-                lifecycle_event_for_websocket_closed(&event),
-            )
-            .await;
+            lifecycle_event_sink
+                .push(lifecycle_event_for_websocket_closed(&event))
+                .await;
         }
         "browser-use-rs.websocket-reconnecting" => {
             if let Some(event) = lifecycle_event_for_websocket_reconnecting(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
+                lifecycle_event_sink.push(event).await;
             }
         }
         "browser-use-rs.websocket-reconnected" => {
             if let Some(event) = lifecycle_event_for_websocket_reconnected(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
+                lifecycle_event_sink.push(event).await;
             }
         }
         "browser-use-rs.websocket-reconnect-failed" => {
-            record_lifecycle_event_in_buffer(
-                lifecycle_events,
-                lifecycle_event_tx,
-                lifecycle_event_for_websocket_reconnect_failed(&event),
-            )
-            .await;
+            lifecycle_event_sink
+                .push(lifecycle_event_for_websocket_reconnect_failed(&event))
+                .await;
         }
         "Target.targetCrashed" | "Inspector.targetCrashed" => {
             record_lifecycle_events(
-                lifecycle_events,
-                lifecycle_event_tx,
+                &lifecycle_event_sink.events,
+                &lifecycle_event_sink.event_tx,
                 lifecycle_events_for_target_crash(&event),
             )
             .await;
         }
         "Page.javascriptDialogOpening" => {
             let event = lifecycle_event_for_javascript_dialog(connection, &event).await;
-            record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
+            lifecycle_event_sink.push(event).await;
         }
         "Browser.downloadWillBegin" => {
             if let Some(event) = lifecycle_event_for_download_start(&event) {
-                record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event).await;
+                lifecycle_event_sink.push(event).await;
             }
         }
         "Browser.downloadProgress" => {
             record_lifecycle_events(
-                lifecycle_events,
-                lifecycle_event_tx,
+                &lifecycle_event_sink.events,
+                &lifecycle_event_sink.event_tx,
                 lifecycle_events_for_download_progress(&event),
             )
             .await;
@@ -6283,15 +7198,6 @@ async fn record_lifecycle_events(
     for event in events {
         push_lifecycle_event_and_publish(&mut queue, lifecycle_event_tx, event);
     }
-}
-
-async fn record_lifecycle_event_in_buffer(
-    lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
-    lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
-    event: BrowserLifecycleEvent,
-) {
-    let mut queue = lifecycle_events.lock().await;
-    push_lifecycle_event_and_publish(&mut queue, lifecycle_event_tx, event);
 }
 
 fn lifecycle_events_for_target_crash(event: &CdpEvent) -> Vec<BrowserLifecycleEvent> {
@@ -9833,6 +10739,7 @@ mod tests {
             ),
             dom_highlight: DomHighlightConfig::from_profile(&BrowserProfile::default()),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
+            har_recorder: None,
             downloads_path,
             auto_download_pdfs,
             auto_pdf_downloads: Arc::new(Mutex::new(BTreeMap::new())),
@@ -9845,6 +10752,109 @@ mod tests {
             _launched_browser: None,
             _downloads_dir: None,
         }
+    }
+
+    fn har_request_event(
+        request_id: &str,
+        url: &str,
+        frame_id: &str,
+        resource_type: &str,
+        timestamp: f64,
+        wall_time: f64,
+    ) -> CdpEvent {
+        CdpEvent {
+            method: "Network.requestWillBeSent".to_owned(),
+            params: json!({
+                "requestId": request_id,
+                "frameId": frame_id,
+                "documentURL": url,
+                "type": resource_type,
+                "timestamp": timestamp,
+                "wallTime": wall_time,
+                "request": {
+                    "url": url,
+                    "method": "GET",
+                    "headers": {
+                        "Accept": "*/*"
+                    }
+                }
+            }),
+            session_id: None,
+        }
+    }
+
+    fn har_response_event(
+        request_id: &str,
+        url: &str,
+        status: u64,
+        mime_type: &str,
+        timestamp: f64,
+    ) -> CdpEvent {
+        CdpEvent {
+            method: "Network.responseReceived".to_owned(),
+            params: json!({
+                "requestId": request_id,
+                "timestamp": timestamp,
+                "response": {
+                    "url": url,
+                    "status": status,
+                    "statusText": "OK",
+                    "mimeType": mime_type,
+                    "protocol": "h2",
+                    "remoteIPAddress": "203.0.113.10",
+                    "remotePort": 443,
+                    "headers": {
+                        "Content-Type": mime_type,
+                        "Content-Length": "5"
+                    },
+                    "securityDetails": {
+                        "protocol": "TLS 1.3",
+                        "subjectName": "example.test",
+                        "sanList": ["example.test"]
+                    }
+                }
+            }),
+            session_id: None,
+        }
+    }
+
+    async fn seed_har_entry(
+        recorder: &CdpHarRecorder,
+        request_id: &str,
+        url: &str,
+        frame_id: &str,
+        resource_type: &str,
+        body: &[u8],
+    ) {
+        recorder
+            .observe_request_will_be_sent(&har_request_event(
+                request_id,
+                url,
+                frame_id,
+                resource_type,
+                10.0,
+                1_700_000_000.0,
+            ))
+            .await;
+        recorder
+            .observe_response_received(&har_response_event(
+                request_id,
+                url,
+                200,
+                "text/plain",
+                10.1,
+            ))
+            .await;
+        let request_key = format!("root:{request_id}");
+        let mut state = recorder.state.lock().await;
+        let entry = state
+            .entries
+            .get_mut(&request_key)
+            .expect("seeded HAR entry");
+        entry.response_body = Some(body.to_vec());
+        entry.ts_finished = Some(10.3);
+        entry.encoded_data_length = Some(i64::try_from(body.len()).expect("body len"));
+        entry.transfer_size = entry.encoded_data_length;
     }
 
     fn http_request_complete(buffer: &[u8]) -> bool {
@@ -11036,6 +12046,314 @@ mod tests {
         assert_eq!(encoded["downloads_path"], json!(save_downloads_path));
         assert!(encoded.get("downloads_dir").is_none());
         assert!(encoded.get("save_downloads_path").is_none());
+    }
+
+    #[test]
+    fn browser_profile_har_recording_defaults_and_alias_match_upstream() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.record_har_content, RecordHarContent::Embed);
+        assert_eq!(decoded.record_har_mode, RecordHarMode::Full);
+        assert_eq!(decoded.record_har_path, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["record_har_content"], json!("embed"));
+        assert_eq!(encoded["record_har_mode"], json!("full"));
+        assert!(encoded.get("record_har_path").is_none());
+
+        let save_har_path = "/tmp/browser-use-rs/session.har";
+        let alias: BrowserProfile = serde_json::from_value(json!({
+            "save_har_path": save_har_path,
+            "record_har_content": "attach",
+            "record_har_mode": "minimal"
+        }))
+        .expect("HAR alias profile");
+        assert_eq!(alias.record_har_content, RecordHarContent::Attach);
+        assert_eq!(alias.record_har_mode, RecordHarMode::Minimal);
+        assert_eq!(
+            alias.record_har_path.as_deref(),
+            Some(Path::new(save_har_path))
+        );
+
+        let encoded = serde_json::to_value(alias).expect("canonical HAR profile json");
+        assert_eq!(encoded["record_har_path"], json!(save_har_path));
+        assert!(encoded.get("save_har_path").is_none());
+    }
+
+    #[tokio::test]
+    async fn har_recording_writes_https_har_embed_shape() {
+        let temp_dir = TempDir::new().expect("HAR temp dir");
+        let profile = BrowserProfile {
+            record_har_path: Some(temp_dir.path().join("network.har")),
+            ..BrowserProfile::default()
+        };
+        let recorder = CdpHarRecorder::from_profile(&profile).expect("HAR recorder");
+
+        let url = "https://example.test/index.html";
+        recorder
+            .observe_request_will_be_sent(&har_request_event(
+                "request-1",
+                url,
+                "frame-1",
+                "Document",
+                10.0,
+                1_700_000_000.0,
+            ))
+            .await;
+        recorder
+            .observe_response_received(&har_response_event(
+                "request-1",
+                url,
+                200,
+                "text/plain",
+                10.1,
+            ))
+            .await;
+        recorder
+            .observe_data_received(&CdpEvent {
+                method: "Network.dataReceived".to_owned(),
+                params: json!({
+                    "requestId": "request-1",
+                    "data": "hello"
+                }),
+                session_id: None,
+            })
+            .await;
+        {
+            let mut state = recorder.state.lock().await;
+            let entry = state.entries.get_mut("root:request-1").expect("HAR entry");
+            entry.ts_finished = Some(10.35);
+            entry.encoded_data_length = Some(5);
+            entry.transfer_size = Some(5);
+        }
+        recorder
+            .observe_page_lifecycle(&CdpEvent {
+                method: "Page.lifecycleEvent".to_owned(),
+                params: json!({
+                    "frameId": "frame-1",
+                    "name": "DOMContentLoaded",
+                    "timestamp": 10.2
+                }),
+                session_id: None,
+            })
+            .await;
+        recorder
+            .observe_page_lifecycle(&CdpEvent {
+                method: "Page.lifecycleEvent".to_owned(),
+                params: json!({
+                    "frameId": "frame-1",
+                    "name": "load",
+                    "timestamp": 10.3
+                }),
+                session_id: None,
+            })
+            .await;
+        recorder
+            .observe_frame_navigated(&CdpEvent {
+                method: "Page.frameNavigated".to_owned(),
+                params: json!({
+                    "frame": {
+                        "id": "frame-1",
+                        "name": "Example",
+                        "url": url
+                    }
+                }),
+                session_id: None,
+            })
+            .await;
+
+        recorder.write_har().await.expect("write HAR");
+        let har: Value = serde_json::from_slice(
+            &tokio::fs::read(temp_dir.path().join("network.har"))
+                .await
+                .expect("read HAR"),
+        )
+        .expect("HAR json");
+
+        assert_eq!(har["log"]["version"], json!("1.2"));
+        assert_eq!(har["log"]["creator"]["name"], json!("browser-use-rs"));
+        assert_eq!(har["log"]["pages"][0]["id"], json!("page@frame-1"));
+        assert_eq!(har["log"]["pages"][0]["title"], json!("Example"));
+        assert_eq!(
+            har["log"]["pages"][0]["pageTimings"]["onContentLoad"],
+            json!(200)
+        );
+        assert_eq!(har["log"]["pages"][0]["pageTimings"]["onLoad"], json!(300));
+        let entry = &har["log"]["entries"][0];
+        assert_eq!(entry["startedDateTime"], json!("2023-11-14T22:13:20Z"));
+        assert_eq!(entry["time"], json!(350));
+        assert_eq!(entry["request"]["method"], json!("GET"));
+        assert_eq!(entry["request"]["url"], json!(url));
+        assert_eq!(entry["response"]["status"], json!(200));
+        assert_eq!(entry["response"]["httpVersion"], json!("HTTP/2.0"));
+        assert_eq!(entry["response"]["content"]["text"], json!("hello"));
+        assert_eq!(entry["response"]["content"]["size"], json!(5));
+        assert_eq!(entry["response"]["_transferSize"], json!(5));
+        assert_eq!(entry["pageref"], json!("page@frame-1"));
+        assert_eq!(entry["serverIPAddress"], json!("203.0.113.10"));
+        assert_eq!(entry["_serverPort"], json!(443));
+        assert_eq!(entry["_securityDetails"]["protocol"], json!("TLS 1.3"));
+        assert!(entry["_securityDetails"].get("sanList").is_none());
+    }
+
+    #[tokio::test]
+    async fn har_recording_minimal_filters_to_main_page_origin_and_skips_favicon() {
+        let temp_dir = TempDir::new().expect("HAR temp dir");
+        let profile = BrowserProfile {
+            record_har_path: Some(temp_dir.path().join("minimal.har")),
+            record_har_mode: RecordHarMode::Minimal,
+            ..BrowserProfile::default()
+        };
+        let recorder = CdpHarRecorder::from_profile(&profile).expect("HAR recorder");
+
+        seed_har_entry(
+            &recorder,
+            "main",
+            "https://example.test/index.html",
+            "frame-1",
+            "Document",
+            b"main",
+        )
+        .await;
+        seed_har_entry(
+            &recorder,
+            "same-origin",
+            "https://example.test/app.js",
+            "frame-1",
+            "Script",
+            b"same",
+        )
+        .await;
+        seed_har_entry(
+            &recorder,
+            "cross-origin",
+            "https://cdn.test/app.js",
+            "frame-1",
+            "Script",
+            b"cross",
+        )
+        .await;
+        seed_har_entry(
+            &recorder,
+            "favicon",
+            "https://example.test/favicon.ico",
+            "frame-1",
+            "Image",
+            b"icon",
+        )
+        .await;
+
+        recorder.write_har().await.expect("write HAR");
+        let har: Value = serde_json::from_slice(
+            &tokio::fs::read(temp_dir.path().join("minimal.har"))
+                .await
+                .expect("read HAR"),
+        )
+        .expect("HAR json");
+        let urls = har["log"]["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| entry["request"]["url"].as_str().expect("entry url"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.test/index.html",
+                "https://example.test/app.js"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn har_recording_content_modes_control_body_representation() {
+        let temp_dir = TempDir::new().expect("HAR temp dir");
+
+        let omit_profile = BrowserProfile {
+            record_har_path: Some(temp_dir.path().join("omit.har")),
+            record_har_content: RecordHarContent::Omit,
+            ..BrowserProfile::default()
+        };
+        let omit = CdpHarRecorder::from_profile(&omit_profile).expect("omit HAR recorder");
+        seed_har_entry(
+            &omit,
+            "omit",
+            "https://example.test/omit.json",
+            "frame-1",
+            "Document",
+            br#"{"ok":true}"#,
+        )
+        .await;
+        {
+            let mut state = omit.state.lock().await;
+            state
+                .entries
+                .get_mut("root:omit")
+                .expect("omit entry")
+                .post_data = Some("request-body".to_owned());
+        }
+        omit.write_har().await.expect("write omit HAR");
+        let omit_har: Value = serde_json::from_slice(
+            &tokio::fs::read(temp_dir.path().join("omit.har"))
+                .await
+                .expect("read omit HAR"),
+        )
+        .expect("omit HAR json");
+        let omit_entry = &omit_har["log"]["entries"][0];
+        assert!(omit_entry["response"]["content"].get("text").is_none());
+        assert!(omit_entry["response"]["content"].get("_file").is_none());
+        assert!(omit_entry["request"]["postData"].is_null());
+
+        let attach_profile = BrowserProfile {
+            record_har_path: Some(temp_dir.path().join("attach.har")),
+            record_har_content: RecordHarContent::Attach,
+            ..BrowserProfile::default()
+        };
+        let attach = CdpHarRecorder::from_profile(&attach_profile).expect("attach HAR recorder");
+        seed_har_entry(
+            &attach,
+            "attach",
+            "https://example.test/attach.json",
+            "frame-1",
+            "Document",
+            br#"{"ok":true}"#,
+        )
+        .await;
+        {
+            let mut state = attach.state.lock().await;
+            let entry = state.entries.get_mut("root:attach").expect("attach entry");
+            entry.post_data = Some("request-body".to_owned());
+            entry
+                .request_headers
+                .insert("content-type".to_owned(), "text/plain".to_owned());
+        }
+        attach.write_har().await.expect("write attach HAR");
+        let attach_har: Value = serde_json::from_slice(
+            &tokio::fs::read(temp_dir.path().join("attach.har"))
+                .await
+                .expect("read attach HAR"),
+        )
+        .expect("attach HAR json");
+        let attach_entry = &attach_har["log"]["entries"][0];
+        let response_file = attach_entry["response"]["content"]["_file"]
+            .as_str()
+            .expect("attached response file");
+        let request_file = attach_entry["request"]["postData"]["_file"]
+            .as_str()
+            .expect("attached request file");
+        assert!(
+            temp_dir
+                .path()
+                .join("attach_har_parts")
+                .join(response_file)
+                .exists()
+        );
+        assert!(
+            temp_dir
+                .path()
+                .join("attach_har_parts")
+                .join(request_file)
+                .exists()
+        );
     }
 
     #[test]

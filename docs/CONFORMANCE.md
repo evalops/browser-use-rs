@@ -116,6 +116,15 @@ direct-CDP path first uses `Network.responseReceived` metadata and
 content-disposition filenames, then falls back to the conservative direct-URL
 path. Explicit `auto_download_pdfs=false` preserves normal download events but
 skips that PDF auto-download path.
+`BrowserProfile.record_har_content` defaults to `embed`,
+`record_har_mode` defaults to `full`, and `record_har_path` defaults to unset.
+`save_har_path` deserializes into the canonical `record_har_path` field. When
+configured, the direct-CDP session records HTTPS request/response/loading data
+into a HAR 1.2 file on best-effort `close_browser()` flush. `minimal` mode
+keeps entries for the main page origin, `full` keeps captured HTTPS entries
+except favicon requests, and `omit`/`embed`/`attach` control response and
+request body representation. Video recording and Playwright trace surfaces
+remain separate future recording work.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail
