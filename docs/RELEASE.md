@@ -17,8 +17,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   persistent-profile `--profile-directory` flags alongside `--user-data-dir`.
   `BrowserProfile.chromium_sandbox=false` emits upstream no-sandbox/container
   Chrome flags for CI and Docker-style launches, and explicit
-  `BrowserProfile.window_size` / `window_position` values emit typed
-  `--window-size` and `--window-position` launch geometry flags.
+  `BrowserProfile.window_size` values plus default or explicit
+  `window_position` values emit typed `--window-size` and `--window-position`
+  launch geometry flags. The default profile emits upstream's
+  `--window-position=0,0` origin position.
   `BrowserProfile.screen` can supply the launch window-size fallback, while
   `BrowserProfile.viewport`, `no_viewport`, and `device_scale_factor` control
   CDP `Emulation.setDeviceMetricsOverride` on initial attach, new-tab

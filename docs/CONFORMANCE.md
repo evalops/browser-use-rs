@@ -123,6 +123,11 @@ switches, stale-session reattachments, and replacement pages selected after the
 focused tab closes. `no_viewport=true` intentionally leaves page content to the
 real browser window and skips the CDP override.
 
+`BrowserProfile.window_position` defaults to upstream's `0,0` origin position
+and is emitted in launch plans even when callers do not supply an override.
+Explicit window positions still override the default before raw custom args are
+de-duped with last-wins switch behavior.
+
 ## Page-Load Wait Boundary
 
 `BrowserProfile.minimum_wait_page_load_time` and

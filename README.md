@@ -27,7 +27,7 @@ includes:
   `deterministic_rendering` screenshot-stability flags, typed `user_agent`
   launch flags, typed `profile_directory` flags for persistent profiles, and
   `chromium_sandbox=false` no-sandbox/container flags, plus explicit
-  `window_size` and `window_position` launch geometry flags, and a typed
+  `window_size` and upstream-default `window_position` launch geometry flags, and a typed
   `devtools` launch flag with the upstream headless conflict guard, typed
   `screen`, `viewport`, `no_viewport`, and `device_scale_factor` controls that
   apply CDP device-metrics overrides to attached tabs unless viewport emulation

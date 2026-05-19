@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#121 Align BrowserProfile default window_position parity](https://github.com/evalops/browser-use-rs/issues/121)
+- Next upstream parity slice after #121 lands and CI is green.
 
 ## Completed Tracks
 
+- [#121 Align BrowserProfile default window_position parity](https://github.com/evalops/browser-use-rs/issues/121)
 - [#119 Add BrowserProfile page-load wait timing parity](https://github.com/evalops/browser-use-rs/issues/119)
 - [#120 Add BrowserProfile keep_alive launch ownership parity](https://github.com/evalops/browser-use-rs/issues/120)
 - [#118 Add BrowserProfile viewport emulation controls](https://github.com/evalops/browser-use-rs/issues/118)
@@ -169,6 +170,7 @@ Implemented:
   upstream-style `screen`, `viewport`, `no_viewport`, and
   `device_scale_factor` profile controls, and CDP device-metrics override
   application for attached tabs when viewport emulation is active, plus
+  upstream-default `window_position=(0,0)` launch geometry and
   upstream-style `keep_alive=true` detachment for locally launched browser
   ownership. `minimum_wait_page_load_time` and
   `wait_for_network_idle_page_load_time` preserve upstream settle delays before
