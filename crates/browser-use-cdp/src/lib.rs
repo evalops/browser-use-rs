@@ -1183,6 +1183,33 @@ where
     })
 }
 
+fn deserialize_env_map<'de, D>(deserializer: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(values) = Option::<BTreeMap<String, Value>>::deserialize(deserializer)? else {
+        return Ok(BTreeMap::new());
+    };
+    values
+        .into_iter()
+        .map(|(key, value)| env_value_to_string(value).map(|value| (key, value)))
+        .collect()
+}
+
+fn env_value_to_string<E>(value: Value) -> Result<String, E>
+where
+    E: serde::de::Error,
+{
+    match value {
+        Value::String(value) => Ok(value),
+        Value::Bool(value) => Ok(value.to_string()),
+        Value::Number(value) => Ok(value.to_string()),
+        other => Err(E::custom(format!(
+            "browser env values must be strings, numbers, or booleans; got {other}"
+        ))),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserCreateRequest {
     #[serde(
@@ -1619,6 +1646,8 @@ pub struct BrowserProfile {
     pub cloud_api_base_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_api_key: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_env_map")]
+    pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1679,6 +1708,7 @@ impl Default for BrowserProfile {
             cloud_browser_params: None,
             cloud_api_base_url: None,
             cloud_api_key: None,
+            env: BTreeMap::new(),
             executable_path: None,
             remote_debugging_port: None,
             headless: default_headless(),
@@ -1963,6 +1993,7 @@ impl BrowserProfile {
         BrowserLaunchPlan {
             executable_path: self.executable_path.clone(),
             args,
+            env: self.env.clone(),
         }
     }
 
@@ -2002,6 +2033,7 @@ impl BrowserProfile {
         let mut command = Command::new(&executable_path);
         command
             .args(&plan.args)
+            .envs(&plan.env)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -2843,6 +2875,8 @@ pub struct BrowserLaunchPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<PathBuf>,
     pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -8337,6 +8371,41 @@ mod tests {
     }
 
     #[test]
+    fn browser_profile_env_defaults_and_coerces_upstream_wire_values() {
+        let profile = BrowserProfile::default();
+        assert!(profile.env.is_empty());
+
+        let deserialized: BrowserProfile =
+            serde_json::from_value(json!({})).expect("deserialize default profile");
+        assert!(deserialized.env.is_empty());
+
+        let profile_with_env: BrowserProfile = serde_json::from_value(json!({
+            "env": {
+                "BROWSER_USE_HEADLESS": true,
+                "BROWSER_USE_SCALE": 2.5,
+                "BROWSER_USE_TOKEN": "secret"
+            }
+        }))
+        .expect("deserialize env profile");
+        assert_eq!(
+            profile_with_env.env,
+            BTreeMap::from([
+                ("BROWSER_USE_HEADLESS".to_owned(), "true".to_owned()),
+                ("BROWSER_USE_SCALE".to_owned(), "2.5".to_owned()),
+                ("BROWSER_USE_TOKEN".to_owned(), "secret".to_owned()),
+            ])
+        );
+        assert_eq!(
+            serde_json::to_value(&profile_with_env.env).expect("serialize env"),
+            json!({
+                "BROWSER_USE_HEADLESS": "true",
+                "BROWSER_USE_SCALE": "2.5",
+                "BROWSER_USE_TOKEN": "secret"
+            })
+        );
+    }
+
+    #[test]
     fn browser_permission_grant_params_skip_empty_lists() {
         assert_eq!(browser_permission_grant_params(&[]), None);
 
@@ -8946,6 +9015,24 @@ mod tests {
                 .contains(&"--proxy-server=http://127.0.0.1:8080".to_owned())
         );
         assert_eq!(plan.args.last(), Some(&"--disable-gpu".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_preserves_env_without_changing_args() {
+        let profile = BrowserProfile {
+            env: BTreeMap::from([
+                ("BROWSER_USE_HEADLESS".to_owned(), "false".to_owned()),
+                ("BROWSER_USE_TOKEN".to_owned(), "secret".to_owned()),
+            ]),
+            args: vec!["--custom-last".to_owned()],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert_eq!(plan.env, profile.env);
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+        assert!(plan.args.iter().any(|arg| arg == "--headless=new"));
     }
 
     #[test]
