@@ -7,7 +7,7 @@ behavioral conformance implementation rather than a line-by-line translation.
 The current frozen upstream target is:
 
 ```text
-browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
+browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
 ```
 
 ## Status
@@ -94,7 +94,8 @@ includes:
 - Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
   `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
   `send_keys` for text, special keys, and shortcuts, `upload_file` with
-  upstream-style agent availability checks,
+  upstream-style agent availability checks and managed `FileSystem` basename
+  containment for traversal-like relative paths,
   text/PDF/DOCX read support with page-aware PDF envelopes, text-file
   write/replace with CSV normalization and relative filename sanitization,
   PDF/DOCX write/append artifacts with paginated PDF text layout, and

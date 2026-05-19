@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#111 Refresh upstream target to ac2ef54 and pin upload_file containment parity](https://github.com/evalops/browser-use-rs/issues/111)
+- Next upstream parity slice after #111 lands and CI is green.
 
 ## Completed Tracks
 
+- [#111 Refresh upstream target to ac2ef54 and pin upload_file containment parity](https://github.com/evalops/browser-use-rs/issues/111)
 - [#110 Add BrowserProfile devtools launch parity](https://github.com/evalops/browser-use-rs/issues/110)
 - [#109 Add BrowserProfile window_size and window_position launch parity](https://github.com/evalops/browser-use-rs/issues/109)
 - [#108 Add BrowserProfile chromium_sandbox launch parity](https://github.com/evalops/browser-use-rs/issues/108)
@@ -116,7 +117,7 @@ Implemented:
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
   install guide, and generated platform-aware Homebrew formula scaffold.
-- Frozen upstream target: `browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668`.
+- Frozen upstream target: `browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
@@ -131,11 +132,13 @@ Implemented:
 - Built-in text-file read/write/replace action parity for local agent artifacts,
   upstream-style CSV write/append normalization, relative filename
   sanitization for local file actions, upstream-style agent `upload_file`
-  availability checks, page-aware PDF read envelopes, PDF/DOCX write/append
-  artifacts with paginated PDF text layout, plus upstream-style DOCX text
-  extraction and PNG/JPEG read payloads for one-shot image prompt parts, with
-  upstream-aligned binary/image extension rejection. Append mode requires an
-  existing file, matching upstream `FileSystem` semantics.
+  availability checks, managed `FileSystem` basename containment for
+  traversal-like relative upload paths, page-aware PDF read envelopes,
+  PDF/DOCX write/append artifacts with paginated PDF text layout, plus
+  upstream-style DOCX text extraction and PNG/JPEG read payloads for one-shot
+  image prompt parts, with upstream-aligned binary/image extension rejection.
+  Append mode requires an existing file, matching upstream `FileSystem`
+  semantics.
 - Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
   default `todo.md`, file listing/display, extract-content numbering,
   serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX

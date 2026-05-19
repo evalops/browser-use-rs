@@ -3,7 +3,7 @@
 This release targets:
 
 ```text
-browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
+browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
 ```
 
 ## Supported
@@ -92,8 +92,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   switch/close, click, coordinate click, input, page or indexed element scroll,
   wait, text-target scroll, browser JavaScript evaluation, screenshot, native and
   ARIA dropdown options/selection, keyboard text/special-key/shortcut events,
-  file upload with upstream-style agent availability checks, local text-file
-  read/write/replace with upstream-style CSV row normalization and relative
+  file upload with upstream-style agent availability checks and managed
+  `FileSystem` basename containment for traversal-like relative paths, local
+  text-file read/write/replace with upstream-style CSV row normalization and relative
   filename sanitization, page-aware PDF read
   envelopes, PDF/DOCX write/append artifacts with paginated PDF text layout,
   and append-only-to-existing-file semantics, upstream-aligned binary/image
@@ -128,6 +129,10 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   and the CLI `--file-system-path` flag place the managed filesystem under a
   caller-selected base directory while preserving the `browseruse_agent_data`
   subdirectory contract.
+- The upstream MCP allowed-domains advisory in the `ac2ef54` target is not
+  applicable to the current Rust MCP surface: `browser-use-rs` does not expose
+  the upstream profile-merge retry tool that introduced that Python-side
+  allowed-domain handling path.
 - Browser-aware action sequencing that stops on errors, done, explicit
   terminating actions, and URL changes after browser actions.
 - Agent runs with schema-guided provider output, upstream-style initial actions,
