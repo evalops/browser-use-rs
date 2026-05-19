@@ -1,0 +1,805 @@
+use std::collections::BTreeMap;
+use std::fmt;
+use std::time::Duration;
+
+use browser_use_llm::{ContentPart, ImageDetailLevel};
+use browser_use_tools::BrowserAction;
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_json::Value;
+
+use crate::ActionResult;
+
+const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
+const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
+const WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS: f64 = 0.1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct LlmScreenshotSize {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl LlmScreenshotSize {
+    pub const MIN_DIMENSION: u32 = 100;
+
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        if width < Self::MIN_DIMENSION || height < Self::MIN_DIMENSION {
+            return Err("llm_screenshot_size dimensions must be at least 100 pixels".to_owned());
+        }
+        Ok(Self { width, height })
+    }
+
+    #[must_use]
+    pub fn width(self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub fn height(self) -> u32 {
+        self.height
+    }
+}
+
+impl<'de> Deserialize<'de> for LlmScreenshotSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Tuple(u32, u32),
+            Array([u32; 2]),
+            Object { width: u32, height: u32 },
+        }
+
+        let (width, height) = match Wire::deserialize(deserializer)? {
+            Wire::Tuple(width, height) | Wire::Object { width, height } => (width, height),
+            Wire::Array([width, height]) => (width, height),
+        };
+        Self::new(width, height).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSettings {
+    #[serde(default = "default_use_vision")]
+    pub use_vision: VisionMode,
+    #[serde(default = "default_vision_detail_level")]
+    pub vision_detail_level: ImageDetailLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_screenshot_size: Option<LlmScreenshotSize>,
+    #[serde(default = "default_url_shortening_limit")]
+    pub url_shortening_limit: Option<usize>,
+    #[serde(default = "default_max_failures")]
+    pub max_failures: u32,
+    #[serde(default)]
+    pub generate_gif: GenerateGif,
+    #[serde(default = "default_max_actions_per_step")]
+    pub max_actions_per_step: usize,
+    #[serde(default = "default_llm_timeout_seconds")]
+    pub llm_timeout_seconds: u64,
+    #[serde(default = "default_step_timeout_seconds")]
+    pub step_timeout_seconds: u64,
+    #[serde(default = "default_action_timeout_seconds")]
+    pub action_timeout_seconds: f64,
+    #[serde(default = "default_wait_between_actions_seconds")]
+    pub wait_between_actions_seconds: f64,
+    #[serde(default = "default_true")]
+    pub directly_open_url: bool,
+    #[serde(default = "default_final_response_after_failure")]
+    pub final_response_after_failure: bool,
+    #[serde(default = "default_display_files_in_done_text")]
+    pub display_files_in_done_text: bool,
+    #[serde(default = "default_loop_detection_window")]
+    pub loop_detection_window: usize,
+    #[serde(default = "default_loop_detection_enabled")]
+    pub loop_detection_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_history_items: Option<usize>,
+    #[serde(default = "default_max_clickable_elements_length")]
+    pub max_clickable_elements_length: usize,
+    #[serde(default)]
+    pub include_recent_events: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sample_images: Vec<ContentPart>,
+    #[serde(default = "default_enable_planning")]
+    pub enable_planning: bool,
+    #[serde(default = "default_planning_replan_on_stall")]
+    pub planning_replan_on_stall: usize,
+    #[serde(default = "default_planning_exploration_limit")]
+    pub planning_exploration_limit: usize,
+    #[serde(default = "default_use_thinking")]
+    pub use_thinking: bool,
+    #[serde(default)]
+    pub flash_mode: bool,
+    #[serde(default = "default_use_judge")]
+    pub use_judge: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_truth: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "is_default_message_compaction")]
+    pub message_compaction: MessageCompaction,
+    #[serde(default)]
+    pub calculate_cost: bool,
+    #[serde(default)]
+    pub include_tool_call_examples: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_conversation_path: Option<String>,
+    #[serde(
+        default = "default_save_conversation_path_encoding",
+        skip_serializing_if = "is_default_save_conversation_path_encoding"
+    )]
+    pub save_conversation_path_encoding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_system_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_attributes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_actions: Vec<BrowserAction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sensitive_data: BTreeMap<String, SensitiveDataValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_system_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extend_system_message: Option<String>,
+}
+
+/// Upstream-compatible vision behavior.
+///
+/// Python browser-use accepts `True`, `False`, or `"auto"` for `use_vision`.
+/// The JSON contract preserves that shape so existing MCP/CLI callers can send
+/// booleans while Rust code gets an explicit mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VisionMode {
+    #[default]
+    Always,
+    Never,
+    Auto,
+}
+
+impl VisionMode {
+    #[must_use]
+    pub fn includes_screenshot_by_default(self) -> bool {
+        matches!(self, Self::Always)
+    }
+
+    #[must_use]
+    pub fn allows_screenshot_action(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    #[must_use]
+    pub fn should_include_screenshot(self, action_requested_screenshot: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => action_requested_screenshot,
+        }
+    }
+
+    #[must_use]
+    pub fn accepts_prompt_image(self) -> bool {
+        !matches!(self, Self::Never)
+    }
+}
+
+impl Serialize for VisionMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Always => serializer.serialize_bool(true),
+            Self::Never => serializer.serialize_bool(false),
+            Self::Auto => serializer.serialize_str("auto"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for VisionMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(VisionModeVisitor)
+    }
+}
+
+struct VisionModeVisitor;
+
+impl<'de> de::Visitor<'de> for VisionModeVisitor {
+    type Value = VisionMode;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, or \"auto\"")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            VisionMode::Always
+        } else {
+            VisionMode::Never
+        })
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(VisionMode::Auto),
+            "true" | "always" => Ok(VisionMode::Always),
+            "false" | "never" => Ok(VisionMode::Never),
+            _ => Err(E::custom("expected true, false, or \"auto\"")),
+        }
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_str(&value)
+    }
+}
+
+impl JsonSchema for VisionMode {
+    fn schema_name() -> String {
+        "VisionMode".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                {
+                    "type": "string",
+                    "enum": ["auto"]
+                }
+            ]
+        }))
+        .expect("valid VisionMode JSON schema")
+    }
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            use_vision: default_use_vision(),
+            vision_detail_level: default_vision_detail_level(),
+            llm_screenshot_size: None,
+            url_shortening_limit: default_url_shortening_limit(),
+            max_failures: default_max_failures(),
+            generate_gif: GenerateGif::default(),
+            max_actions_per_step: default_max_actions_per_step(),
+            llm_timeout_seconds: default_llm_timeout_seconds(),
+            step_timeout_seconds: default_step_timeout_seconds(),
+            action_timeout_seconds: default_action_timeout_seconds(),
+            wait_between_actions_seconds: default_wait_between_actions_seconds(),
+            directly_open_url: true,
+            final_response_after_failure: default_final_response_after_failure(),
+            display_files_in_done_text: default_display_files_in_done_text(),
+            loop_detection_window: default_loop_detection_window(),
+            loop_detection_enabled: default_loop_detection_enabled(),
+            max_history_items: None,
+            max_clickable_elements_length: default_max_clickable_elements_length(),
+            include_recent_events: false,
+            sample_images: Vec::new(),
+            enable_planning: default_enable_planning(),
+            planning_replan_on_stall: default_planning_replan_on_stall(),
+            planning_exploration_limit: default_planning_exploration_limit(),
+            use_thinking: default_use_thinking(),
+            flash_mode: false,
+            use_judge: default_use_judge(),
+            ground_truth: None,
+            extraction_schema: None,
+            message_compaction: MessageCompaction::default(),
+            calculate_cost: false,
+            include_tool_call_examples: false,
+            save_conversation_path: None,
+            save_conversation_path_encoding: default_save_conversation_path_encoding(),
+            file_system_path: None,
+            include_attributes: Vec::new(),
+            available_file_paths: Vec::new(),
+            initial_actions: Vec::new(),
+            excluded_actions: Vec::new(),
+            sensitive_data: BTreeMap::new(),
+            override_system_message: None,
+            extend_system_message: None,
+        }
+    }
+}
+
+impl AgentSettings {
+    #[must_use]
+    pub fn effective_action_timeout_seconds(&self) -> f64 {
+        coerce_valid_action_timeout_seconds(self.action_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn effective_wait_between_actions_seconds(&self) -> f64 {
+        coerce_valid_wait_between_actions_seconds(self.wait_between_actions_seconds)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct MessageCompactionSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_compact_every_n_steps")]
+    pub compact_every_n_steps: usize,
+    #[serde(
+        default = "default_trigger_char_count",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub trigger_char_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_token_count: Option<usize>,
+    #[serde(default = "default_chars_per_token")]
+    pub chars_per_token: f64,
+    #[serde(default = "default_keep_last_items")]
+    pub keep_last_items: usize,
+    #[serde(default = "default_summary_max_chars")]
+    pub summary_max_chars: usize,
+    #[serde(default)]
+    pub include_read_state: bool,
+}
+
+impl Default for MessageCompactionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            compact_every_n_steps: default_compact_every_n_steps(),
+            trigger_char_count: default_trigger_char_count(),
+            trigger_token_count: None,
+            chars_per_token: default_chars_per_token(),
+            keep_last_items: default_keep_last_items(),
+            summary_max_chars: default_summary_max_chars(),
+            include_read_state: false,
+        }
+    }
+}
+
+impl MessageCompactionSettings {
+    #[must_use]
+    pub fn effective_trigger_char_count(&self) -> usize {
+        self.trigger_char_count.unwrap_or(40_000)
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageCompactionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default = "default_true")]
+            enabled: bool,
+            #[serde(default = "default_compact_every_n_steps")]
+            compact_every_n_steps: usize,
+            #[serde(default)]
+            trigger_char_count: Option<usize>,
+            #[serde(default)]
+            trigger_token_count: Option<usize>,
+            #[serde(default = "default_chars_per_token")]
+            chars_per_token: f64,
+            #[serde(default = "default_keep_last_items")]
+            keep_last_items: usize,
+            #[serde(default = "default_summary_max_chars")]
+            summary_max_chars: usize,
+            #[serde(default)]
+            include_read_state: bool,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        if wire.trigger_char_count.is_some() && wire.trigger_token_count.is_some() {
+            return Err(de::Error::custom(
+                "set trigger_char_count or trigger_token_count, not both",
+            ));
+        }
+        let trigger_char_count = wire
+            .trigger_char_count
+            .or_else(|| {
+                wire.trigger_token_count
+                    .map(|tokens| (tokens as f64 * wire.chars_per_token).floor() as usize)
+            })
+            .or_else(default_trigger_char_count);
+
+        Ok(Self {
+            enabled: wire.enabled,
+            compact_every_n_steps: wire.compact_every_n_steps,
+            trigger_char_count,
+            trigger_token_count: wire.trigger_token_count,
+            chars_per_token: wire.chars_per_token,
+            keep_last_items: wire.keep_last_items,
+            summary_max_chars: wire.summary_max_chars,
+            include_read_state: wire.include_read_state,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum MessageCompaction {
+    Disabled,
+    #[default]
+    Enabled,
+    Settings(MessageCompactionSettings),
+}
+
+impl MessageCompaction {
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::Enabled => true,
+            Self::Settings(settings) => settings.enabled,
+        }
+    }
+
+    #[must_use]
+    pub fn resolved_settings(&self) -> Option<MessageCompactionSettings> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled => Some(MessageCompactionSettings::default()),
+            Self::Settings(settings) if settings.enabled => Some(settings.clone()),
+            Self::Settings(_) => None,
+        }
+    }
+}
+
+impl Serialize for MessageCompaction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Enabled => serializer.serialize_bool(true),
+            Self::Settings(settings) => settings.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageCompaction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(MessageCompactionVisitor)
+    }
+}
+
+struct MessageCompactionVisitor;
+
+impl<'de> de::Visitor<'de> for MessageCompactionVisitor {
+    type Value = MessageCompaction;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, null, or a MessageCompactionSettings object")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            MessageCompaction::Enabled
+        } else {
+            MessageCompaction::Disabled
+        })
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(MessageCompaction::Disabled)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(MessageCompaction::Disabled)
+    }
+
+    fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+    where
+        M: de::MapAccess<'de>,
+    {
+        let settings =
+            MessageCompactionSettings::deserialize(de::value::MapAccessDeserializer::new(map))?;
+        Ok(MessageCompaction::Settings(settings))
+    }
+}
+
+impl JsonSchema for MessageCompaction {
+    fn schema_name() -> String {
+        "MessageCompaction".to_owned()
+    }
+
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let settings_schema = r#gen.subschema_for::<MessageCompactionSettings>();
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                { "type": "null" },
+                settings_schema
+            ]
+        }))
+        .expect("valid MessageCompaction JSON schema")
+    }
+}
+
+fn is_default_message_compaction(value: &MessageCompaction) -> bool {
+    matches!(value, MessageCompaction::Enabled)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_compact_every_n_steps() -> usize {
+    25
+}
+
+fn default_trigger_char_count() -> Option<usize> {
+    Some(40_000)
+}
+
+fn default_chars_per_token() -> f64 {
+    4.0
+}
+
+fn default_keep_last_items() -> usize {
+    6
+}
+
+fn default_summary_max_chars() -> usize {
+    6_000
+}
+
+pub(crate) fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+/// Upstream-compatible GIF generation setting.
+///
+/// Python browser-use accepts `False`, `True`, or a string output path. The
+/// Rust runtime preserves that public shape even before GIF rendering side
+/// effects are implemented.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum GenerateGif {
+    #[default]
+    Disabled,
+    Enabled,
+    Path(String),
+}
+
+impl Serialize for GenerateGif {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Enabled => serializer.serialize_bool(true),
+            Self::Path(path) => serializer.serialize_str(path),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GenerateGif {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(GenerateGifVisitor)
+    }
+}
+
+struct GenerateGifVisitor;
+
+impl<'de> de::Visitor<'de> for GenerateGifVisitor {
+    type Value = GenerateGif;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("true, false, or a GIF output path string")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(if value {
+            GenerateGif::Enabled
+        } else {
+            GenerateGif::Disabled
+        })
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(match value.trim().to_ascii_lowercase().as_str() {
+            "true" => GenerateGif::Enabled,
+            "false" => GenerateGif::Disabled,
+            _ => GenerateGif::Path(value.to_owned()),
+        })
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_str(&value)
+    }
+}
+
+impl JsonSchema for GenerateGif {
+    fn schema_name() -> String {
+        "GenerateGif".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        serde_json::from_value(serde_json::json!({
+            "oneOf": [
+                { "type": "boolean" },
+                { "type": "string" }
+            ]
+        }))
+        .expect("valid GenerateGif JSON schema")
+    }
+}
+
+fn default_use_vision() -> VisionMode {
+    VisionMode::Always
+}
+
+fn default_vision_detail_level() -> ImageDetailLevel {
+    ImageDetailLevel::Auto
+}
+
+fn default_url_shortening_limit() -> Option<usize> {
+    Some(25)
+}
+
+fn default_max_failures() -> u32 {
+    5
+}
+
+fn default_max_actions_per_step() -> usize {
+    5
+}
+
+fn default_llm_timeout_seconds() -> u64 {
+    60
+}
+
+fn default_step_timeout_seconds() -> u64 {
+    180
+}
+
+pub(crate) fn default_action_timeout_seconds() -> f64 {
+    parse_action_timeout_seconds(std::env::var(ACTION_TIMEOUT_ENV_VAR).ok().as_deref())
+}
+
+pub(crate) fn default_wait_between_actions_seconds() -> f64 {
+    WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS
+}
+
+pub(crate) fn parse_action_timeout_seconds(raw: Option<&str>) -> f64 {
+    let Some(raw) = raw else {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    };
+    if raw.is_empty() {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    }
+    let Ok(parsed) = raw.parse::<f64>() else {
+        return ACTION_TIMEOUT_FALLBACK_SECONDS;
+    };
+    coerce_valid_action_timeout_seconds(parsed)
+}
+
+pub(crate) fn coerce_valid_action_timeout_seconds(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 && Duration::try_from_secs_f64(value).is_ok() {
+        value
+    } else {
+        ACTION_TIMEOUT_FALLBACK_SECONDS
+    }
+}
+
+pub(crate) fn coerce_valid_wait_between_actions_seconds(value: f64) -> f64 {
+    if value.is_finite() && value >= 0.0 && Duration::try_from_secs_f64(value).is_ok() {
+        value
+    } else {
+        WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS
+    }
+}
+
+pub(crate) fn action_timeout_duration(seconds: f64) -> Duration {
+    Duration::try_from_secs_f64(coerce_valid_action_timeout_seconds(seconds))
+        .unwrap_or_else(|_| Duration::from_secs(ACTION_TIMEOUT_FALLBACK_SECONDS as u64))
+}
+
+pub(crate) fn wait_between_actions_duration(seconds: f64) -> Duration {
+    Duration::try_from_secs_f64(coerce_valid_wait_between_actions_seconds(seconds))
+        .unwrap_or_else(|_| Duration::from_millis(100))
+}
+
+pub(crate) fn timed_out_action_result(
+    action: &BrowserAction,
+    timeout_seconds: f64,
+) -> ActionResult {
+    ActionResult::error(format!(
+        "Action {} timed out after {:.0}s. The browser may be unresponsive (dead CDP WebSocket). Try again or a different approach.",
+        action.name(),
+        coerce_valid_action_timeout_seconds(timeout_seconds)
+    ))
+}
+
+fn default_final_response_after_failure() -> bool {
+    true
+}
+
+fn default_display_files_in_done_text() -> bool {
+    true
+}
+
+fn default_loop_detection_window() -> usize {
+    20
+}
+
+fn default_loop_detection_enabled() -> bool {
+    true
+}
+
+fn default_max_clickable_elements_length() -> usize {
+    40_000
+}
+
+fn default_enable_planning() -> bool {
+    true
+}
+
+fn default_planning_replan_on_stall() -> usize {
+    3
+}
+
+fn default_planning_exploration_limit() -> usize {
+    5
+}
+
+fn default_use_thinking() -> bool {
+    true
+}
+
+fn default_use_judge() -> bool {
+    true
+}
+
+fn default_save_conversation_path_encoding() -> Option<String> {
+    Some("utf-8".to_owned())
+}
+
+fn is_default_save_conversation_path_encoding(value: &Option<String>) -> bool {
+    value.as_deref() == Some("utf-8")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SensitiveDataValue {
+    Value(String),
+    Domain(BTreeMap<String, String>),
+}
