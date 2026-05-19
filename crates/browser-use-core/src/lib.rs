@@ -12764,6 +12764,7 @@ mod tests {
             Ok(ChatCompletion {
                 model: self.model().to_owned(),
                 content,
+                usage: None,
                 raw_response: None,
             })
         }
@@ -13892,6 +13893,7 @@ mod tests {
                 return Ok(ChatCompletion {
                     model: self.model().to_owned(),
                     content,
+                    usage: None,
                     raw_response: None,
                 });
             }

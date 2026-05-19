@@ -74,10 +74,25 @@ pub struct ChatRequest {
     pub output_schema: Option<Value>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatUsage {
+    pub prompt_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cached_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_creation_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_image_tokens: Option<u64>,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatCompletion<T> {
     pub model: String,
     pub content: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ChatUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_response: Option<Value>,
 }
@@ -238,6 +253,7 @@ impl ChatModel for OllamaChatModel {
                 .unwrap_or(&self.model)
                 .to_owned(),
             content,
+            usage: None,
             raw_response: Some(raw_response),
         })
     }
@@ -329,6 +345,7 @@ impl ChatModel for GeminiChatModel {
                 .unwrap_or(&self.model)
                 .to_owned(),
             content,
+            usage: parse_gemini_usage(&raw_response),
             raw_response: Some(raw_response),
         })
     }
@@ -423,6 +440,7 @@ impl ChatModel for AnthropicChatModel {
                 .unwrap_or(&self.model)
                 .to_owned(),
             content,
+            usage: parse_anthropic_usage(&raw_response),
             raw_response: Some(raw_response),
         })
     }
@@ -563,6 +581,7 @@ impl ChatModel for OpenAiCompatibleChatModel {
                             .unwrap_or(&self.model)
                             .to_owned(),
                         content,
+                        usage: parse_openai_compatible_usage(&raw_response),
                         raw_response: Some(raw_response),
                     });
                 }
@@ -587,6 +606,7 @@ impl ChatModel for OpenAiCompatibleChatModel {
                 .unwrap_or(&self.model)
                 .to_owned(),
             content,
+            usage: parse_openai_compatible_usage(&raw_response),
             raw_response: Some(raw_response),
         })
     }
@@ -1113,6 +1133,85 @@ fn parse_gemini_generate_content(raw_response: &Value) -> Result<Value, LlmError
     parse_json_object_text(text, "Gemini text content")
 }
 
+fn parse_openai_compatible_usage(raw_response: &Value) -> Option<ChatUsage> {
+    let usage = raw_response.get("usage")?;
+    let prompt_tokens = json_u64(usage.get("prompt_tokens"));
+    let completion_tokens = json_u64(usage.get("completion_tokens"));
+    let total_tokens =
+        json_u64(usage.get("total_tokens")).unwrap_or(prompt_tokens? + completion_tokens?);
+
+    Some(ChatUsage {
+        prompt_tokens: prompt_tokens?,
+        prompt_cached_tokens: first_json_u64(&[
+            usage.pointer("/prompt_tokens_details/cached_tokens"),
+            usage.pointer("/input_tokens_details/cached_tokens"),
+            usage.get("cache_read_input_tokens"),
+        ]),
+        prompt_cache_creation_tokens: first_json_u64(&[
+            usage.get("cache_creation_input_tokens"),
+            usage.get("prompt_cache_creation_tokens"),
+        ]),
+        prompt_image_tokens: first_json_u64(&[
+            usage.pointer("/prompt_tokens_details/image_tokens"),
+            usage.get("prompt_image_tokens"),
+        ]),
+        completion_tokens: completion_tokens?,
+        total_tokens,
+    })
+}
+
+fn parse_anthropic_usage(raw_response: &Value) -> Option<ChatUsage> {
+    let usage = raw_response.get("usage")?;
+    let input_tokens = json_u64(usage.get("input_tokens"))?;
+    let output_tokens = json_u64(usage.get("output_tokens"))?;
+    let cached_tokens = json_u64(usage.get("cache_read_input_tokens"));
+
+    Some(ChatUsage {
+        prompt_tokens: input_tokens + cached_tokens.unwrap_or(0),
+        prompt_cached_tokens: cached_tokens,
+        prompt_cache_creation_tokens: json_u64(usage.get("cache_creation_input_tokens")),
+        prompt_image_tokens: None,
+        completion_tokens: output_tokens,
+        total_tokens: input_tokens + output_tokens,
+    })
+}
+
+fn parse_gemini_usage(raw_response: &Value) -> Option<ChatUsage> {
+    let usage = raw_response.get("usageMetadata")?;
+    let prompt_tokens = json_u64(usage.get("promptTokenCount"))?;
+    let completion_tokens = json_u64(usage.get("candidatesTokenCount")).unwrap_or(0)
+        + json_u64(usage.get("thoughtsTokenCount")).unwrap_or(0);
+
+    Some(ChatUsage {
+        prompt_tokens,
+        prompt_cached_tokens: json_u64(usage.get("cachedContentTokenCount")),
+        prompt_cache_creation_tokens: None,
+        prompt_image_tokens: gemini_prompt_image_tokens(usage),
+        completion_tokens,
+        total_tokens: json_u64(usage.get("totalTokenCount"))
+            .unwrap_or(prompt_tokens + completion_tokens),
+    })
+}
+
+fn gemini_prompt_image_tokens(usage: &Value) -> Option<u64> {
+    let total = usage
+        .get("promptTokensDetails")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|detail| detail.get("modality").and_then(Value::as_str) == Some("IMAGE"))
+        .filter_map(|detail| json_u64(detail.get("tokenCount")))
+        .sum::<u64>();
+    (total > 0).then_some(total)
+}
+
+fn first_json_u64(values: &[Option<&Value>]) -> Option<u64> {
+    values.iter().find_map(|value| json_u64(*value))
+}
+
+fn json_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(Value::as_u64)
+}
+
 fn anthropic_messages_payload(model: &str, max_tokens: u32, request: ChatRequest) -> Value {
     let mut system_parts = Vec::new();
     let mut messages = Vec::new();
@@ -1313,6 +1412,69 @@ mod tests {
                 .to_string()
                 .contains("invalid OpenAI-wire default header value")
         );
+    }
+
+    #[test]
+    fn openai_compatible_usage_reads_cached_token_details() {
+        let usage = parse_openai_compatible_usage(&json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "prompt_tokens_details": {
+                    "cached_tokens": 40
+                },
+                "completion_tokens": 25,
+                "total_tokens": 125
+            }
+        }))
+        .expect("usage");
+
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.prompt_cached_tokens, Some(40));
+        assert_eq!(usage.completion_tokens, 25);
+        assert_eq!(usage.total_tokens, 125);
+    }
+
+    #[test]
+    fn anthropic_usage_matches_upstream_cache_counting() {
+        let usage = parse_anthropic_usage(&json!({
+            "usage": {
+                "input_tokens": 75,
+                "cache_read_input_tokens": 20,
+                "cache_creation_input_tokens": 10,
+                "output_tokens": 15
+            }
+        }))
+        .expect("usage");
+
+        assert_eq!(usage.prompt_tokens, 95);
+        assert_eq!(usage.prompt_cached_tokens, Some(20));
+        assert_eq!(usage.prompt_cache_creation_tokens, Some(10));
+        assert_eq!(usage.completion_tokens, 15);
+        assert_eq!(usage.total_tokens, 90);
+    }
+
+    #[test]
+    fn gemini_usage_includes_thoughts_and_image_tokens() {
+        let usage = parse_gemini_usage(&json!({
+            "usageMetadata": {
+                "promptTokenCount": 50,
+                "candidatesTokenCount": 12,
+                "thoughtsTokenCount": 8,
+                "totalTokenCount": 70,
+                "cachedContentTokenCount": 5,
+                "promptTokensDetails": [
+                    { "modality": "TEXT", "tokenCount": 30 },
+                    { "modality": "IMAGE", "tokenCount": 20 }
+                ]
+            }
+        }))
+        .expect("usage");
+
+        assert_eq!(usage.prompt_tokens, 50);
+        assert_eq!(usage.prompt_cached_tokens, Some(5));
+        assert_eq!(usage.prompt_image_tokens, Some(20));
+        assert_eq!(usage.completion_tokens, 20);
+        assert_eq!(usage.total_tokens, 70);
     }
 
     #[test]
