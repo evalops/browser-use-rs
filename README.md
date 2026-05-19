@@ -7,7 +7,7 @@ behavioral conformance implementation rather than a line-by-line translation.
 The current frozen upstream target is:
 
 ```text
-browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
+browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 ```
 
 ## Status

@@ -10,6 +10,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Completed Tracks
 
+- [#138 Refresh upstream target to 1577793 and pin daemon socket permission audit](https://github.com/evalops/browser-use-rs/issues/138)
 - [#137 Add upstream MP4/WebM video encoding parity](https://github.com/evalops/browser-use-rs/issues/137)
 - [#136 Add BrowserProfile video recording runtime parity](https://github.com/evalops/browser-use-rs/issues/136)
 - [#134 Add BrowserProfile tracing recording parity](https://github.com/evalops/browser-use-rs/issues/134)
@@ -143,7 +144,7 @@ Implemented:
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
   install guide, and generated platform-aware Homebrew formula scaffold.
-- Frozen upstream target: `browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb`.
+- Frozen upstream target: `browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
@@ -264,6 +265,11 @@ Implemented:
   `BrowserLifecycleAdapterEventSubscription` maps the same diagnostics into
   upstream-style subscriber categories for tab, focus, navigation, browser
   error, download, storage-state, dialog, reconnect, and diagnostic events.
+- Upstream `1577793` restricts Python's Unix-domain skill daemon socket to
+  owner-only permissions. `browser-use-rs daemon` currently exposes TCP/HTTP
+  JSON-RPC transports rather than an AF_UNIX socket file, so this upstream
+  security drift is audited as not directly applicable to the present Rust
+  transport boundary.
 - CDP WebSocket session for navigation, URL/title/tab state with browser-use
   short tab ids, 4-character tab-id switching/closing, screenshots, PDF
   capture, file uploads, coordinate clicks, keyboard text/special-key/shortcut

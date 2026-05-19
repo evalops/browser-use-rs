@@ -35,7 +35,7 @@ pub use browser_use_llm::{
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
 /// Version of the upstream browser-use source that this crate initially targets.
-pub const INITIAL_UPSTREAM_COMMIT: &str = "18aae0b7523aa77862a4ba4de7e774ab807eb1fb";
+pub const INITIAL_UPSTREAM_COMMIT: &str = "157779338afdcc03023010ec3c24ad63d820453c";
 
 const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
 const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
@@ -8214,7 +8214,7 @@ mod tests {
     fn target_commit_is_pinned() {
         assert_eq!(
             INITIAL_UPSTREAM_COMMIT,
-            "18aae0b7523aa77862a4ba4de7e774ab807eb1fb"
+            "157779338afdcc03023010ec3c24ad63d820453c"
         );
     }
 

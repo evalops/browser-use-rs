@@ -3,7 +3,7 @@
 This release targets:
 
 ```text
-browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
+browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 ```
 
 ## Supported
@@ -351,6 +351,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   install asset updates.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
+- Upstream `1577793` tightened Python's AF_UNIX skill daemon socket to
+  owner-only mode. The Rust CLI daemon currently exposes TCP/HTTP transports
+  rather than a Unix socket file, so that chmod fix is tracked as audited and
+  not directly applicable to the present Rust transport boundary.
 
 ## Known Gaps
 
