@@ -210,6 +210,28 @@ Review risks:
 - Watchdog and synchronous session enforcement should use the same policy
   decisions.
 
+### `target.rs`
+
+Responsibilities:
+
+- selecting or creating a usable page target when a session connects;
+- attaching to targets and enabling `Page`/`Network` domains;
+- shaping viewport emulation CDP payloads;
+- granting browser permissions and surfacing grant failures as lifecycle
+  diagnostics;
+- enabling browser download events for the session download directory;
+- resolving full target ids and short tab ids from current tabs.
+
+Review risks:
+
+- Target selection order is compatibility-sensitive: prefer non-new-tab pages
+  before `chrome://newtab/`, and create `about:blank` only when no page can be
+  attached.
+- Missing-target races are normal during reconnects and watchdog cleanup; keep
+  them non-fatal only where the browser already gives us another usable target.
+- Permission/download setup is session bootstrapping, so failures either need a
+  lifecycle diagnostic or a clear `BrowserError`, not silent loss.
+
 ### `input.rs`
 
 Responsibilities:
