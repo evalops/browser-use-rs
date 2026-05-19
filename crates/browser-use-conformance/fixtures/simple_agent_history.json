@@ -132,5 +132,16 @@
         "closed_popup_messages": []
       }
     }
-  ]
+  ],
+  "usage": {
+    "total_prompt_tokens": 0,
+    "total_prompt_cost": 0.0,
+    "total_prompt_cached_tokens": 0,
+    "total_prompt_cached_cost": 0.0,
+    "total_completion_tokens": 0,
+    "total_completion_cost": 0.0,
+    "total_tokens": 0,
+    "total_cost": 0.0,
+    "entry_count": 0
+  }
 }
