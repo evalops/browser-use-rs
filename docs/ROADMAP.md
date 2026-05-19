@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #108 lands and CI is green.
+- [#109 Add BrowserProfile window_size and window_position launch parity](https://github.com/evalops/browser-use-rs/issues/109)
 
 ## Completed Tracks
 
