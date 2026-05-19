@@ -1,319 +1,79 @@
 # browser-use-rs
 
-`browser-use-rs` is an EvalOps Rust port of
-[`browser-use`](https://github.com/browser-use/browser-use), designed as a
-behavioral conformance implementation rather than a line-by-line translation.
+`browser-use-rs` is the EvalOps Rust port of
+[`browser-use`](https://github.com/browser-use/browser-use). It aims for
+behavioral compatibility at the public contract level rather than a line-by-line
+translation of the Python internals.
 
-The current frozen upstream target is:
+Current frozen upstream target:
 
 ```text
 browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 ```
 
-## Status
+The detailed support matrix lives in [docs/RELEASE.md](docs/RELEASE.md). The
+upstream sync process is documented in [docs/UPSTREAM_SYNC.md](docs/UPSTREAM_SYNC.md).
 
-This repository is an active public Rust conformance port. Current support
-includes:
+## What Works
 
-- Typed Rust contracts for browser state, DOM state, actions, action results,
-  LLM requests, and agent history.
-- CDP-backed Chrome/Chromium launch/connect, tabs, navigation, screenshots,
-  PDF capture, uploads, indexed actions, browser-profile URL access policies
-  for navigation, blocked-navigation preflight diagnostics,
-  navigation-capable actions, redirects, and newly observed tabs, and page
-  state with browser-use-style short tab ids. Launch profiles include
-  upstream-style proxy-server/proxy-bypass Chrome flags,
-  `disable_security` insecure-content/certificate flags, and
-  `deterministic_rendering` screenshot-stability flags, typed `user_agent`
-  launch flags, typed `executable_path` with upstream `browser_binary_path`
-  and `chrome_binary_path` aliases, typed `profile_directory` flags for
-  persistent profiles, and `chromium_sandbox=false` no-sandbox/container flags, plus explicit
-  `window_size` and upstream-default `window_position` launch geometry flags, and a typed
-  `devtools` launch flag with the upstream headless conflict guard, typed
-  `screen`, `viewport`, `no_viewport`, and `device_scale_factor` controls that
-  apply CDP device-metrics overrides to attached tabs unless viewport emulation
-  is disabled, upstream-style `keep_alive=true` ownership detachment for
-  locally launched browsers, typed `env` launch-process overrides with
-  upstream-style string/number/bool JSON coercion,
-  upstream-default interaction highlights for indexed click/input actions and
-  coordinate clicks with configurable highlight color and duration,
-  upstream-style `dom_highlight_elements` debug overlays with optional label
-  filtering during state capture,
-  upstream-style default Chrome launch args, `ignore_default_args` list/true
-  suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
-  `permissions` grants for upstream's default `clipboardReadWrite` and
-  `notifications` browser permissions over root CDP, profile-level CDP
-  websocket connection headers for authenticated remote endpoints, and typed
-  Browser Use Cloud
-  creation/stop parameters, current-session
-  tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
-  request timeout, extra request headers, and response-to-CDP endpoint
-  conversion that preserve upstream's omitted/null/proxy-country distinction,
-  including cached observed-node click/input/scroll/dropdown/upload resolution
-  and target-aware stale-node fallback for cached iframe actions when
-  available. CDP sessions expose a bounded public lifecycle event history for
-  browser connect/close, target create/switch/close, navigation
-  start/complete/failure/timeout, target crash, URL-policy reset/popup
-  diagnostics, reconnect, non-fatal permission-grant diagnostics,
-  JavaScript dialog, sanitized download filenames, and storage-state
-  diagnostics plus a `BrowserLifecycleEventSubscription` returned by
-  `subscribe_lifecycle_events`, with `recv`/`try_recv` lag and closed-stream
-  handling, and a `BrowserLifecycleAdapterEventSubscription` that maps the
-  diagnostics into upstream-style adapter categories without adding the full
-  event stream to normal agent replies.
-  CDP websocket closure is recorded as a browser-stopped lifecycle diagnostic,
-  and unexpected websocket drops trigger bounded actor-level reconnect attempts
-  with reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP
-  target sessions are invalidated after reconnect so stale session-scoped
-  commands fail locally with a clear reattach error, and the current target is
-  reattached automatically on the next session access when Chrome still exposes
-  it.
-  `navigation_timeout_ms` bounds direct `Page.navigate` calls and records
-  network-timeout lifecycle diagnostics when they hang.
-  `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
-  requests that remain active beyond the watchdog budget. Upstream-style
-  `minimum_wait_page_load_time` and `wait_for_network_idle_page_load_time`
-  settle state capture and successful navigations, with zero values disabling
-  each wait. `record_har_path`/`save_har_path` enables best-effort HAR 1.2
-  capture for HTTPS CDP traffic, with upstream `record_har_mode=full|minimal`
-  filtering and `record_har_content=omit|embed|attach` body handling flushed
-  on `close_browser()`. `record_video_dir` with upstream
-  `save_recording_path` starts best-effort direct-CDP screencast capture and
-  writes upstream-style MP4 by default when `ffmpeg` is available, with
-  `record_video_format=webm|gif` for explicit format selection and a GIF
-  fallback when video encoding is unavailable. It honors `record_video_size`
-  and `record_video_framerate` while keeping video artifact metadata out of
-  normal browser state and action replies.
-  Trace config fields (`traces_dir` with `trace_path`) also round-trip and
-  write best-effort close-time direct-CDP JSON trace artifacts containing
-  lifecycle, security, current-page, and last-DOM snapshots. The trace contract
-  is explicitly not a Playwright `trace.zip`, and trace artifact metadata stays
-  out of normal browser state, action, and agent replies.
-  `BrowserProfile.channel` accepts upstream browser channel names such as
-  `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
-  channel-specific executable candidates when no explicit executable path or
-  `BROWSER_USE_CHROME` override is supplied.
-  Launch profiles accept downloads by default, using an explicit
-  `downloads_path` or a session-owned temporary directory to enable Chrome
-  download behavior. Upstream aliases `downloads_dir` and
-  `save_downloads_path` deserialize into the same canonical `downloads_path`
-  field. `accept_downloads=false` skips CDP download setup and PDF
-  auto-download writes. Browser-level download lifecycle events use safe
-  basename normalization for page-controlled filenames, and upstream-default
-  `auto_download_pdfs=true` direct-PDF downloads are backed by CDP response
-  bodies where available, while `storage_state_path` can
-  load/save browser cookie and attached frame-tree origin local/session storage
-  state with lifecycle notifications. Profile-wide storage discovery outside
-  the attached frame tree is outside the safe CDP boundary documented in
-  [docs/CONFORMANCE.md](docs/CONFORMANCE.md).
-- DOM and accessibility-oriented snapshot serialization for browser-use's
-  numbered element/action model, including open shadow DOM, same-origin iframe
-  tags and contents, Chrome OOPIF cross-origin iframe target contents and
-  cached-node actions. `BrowserProfile.cross_origin_iframes`,
-  `max_iframes`, and `max_iframe_depth` bound iframe traversal with upstream
-  defaults while preserving parent iframe elements when cross-origin traversal
-  is disabled. Accessibility-tree role/name/description/state/value
-  enrichment, compact `ax_name`/`ax_description` metadata, AX hidden/disabled
-  suppression,
-  backend and frontend node ids, accessible labels, image-alt control names,
-  selected dropdown values, compound control metadata, compact select option
-  summaries, bounds, automation-friendly data/ARIA/value attributes,
-  native boolean/read-only state, validation patterns, `data-state`,
-  input mask/autocomplete/date-format datepicker hints, live-region and
-  hierarchy metadata, static history-matching attributes, plus a tree-shaped
-  eval/judge DOM representation with upstream-style backend-node markers,
-  hidden-element and `data-browser-use-exclude` subtree filtering, non-content
-  `head`/`script`/`style` tag pruning, upstream-default
-  `paint_order_filtering=true` occluded-element filtering with an explicit
-  opt-out, hidden file-input upload targets, plain scroll-container indexing,
-  and scrollable element metadata with prompt-visible pages-above/below context,
-  plus href-less anchor tags, common ARIA widget roles, search affordance
-  signals, tabindex-backed controls including `tabindex="-1"`, ARIA
-  required/autocomplete/keyshortcut interactivity signals with prompt-visible
-  `keyshortcuts`, quiet AX focusable/editable/settable metadata,
-  AX-shaped numeric value aliases,
-  human-readable value text, contenteditable editor variants, media control
-  compounds, small icon controls, cursor-pointer controls,
-  decorative SVG child pruning, contained duplicate descendant pruning for
-  action containers, static mouse/keyboard handler attributes, pagination
-  affordances, duplicate long-attribute pruning, and configurable
-  prompt-visible attributes.
-- DOM indexing recognizes controls backed only by JavaScript click/pointer
-  listeners when Chrome's command-line inspection API is available.
-- Built-in tools: `navigate`, `search`, `click`, `input`, page/indexed
-  `scroll`, text-target scroll, browser JavaScript evaluation, `wait`,
-  `send_keys` for text, special keys, and shortcuts, `upload_file` with
-  upstream-style agent availability checks and managed `FileSystem` basename
-  containment for traversal-like relative paths,
-  text/PDF/DOCX read support with page-aware PDF envelopes, text-file
-  write/replace with CSV normalization and relative filename sanitization,
-  PDF/DOCX write/append artifacts with paginated PDF text layout, and
-  upstream-style append semantics, PNG/JPEG image-file read payloads,
-  upstream-aligned binary/image extension rejection,
-  `screenshot` with optional PNG file save, `save_as_pdf` with filename
-  normalization, `extract`, `search_page`, `find_elements` including
-  target-aware stale-node action fallback for Chrome OOPIF iframe targets, back
-  navigation, 4-character tab-id actions, native/ARIA dropdown actions, and
-  `done` with requested text-file display attachments.
-- Managed `FileSystem` state with a `browseruse_agent_data` sandbox directory,
-  default `todo.md`, file listing/display, extract-content numbering,
-  serialization/restoration, nuke, and disk sync for text, CSV, PDF, and DOCX
-  artifacts. Executor-owned relative `write_file`/append/`read_file`/
-  `replace_file` and `done.files_to_display` flows route through the sandbox
-  while absolute external paths continue to bypass it. Agent prompts include
-  upstream-style `<file_system>` and `<todo_contents>` context, and large
-  extract results can spill into managed `extracted_content_N.md` files.
-  Agent-level `extraction_schema` supplies the default structured schema for
-  LLM-backed extract actions that do not provide their own `output_schema`.
-  Restored agents can continue prompt and tool execution from serialized
-  `FileSystemState`, including preserved todo/report context and incrementing
-  extracted-content numbering. `AgentSettings.file_system_path` and the CLI
-  `--file-system-path` flag place the managed filesystem under a
-  caller-selected base directory while preserving the `browseruse_agent_data`
-  subdirectory contract.
-- Agent loop: state construction, schema-guided LLM output, bounded runs,
-  vision-aware browser-state capture, upstream-style `sample_images` prompt
-  parts, screenshot action next-observation image prompts, action-result image
-  prompt parts, upstream-style page-stat prompt context with loading/skeleton
-  hints, validated `llm_screenshot_size` prompt-only PNG resizing with
-  coordinate-click scaling back to the observed viewport, upstream-style long
-  URL shortening for user/assistant prompt text with recursive restoration
-  before action execution/history, one-time extraction
-  replay handling,
-  fallback LLM switching for retryable main model-output provider/rate-limit
-  failures,
-  step/LLM timeouts, upstream-style wait-between-actions delays, max-failure
-  handling,
-  upstream-style initial actions, caller-supplied task identity with
-  checkpoint restore continuity and follow-up task reuse, upstream-style
-  max-action truncation,
-  sync and async new-step/done callbacks, callback-driven stop checks,
-  external-status interruption callbacks that do not mark the agent stopped,
-  reasoned programmatic stop errors, pause/resume control state with checkpoint
-  preservation, continuous follow-up task updates via `add_new_task`,
-  page-change guards, normalized
-  repeated-action loop detection,
-  loop-awareness prompt nudges, an
-  upstream-style final `done` response after repeated failures, upstream
-  flattened planning fields,
-  configurable planning prompt nudges, upstream-style excluded-action schema
-  controls and pre-execution enforcement, opt-in recent browser events,
-  upstream-style `true`/`false`/`auto` vision modes with auto-only screenshot
-  action gating, upstream-style vision detail levels, upstream-style `done`
-  file-display controls, thinking/flash output-schema controls,
-  upstream-style flattened required output fields, LLM-backed extract action
-  results for free-text and structured-schema extraction while preserving raw
-  executor envelopes for replay/direct callers, dedicated page-extraction LLM
-  routing, per-step timing metadata,
-  upstream-style prompt-history inclusion and limits, clickable-element text
-  limits, upstream-style one-time read-state
-  prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
-  prompt sections, upstream-style available-file-path and sensitive-data
-  placeholder context with `bu_2fa_code` TOTP generation, system-message
-  override/extension controls, upstream-style prompt context and error
-  truncation, upstream-style last-result completion helpers, upstream-compatible
-  action-result success validation, judgement results with dedicated judge LLM
-  routing, runtime `generate_gif` GIF artifact output from recorded
-  screenshots, provider token usage/cost summaries for `calculate_cost`, the
-  upstream no-op `include_tool_call_examples` setting, step-error,
-  model-output/action/thought, duration, action, model-action and truncated
-  action-history interacted-element metadata, and screenshot/URL history
-  accessors. Agents can export a serializable
-  `AgentCheckpoint` and resume it with a new model/session while preserving
-  task identity, task settings, history, initial-action execution state,
-  pause/stop state, and managed filesystem state. Conformance fixtures include
-  a longer multi-step
-  replay for planning nudges, recovery after a failed browser action,
-  prompt-history limits, stagnant-page loop-awareness, interacted-element
-  rematching, action-level replay remapping diagnostics, rematched replay-plan
-  construction, generic and browser-guarded replay execution diagnostics,
-  current-state `AgentHistoryReplayRun` orchestration with DOM recapture
-  between replay actions, replay-run and replay-recapture JSON conformance
-  fixtures, replay-run JSON Schema snapshot, file artifacts, and final `done`.
-- OpenAI-compatible Chat Completions, DeepSeek, Groq, Cerebras, Mistral,
-  OpenRouter, Vercel AI Gateway, Anthropic Messages, Gemini GenerateContent,
-  and Ollama Chat providers, including provider-specific structured-output
-  modes for DeepSeek forced tool calls, Cerebras prompt-only guidance, and
-  OpenRouter app attribution headers.
-- CLI commands including one-shot and persistent-session history replay, stdio
-  MCP server, local TCP/HTTP JSON-RPC daemon, MCP/daemon history replay,
-  optional bearer/header auth, supervisor pid/ready files, packaged
-  systemd/launchd templates, persistent session registry for explicit and
-  implicit `session_id` MCP calls with liveness status and stale-record
-  cleanup, MCP input/output schemas, typed MCP/CLI agent settings including
-  conversation transcript saving, judge trace validation, available-file-path
-  and sensitive-data placeholder context, upstream-style message compaction
-  controls plus system-message control, and conformance fixtures.
-
-## Design Rules
-
-- Preserve behavior and contracts before optimizing API aesthetics.
-- Prefer typed contracts, explicit timeouts, and cancellable async boundaries.
-- Treat browser-use Python tests and docs as conformance inputs.
-- Keep small commits pushed frequently so every slice is rollbackable.
-- Attribute upstream clearly and keep compatibility drift visible.
-
-## Workspace
-
-- `browser-use-core`: agent state, history, settings, and shared result types.
-- `browser-use-cdp`: browser launch/connect/session primitives.
-- `browser-use-dom`: DOM, accessibility, and selector-map types.
-- `browser-use-tools`: built-in action schemas and registry contracts.
-- `browser-use-llm`: provider trait and model request/response types.
-- `browser-use-cli`: command-line entrypoint and local TCP/HTTP daemon surface.
-- `browser-use-mcp`: MCP bridge.
-- `browser-use-conformance`: golden fixtures and parity test utilities.
-
-## Roadmap
-
-The active roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and the
-repository issue tracker.
-
-## CLI
-
-The CLI includes one-shot browser commands, history replay, persistent local
-sessions, MCP stdio, and a local TCP or HTTP JSON-RPC daemon.
-
-See [docs/CLI.md](docs/CLI.md).
-
-The MCP stdio server and contract surface are documented in
-[docs/MCP.md](docs/MCP.md).
-
-Packaged systemd and launchd supervision templates are documented in
-[docs/DAEMON_SUPERVISION.md](docs/DAEMON_SUPERVISION.md).
+- CDP-backed local Chrome/Chromium launch and attach, with browser profile
+  controls for launch arguments, viewport, downloads, permissions, storage
+  state, HAR/video/trace artifacts, URL access policy, and lifecycle
+  diagnostics.
+- Browser state capture with compact DOM and accessibility metadata, numbered
+  selector maps, iframe and shadow DOM support, occlusion filtering, scroll
+  context, and target-aware cached-node fallback.
+- Built-in browser actions for navigation, search, click, input, scroll, file
+  upload, keyboard input, tab management, JavaScript evaluation, screenshots,
+  PDF capture, extraction, file operations, dropdowns, and `done`.
+- Agent execution with schema-guided LLM output, bounded steps and timeouts,
+  initial actions, vision modes, message history, replay/rematching,
+  checkpoints, managed filesystem state, callbacks, pause/resume, follow-up
+  tasks, judgement routing, token usage summaries, and GIF generation.
+- LLM adapters for OpenAI-compatible chat completions, DeepSeek, Groq,
+  Cerebras, Mistral, OpenRouter, Vercel AI Gateway, Anthropic, Gemini, and
+  Ollama, including provider-specific structured-output fallbacks.
+- CLI, MCP stdio, persistent local sessions, local TCP/HTTP JSON-RPC daemon,
+  typed MCP schemas, packaged systemd/launchd templates, and release tarballs
+  for Linux and macOS.
 
 ## Install
 
-From source:
+Install from the public repository:
 
 ```sh
 cargo install --git https://github.com/evalops/browser-use-rs --package browser-use-cli
 browser-use-rs version-target
 ```
 
-From a local checkout, use `cargo install --path crates/browser-use-cli`.
+Install from a local checkout:
+
+```sh
+cargo install --path crates/browser-use-cli
+```
 
 Tagged GitHub releases publish Linux x86_64 and macOS host-triple tarballs,
-`SHA256SUMS`, and a platform-aware Homebrew formula artifact. When the EvalOps
-tap is configured, tagged releases also publish `Formula/browser-use-rs.rb` to
-`evalops/homebrew-tap` for `brew tap evalops/tap && brew install browser-use-rs`.
-The tarballs contain the `browser-use-rs` binary, license files, install guide,
-release support matrix, and daemon supervision templates.
+`SHA256SUMS`, and a generated Homebrew formula artifact. See
+[docs/INSTALL.md](docs/INSTALL.md) for release tarball and Homebrew details.
 
-See [docs/INSTALL.md](docs/INSTALL.md) for install commands and
-[docs/RELEASE.md](docs/RELEASE.md) for the current supported browser-use
-surface and compatibility boundaries. Release operators should use
-[docs/RELEASE_AUTOMATION.md](docs/RELEASE_AUTOMATION.md); the release workflow
-can infer `major`, `minor`, or `patch` bumps from meaningful unreleased updates.
+## Quick Start
 
-## Smokes
+Capture browser state:
 
 ```sh
 cargo run -q -p browser-use-cli -- state \
   "data:text/html,<html><head><title>smoke</title></head><body><button>Run</button><input placeholder='Name'></body></html>"
+```
 
+List MCP tools:
+
+```sh
 cargo run -q -p browser-use-cli -- mcp-tools | jq -r '.[].name'
+```
 
+Start and stop a persistent local session:
+
+```sh
 tmp=$(mktemp -d)
 BROWSER_USE_RS_STATE_DIR="$tmp" cargo run -q -p browser-use-cli -- session start smoke \
   "data:text/html,<html><head><title>session smoke</title></head><body><button>Run</button></body></html>"
@@ -321,12 +81,44 @@ BROWSER_USE_RS_STATE_DIR="$tmp" cargo run -q -p browser-use-cli -- session stop 
 rm -rf "$tmp"
 ```
 
+The CLI surface is documented in [docs/CLI.md](docs/CLI.md), MCP in
+[docs/MCP.md](docs/MCP.md), and daemon supervision in
+[docs/DAEMON_SUPERVISION.md](docs/DAEMON_SUPERVISION.md).
+
+## Workspace
+
+- `browser-use-core`: agent state, history, settings, and shared result types.
+- `browser-use-cdp`: browser launch, CDP transport, sessions, targets, and tabs.
+- `browser-use-dom`: DOM, accessibility, and selector-map rendering.
+- `browser-use-tools`: built-in action schemas and registry contracts.
+- `browser-use-llm`: provider trait and model request/response adapters.
+- `browser-use-cli`: command-line entrypoint and local daemon surface.
+- `browser-use-mcp`: MCP bridge.
+- `browser-use-conformance`: golden fixtures and parity test utilities.
+
+## Keeping Current
+
+The project pins a frozen upstream commit so compatibility claims stay precise.
+The `Upstream Drift` workflow checks the upstream repository daily. If
+`browser-use/browser-use` moves, it opens or updates a single `upstream-drift`
+issue with the compare URL and audit checklist. The pin moves only after the
+delta is audited, implemented, or documented as an intentional compatibility
+boundary.
+
+Release automation is also meaning-aware: substantial public behavior can cut a
+minor version, smaller releasable changes cut a patch version, and automation
+only changes do not publish. See
+[docs/RELEASE_AUTOMATION.md](docs/RELEASE_AUTOMATION.md).
+
 ## Development
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+python3 scripts/release-version.py --check
+python3 scripts/release-version.py --self-test
+python3 scripts/upstream-drift.py --self-test
 ```
 
 ## License
