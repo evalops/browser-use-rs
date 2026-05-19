@@ -35,8 +35,9 @@ BREAKING_MARKER_RE = re.compile(
     r"\bBREAKING(?: |-)?CHANGE\b|^\s*BREAKING:", re.IGNORECASE | re.MULTILINE
 )
 CONVENTIONAL_FEATURE_RE = re.compile(r"^feat(?:\([^)]+\))?:", re.IGNORECASE)
-ADDITIVE_SUBJECT_RE = re.compile(
-    r"^(add|support|expose|implement|introduce|enable|route|wire|publish)\b",
+PUBLIC_WORK_SUBJECT_RE = re.compile(
+    r"^(add|complete|cover|enable|expose|finish|harden|implement|introduce|"
+    r"publish|resolve|route|support|wire)\b",
     re.IGNORECASE,
 )
 RELEASE_IMPACT_RE = re.compile(
@@ -53,8 +54,9 @@ SUBSTANTIAL_CAPABILITY_SUBJECT_RE = re.compile(
 PATCH_SCOPE_SUBJECT_RE = re.compile(
     r"\b("
     r"alias(?:es)?|ci|clippy|config(?:uration)?|default(?:s)?|dependenc(?:y|ies)|docs?|"
-    r"documentation|format|homebrew|launchd|lint|lockfile|metadata|readme|release|roadmap|"
-    r"serde|seriali[sz]e|systemd|toolchain|typo|workflow"
+    r"bookkeeping|cleanup|documentation|format|homebrew|internal|launchd|lint|lockfile|"
+    r"metadata|readme|refactor|release|roadmap|serde|seriali[sz]e|systemd|test(?:s)?|"
+    r"toolchain|typo|workflow"
     r")\b",
     re.IGNORECASE,
 )
@@ -491,7 +493,7 @@ def commit_requests_substantial_release(commit: Commit) -> bool:
     if commit_subject_is_patch_scoped(commit):
         return False
     return bool(
-        ADDITIVE_SUBJECT_RE.match(commit.subject)
+        PUBLIC_WORK_SUBJECT_RE.match(commit.subject)
         and SUBSTANTIAL_CAPABILITY_SUBJECT_RE.search(commit.full_message)
     )
 
@@ -533,7 +535,11 @@ def substantial_release_signal(
         (commit.subject for commit in commits if commit_requests_substantial_release(commit)),
         None,
     )
-    if not substantial_subject:
+    if (
+        not substantial_subject
+        and commits
+        and all(commit_subject_is_patch_scoped(commit) for commit in commits)
+    ):
         return None
 
     public_sources = public_implementation_files(changed_files)
@@ -545,32 +551,33 @@ def substantial_release_signal(
     public_tests = public_test_files(changed_files)
     crates = changed_workspace_crates(public_sources)
     line_summary = f"{public_source_lines} changed public source lines"
+    subject_summary = substantial_subject or "unreleased public source batch"
 
     if public_source_lines >= BULK_PUBLIC_SOURCE_LINE_THRESHOLD:
-        return f"large public capability change: {substantial_subject} ({line_summary})"
+        return f"large public capability change: {subject_summary} ({line_summary})"
 
     if (
         len(crates) >= 2
         and public_source_lines >= CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD
     ):
-        return f"cross-crate public capability change: {substantial_subject} ({line_summary})"
+        return f"cross-crate public capability change: {subject_summary} ({line_summary})"
 
     if (
         capability_docs
         and public_tests
         and public_source_lines >= TESTED_PUBLIC_SOURCE_LINE_THRESHOLD
     ):
-        return f"tested public capability change: {substantial_subject} ({line_summary})"
+        return f"tested public capability change: {subject_summary} ({line_summary})"
 
     if capability_docs and public_source_lines >= SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD:
-        return f"substantial public source/doc change: {substantial_subject} ({line_summary})"
+        return f"substantial public source/doc change: {subject_summary} ({line_summary})"
 
     if (
         capability_docs
         and len(public_sources) >= SUBSTANTIAL_PUBLIC_FILE_COUNT_THRESHOLD
         and public_source_lines >= CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD
     ):
-        return f"multi-file public capability change: {substantial_subject} ({line_summary})"
+        return f"multi-file public capability change: {subject_summary} ({line_summary})"
 
     return None
 
@@ -835,6 +842,48 @@ def run_self_tests() -> int:
                     "crates/browser-use-cdp/src/lib.rs": ChangeStats(
                         additions=38,
                         deletions=5,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Rust crate", reason)
+
+        def test_completed_provider_parity_slice_is_minor_without_trailer(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Complete provider structured-output fallback parity")],
+                (
+                    "crates/browser-use-llm/src/lib.rs",
+                    "crates/browser-use-cli/src/main.rs",
+                    "docs/CLI.md",
+                    "docs/CONFORMANCE.md",
+                    "docs/MCP.md",
+                    "docs/RELEASE.md",
+                ),
+                {
+                    "crates/browser-use-llm/src/lib.rs": ChangeStats(
+                        additions=176,
+                        deletions=36,
+                    ),
+                    "crates/browser-use-cli/src/main.rs": ChangeStats(
+                        additions=47,
+                        deletions=0,
+                    ),
+                },
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("cross-crate public capability", reason)
+
+        def test_patch_scoped_bulk_source_change_stays_patch(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Format browser crate sources")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "docs/CONFORMANCE.md",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=420,
+                        deletions=30,
                     )
                 },
             )

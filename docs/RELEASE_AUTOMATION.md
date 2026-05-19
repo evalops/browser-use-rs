@@ -34,9 +34,10 @@ Auto mode chooses the bump from the unreleased work since the latest stable tag:
 - `major` when an unreleased commit contains a breaking-change marker such as
   `BREAKING CHANGE` or a Conventional Commit `!`.
 - `minor` when unreleased work has a substantial public-behavior signal:
-  `Release-Impact: minor`, a Conventional Commit `feat:` subject, a large
-  public capability implementation, a tested source-and-docs capability slice,
-  or broad cross-crate public-surface work.
+  `Release-Impact: minor`, a Conventional Commit `feat:` subject, public-work
+  subjects such as `Add`, `Complete`, `Resolve`, or `Harden` backed by enough
+  source evidence, a large public capability implementation, a tested
+  source-and-docs capability slice, or broad cross-crate public-surface work.
 - `patch` for smaller release-worthy changes: fixes, dependency or toolchain
   refreshes, packaged install asset changes, README/support-matrix updates, and
   public docs that should ship with the next artifact. Small compatibility
@@ -47,9 +48,12 @@ Auto mode chooses the bump from the unreleased work since the latest stable tag:
 The automatic minor heuristic is evidence-based rather than cadence-based. A
 batch of several small commits still becomes a patch release unless it includes
 explicit release intent or enough public source evidence to show substantial
-work. The helper currently looks for public crate changes with meaningful line
-volume, tests and public docs, broad cross-crate surface movement, or a large
-single capability implementation. Commit count by itself never changes the bump
+work. The helper looks across all unreleased commits since the latest stable tag
+for public crate changes with meaningful line volume, tests and public docs,
+broad cross-crate surface movement, or a large single capability implementation.
+Patch-scoped work such as formatting, refactors, docs, CI, release automation,
+tests-only changes, and internal bookkeeping remains patch unless a maintainer
+explicitly marks it otherwise. Commit count by itself never changes the bump
 type.
 
 For ambiguous commits, add a trailer to the commit body:
