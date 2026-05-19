@@ -31,6 +31,9 @@ jobs:
       - name: Release version check
         run: python3 scripts/release-version.py --check
 
+      - name: Release automation self-test
+        run: python3 scripts/release-version.py --self-test
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 

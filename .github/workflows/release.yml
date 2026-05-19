@@ -7,15 +7,26 @@ on:
     tags:
       - "v*"
     paths:
+      - ".github/workflows/release.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "LICENSE"
       - "NOTICE"
+      - "README.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/CLI.md"
+      - "docs/CONFORMANCE.md"
+      - "docs/DAEMON_SUPERVISION.md"
+      - "docs/INSTALL.md"
+      - "docs/MCP.md"
+      - "docs/RELEASE.md"
+      - "docs/RELEASE_AUTOMATION.md"
       - "rust-toolchain.toml"
       - "crates/**"
       - "packaging/homebrew/**"
       - "packaging/launchd/**"
       - "packaging/systemd/**"
+      - "scripts/release-version.py"
   workflow_dispatch:
     inputs:
       release_type:
@@ -226,6 +237,8 @@ jobs:
     if: needs.prepare-release.outputs.should_release == 'true'
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+      RELEASE_TYPE: ${{ needs.prepare-release.outputs.release_type }}
+      RELEASE_REASON: ${{ needs.prepare-release.outputs.release_reason }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -278,6 +291,11 @@ jobs:
           previous_tag="$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || true)"
           {
             echo "# browser-use-rs ${RELEASE_TAG}"
+            echo
+            echo "## Release Plan"
+            echo
+            echo "- Bump: \`${RELEASE_TYPE:-exact}\`"
+            echo "- Reason: ${RELEASE_REASON:-explicit release request}"
             echo
             if [[ -n "${previous_tag}" ]]; then
               echo "## Changes Since ${previous_tag}"

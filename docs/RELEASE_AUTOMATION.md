@@ -6,26 +6,49 @@ on release tags.
 
 ## Automatic Update Releases
 
-Meaningful `main` pushes are changes that can affect the published binary,
-packaged install assets, Cargo resolution, or release artifact contents:
-workspace manifests and lockfiles, Rust crates, packaged Homebrew/systemd/launchd
-assets, license/notice files, and the Rust toolchain pin. Roadmap, docs, CI,
-release workflow, and release-helper maintenance continue through CI but do not
-wake the release publisher.
+Candidate `main` pushes are changes that might affect the published binary,
+packaged install assets, Cargo resolution, release artifact docs, or the release
+planner itself. The workflow may wake for release-helper and workflow changes so
+GitHub exercises the current planner, but auto mode still performs a second
+guard in `scripts/release-version.py` before it commits, tags, builds, or
+publishes anything.
 
-When one of those meaningful paths changes, the workflow runs `release_type=auto`.
+Release-worthy changes are public artifact changes: workspace manifests and
+lockfiles, Rust crates, packaged Homebrew/systemd/launchd assets, license/notice
+files, the Rust toolchain pin, README, and public docs that ship in the package
+or release support matrix. Roadmap-only, CI-only, release-workflow-only, and
+release-helper-only changes exit successfully without publishing unless a human
+manually dispatches a release.
+
+When one of those candidate paths changes, the workflow runs `release_type=auto`.
 Auto mode compares `HEAD` with the latest stable `vX.Y.Z` tag, skips
 release-bookkeeping churn, and cuts a release only when release-worthy files
-changed. The script keeps this second guard so manual reruns and historical
-workflow changes still avoid accidental empty releases.
+changed. This keeps manual reruns and historical workflow changes from creating
+accidental empty releases.
 
 Auto mode chooses:
 
 - `major` when an unreleased commit contains a breaking-change marker such as
   `BREAKING CHANGE` or a Conventional Commit `!`.
-- `minor` when Rust crate behavior changed and the unreleased commits look like
-  feature or public-surface additions.
-- `patch` for release-worthy fixes and packaged install asset changes.
+- `minor` when Rust source changed and the unreleased commits look substantial:
+  Conventional Commit `feat:` subjects, browser/session/action/runtime parity,
+  public protocol/schema/API, CLI/MCP surface, or profile behavior.
+- `patch` for smaller release-worthy changes: fixes, dependency or toolchain
+  refreshes, packaged install asset changes, README/support-matrix updates, and
+  public docs that should ship with the next artifact.
+
+For ambiguous commits, add a trailer to the commit body:
+
+```text
+Release-Impact: minor
+Release-Impact: patch
+Release-Impact: none
+```
+
+`Release-Impact` trailers override the heuristic. Use `minor` for substantial
+new user-visible behavior, `patch` for small but releasable changes, and `none`
+for maintenance that should never publish by itself. If multiple unreleased
+commits request a release, the highest requested impact wins.
 
 If a manual auto run finds nothing release-worthy after the latest stable tag,
 the run exits successfully without committing, tagging, building, or publishing.
@@ -73,10 +96,12 @@ Use the release helper before editing release workflows or Cargo manifests:
 
 ```sh
 python3 scripts/release-version.py --check
+python3 scripts/release-version.py --self-test
 python3 scripts/release-version.py --release-type auto --allow-no-release
 python3 scripts/release-version.py --release-type minor
 ```
 
-The first command verifies version consistency. The second previews whether the
-current unreleased changes warrant a release and which bump they would receive.
-The third previews the next minor version without writing files.
+The first command verifies version consistency. The second exercises the
+release-impact classifier. The third previews whether the current unreleased
+changes warrant a release and which bump they would receive. The fourth previews
+the next minor version without writing files.

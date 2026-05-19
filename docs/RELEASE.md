@@ -309,9 +309,11 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   configured, tagged releases also publish `Formula/browser-use-rs.rb` to the
   EvalOps Homebrew tap. The `Release` workflow can be manually dispatched to
   cut `patch`, `minor`, or `major` Cargo workspace versions before publishing
-  those tagged artifacts, and its push-driven `auto` mode only wakes for
-  meaningful release paths before inferring the bump from release-worthy changes
-  after the latest stable tag.
+  those tagged artifacts. Its push-driven `auto` mode wakes for release
+  candidate paths, skips release-bookkeeping and automation-only churn, then
+  infers `minor` only for substantial public Rust/source-surface work while
+  using `patch` for smaller releasable fixes, docs, dependencies, and packaged
+  install asset updates.
 - Workspace CI for format, clippy, unit tests, schema fixtures, and conformance
   fixtures.
 

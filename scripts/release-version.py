@@ -31,13 +31,22 @@ VERSION_LINE_RE = re.compile(
     r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>".*)$'
 )
 CONVENTIONAL_BREAKING_RE = re.compile(r"^[a-z]+(?:\([^)]+\))?!:")
-BREAKING_MARKER_RE = re.compile(r"\bBREAKING(?: |-)?CHANGE\b|^\s*BREAKING:", re.IGNORECASE | re.MULTILINE)
-FEATURE_SUBJECT_RE = re.compile(
+BREAKING_MARKER_RE = re.compile(
+    r"\bBREAKING(?: |-)?CHANGE\b|^\s*BREAKING:", re.IGNORECASE | re.MULTILINE
+)
+CONVENTIONAL_FEATURE_RE = re.compile(r"^feat(?:\([^)]+\))?:", re.IGNORECASE)
+ADDITIVE_SUBJECT_RE = re.compile(
     r"^(add|support|expose|implement|introduce|enable|route|wire|publish)\b",
     re.IGNORECASE,
 )
-FIX_SUBJECT_RE = re.compile(
-    r"^(fix|repair|patch|keep|harden|guard|avoid|prevent|correct|restore|stabilize|tighten)\b",
+RELEASE_IMPACT_RE = re.compile(
+    r"(?im)^\s*(?:Release-Impact|Semver-Impact):\s*(?P<impact>major|minor|patch|none)\s*$"
+)
+SUBSTANTIAL_SUBJECT_RE = re.compile(
+    r"\b("
+    r"agent|action|browser|browserprofile|cdp|cli|cloud|download|iframe|launch|lifecycle|"
+    r"mcp|parity|profile|protocol|proxy|public|runtime|schema|session|storage|viewport"
+    r")\b",
     re.IGNORECASE,
 )
 RELEASE_VERSION_PATTERN = r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?"
@@ -50,6 +59,14 @@ RELEASE_WORTHY_EXACT_PATHS = {
     "Cargo.toml",
     "LICENSE",
     "NOTICE",
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/CLI.md",
+    "docs/CONFORMANCE.md",
+    "docs/DAEMON_SUPERVISION.md",
+    "docs/INSTALL.md",
+    "docs/MCP.md",
+    "docs/RELEASE.md",
     "rust-toolchain.toml",
     "packaging/homebrew/browser-use-rs.rb.template",
     "packaging/homebrew/publish-tap.sh",
@@ -59,6 +76,11 @@ RELEASE_WORTHY_PREFIXES = (
     "packaging/launchd/",
     "packaging/systemd/",
 )
+RELEASE_TYPE_ORDER = {
+    "patch": 1,
+    "minor": 2,
+    "major": 3,
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -325,6 +347,14 @@ def release_worthy_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(path for path in changed_files if is_release_worthy_path(path))
 
 
+def is_source_behavior_path(path: str) -> bool:
+    return path.startswith("crates/") and "/src/" in path and path.endswith(".rs")
+
+
+def source_behavior_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(path for path in changed_files if is_source_behavior_path(path))
+
+
 def commit_has_breaking_marker(commit: Commit) -> bool:
     return bool(
         CONVENTIONAL_BREAKING_RE.match(commit.subject)
@@ -332,21 +362,60 @@ def commit_has_breaking_marker(commit: Commit) -> bool:
     )
 
 
-def classify_auto_release(commits: list[Commit], changed_files: tuple[str, ...]) -> tuple[str, str]:
+def release_impact_trailers(commit: Commit) -> tuple[str, ...]:
+    return tuple(
+        match.group("impact").lower()
+        for match in RELEASE_IMPACT_RE.finditer(commit.full_message)
+    )
+
+
+def highest_release_type(release_types: tuple[str, ...]) -> str:
+    return sorted(release_types, key=lambda release_type: RELEASE_TYPE_ORDER[release_type])[-1]
+
+
+def commit_requests_no_release(commit: Commit) -> bool:
+    return "none" in release_impact_trailers(commit)
+
+
+def commit_requests_substantial_release(commit: Commit) -> bool:
+    if CONVENTIONAL_FEATURE_RE.match(commit.subject):
+        return True
+    return bool(
+        ADDITIVE_SUBJECT_RE.match(commit.subject)
+        and SUBSTANTIAL_SUBJECT_RE.search(commit.full_message)
+    )
+
+
+def classify_auto_release(
+    commits: list[Commit],
+    changed_files: tuple[str, ...],
+) -> tuple[str | None, str]:
+    explicit_release_types = tuple(
+        impact
+        for commit in commits
+        for impact in release_impact_trailers(commit)
+        if impact != "none"
+    )
+    if explicit_release_types:
+        release_type = highest_release_type(explicit_release_types)
+        return release_type, f"Release-Impact trailer requested {release_type}"
+
+    if commits and all(commit_requests_no_release(commit) for commit in commits):
+        return None, "all unreleased commits are marked Release-Impact: none"
+
     if any(commit_has_breaking_marker(commit) for commit in commits):
         return "major", "breaking-change marker found in unreleased commits"
 
-    code_files = tuple(path for path in changed_files if path.startswith("crates/"))
-    feature_subjects = tuple(
-        commit.subject for commit in commits if FEATURE_SUBJECT_RE.match(commit.subject)
+    behavior_files = source_behavior_files(changed_files)
+    substantial_subjects = tuple(
+        commit.subject for commit in commits if commit_requests_substantial_release(commit)
     )
-    fix_only = commits and all(FIX_SUBJECT_RE.match(commit.subject) for commit in commits)
 
-    if code_files and feature_subjects and not fix_only:
-        return "minor", f"feature commit with Rust crate changes: {feature_subjects[0]}"
-    if code_files and not fix_only:
-        return "minor", "Rust crate behavior changed"
-    return "patch", "release-worthy fix or packaged install asset changed"
+    if behavior_files and substantial_subjects:
+        return "minor", f"substantial public-surface change: {substantial_subjects[0]}"
+    if behavior_files:
+        return "patch", "Rust crate fix or internal behavior change"
+    return "patch", "release-worthy docs, dependency, or packaged install asset changed"
 
 
 def plan_auto_release(root: Path) -> ReleasePlan:
@@ -375,6 +444,16 @@ def plan_auto_release(root: Path) -> ReleasePlan:
         )
 
     release_type, reason = classify_auto_release(commits, worthy_files)
+    if release_type is None:
+        return ReleasePlan(
+            should_release=False,
+            release_type=None,
+            base_ref=base_ref,
+            reason=reason,
+            commit_count=len(commits),
+            changed_files=worthy_files,
+        )
+
     return ReleasePlan(
         should_release=True,
         release_type=release_type,
@@ -393,6 +472,81 @@ def append_github_output(path: str | None, values: dict[str, str]) -> None:
             handle.write(f"{key}={value}\n")
 
 
+def synthetic_commit(subject: str, body: str = "") -> Commit:
+    return Commit(sha="0" * 40, subject=subject, body=body)
+
+
+def run_self_tests() -> int:
+    import unittest
+
+    class ReleaseVersionTests(unittest.TestCase):
+        def test_release_worthy_paths_exclude_release_automation(self) -> None:
+            changed_files = (
+                ".github/workflows/release.yml",
+                "scripts/release-version.py",
+                "docs/RELEASE_AUTOMATION.md",
+                "docs/ROADMAP.md",
+            )
+            self.assertEqual(release_worthy_files(changed_files), ())
+
+        def test_release_worthy_paths_include_public_artifacts(self) -> None:
+            changed_files = (
+                "README.md",
+                "docs/RELEASE.md",
+                "crates/browser-use-cdp/src/lib.rs",
+                "packaging/systemd/browser-use-rs.service",
+            )
+            self.assertEqual(release_worthy_files(changed_files), changed_files)
+
+        def test_release_impact_trailer_overrides_substantial_heuristic(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add internal cache bookkeeping", "Release-Impact: patch")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Release-Impact", reason)
+
+        def test_release_impact_none_suppresses_release(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Refresh release helper", "Release-Impact: none")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            self.assertIsNone(release_type)
+            self.assertIn("none", reason)
+
+        def test_breaking_marker_wins_without_trailer(self) -> None:
+            release_type, _ = classify_auto_release(
+                [synthetic_commit("refactor!: rename public action result")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            self.assertEqual(release_type, "major")
+
+        def test_substantial_source_change_is_minor(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add BrowserProfile accept_downloads parity")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("substantial", reason)
+
+        def test_internal_source_or_docs_change_is_patch(self) -> None:
+            source_release_type, _ = classify_auto_release(
+                [synthetic_commit("Fix stale download cache cleanup")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+            )
+            docs_release_type, _ = classify_auto_release(
+                [synthetic_commit("Document release support matrix")],
+                ("docs/RELEASE.md",),
+            )
+            self.assertEqual(source_release_type, "patch")
+            self.assertEqual(docs_release_type, "patch")
+
+    result = unittest.TextTestRunner(verbosity=2).run(
+        unittest.defaultTestLoader.loadTestsFromTestCase(ReleaseVersionTests)
+    )
+    return 0 if result.wasSuccessful() else 1
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-type", choices=("auto", "major", "minor", "patch"))
@@ -400,6 +554,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect-version", help="Fail unless the workspace version matches this.")
     parser.add_argument("--write", action="store_true", help="Update Cargo.toml to the requested version.")
     parser.add_argument("--check", action="store_true", help="Only validate workspace version consistency.")
+    parser.add_argument("--self-test", action="store_true", help="Run release classification unit tests.")
     parser.add_argument(
         "--allow-no-release",
         action="store_true",
@@ -415,6 +570,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.self_test:
+        return run_self_tests()
+
     root = repo_root()
     expect_version = Version.parse(args.expect_version) if args.expect_version else None
     current = validate_workspace(root, expect_version)
