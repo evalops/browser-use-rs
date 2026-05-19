@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #124 lands and CI is green.
+- Next upstream parity slice after #124 release verification.
 
 ## Completed Tracks
 
@@ -206,9 +206,10 @@ Implemented:
   Live CDP wiring records target crash, JavaScript dialog, navigation failure,
   configured download events, cookie plus attached frame-tree origin
   storage-state save/load events, direct PDF viewer state and one-per-session
-  `auto_download_pdfs` direct-PDF downloads into `downloads_path`, CDP websocket
-  closure diagnostics, and direct `Page.navigate` plus stuck HTTP(S) request
-  timeout diagnostics. Unexpected
+  `auto_download_pdfs` PDF downloads into `downloads_path` using CDP response
+  metadata and `Network.getResponseBody` where available, CDP websocket closure
+  diagnostics, and direct `Page.navigate` plus stuck HTTP(S) request timeout
+  diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with
   reconnecting/reconnected/failure lifecycle diagnostics, and registered CDP
   target sessions are invalidated after reconnect so stale session-scoped

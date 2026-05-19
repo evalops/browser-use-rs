@@ -87,7 +87,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `BrowserProfile.auto_download_pdfs` defaults to `true`; when `downloads_path`
   is configured, direct PDF viewer URLs are downloaded once per session into
   that directory with safe filenames and `auto_download=true` lifecycle
-  metadata. Explicit `auto_download_pdfs=false` skips the PDF auto-download
+  metadata. The direct-CDP path uses `Network.responseReceived` metadata and
+  `Network.getResponseBody` bytes where Chrome exposes them, including
+  content-disposition filenames, before falling back to conservative direct-URL
+  downloads. Explicit `auto_download_pdfs=false` skips the PDF auto-download
   path while preserving normal browser download events. `storage_state_path`
   loads and saves browser cookie plus attached frame-tree origin local/session
   storage state with storage lifecycle events.

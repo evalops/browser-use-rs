@@ -73,7 +73,8 @@ includes:
   Launch profiles can set `downloads_path` to enable Chrome download behavior,
   browser-level download lifecycle events with safe basename normalization for
   page-controlled filenames, and upstream-default `auto_download_pdfs=true`
-  direct-PDF URL downloads, while `storage_state_path` can
+  direct-PDF downloads backed by CDP response bodies where available, while
+  `storage_state_path` can
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
   the attached frame tree is outside the safe CDP boundary documented in
