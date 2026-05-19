@@ -16,7 +16,9 @@ browser-use/browser-use@f09a86671591312bbc272403a7409d56f4cec668
   `--user-agent` launch flags and `BrowserProfile.profile_directory` to emit
   persistent-profile `--profile-directory` flags alongside `--user-data-dir`.
   `BrowserProfile.chromium_sandbox=false` emits upstream no-sandbox/container
-  Chrome flags for CI and Docker-style launches.
+  Chrome flags for CI and Docker-style launches, and explicit
+  `BrowserProfile.window_size` / `window_position` values emit typed
+  `--window-size` and `--window-position` launch geometry flags.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
