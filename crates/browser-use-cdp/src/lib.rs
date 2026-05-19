@@ -41,6 +41,8 @@ const CLOUD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
   const axRefAttribute = 'data-browser-use-rs-ax-ref';
+  const maxIframeDepth = 5;
+  const maxIframeDocuments = 100;
   const selector = [
     'a',
     'button',
@@ -413,18 +415,22 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
       if (child.nodeType === Node.TEXT_NODE) stats.text_chars += (child.nodeValue || '').trim().length;
     }
   };
-  const visitFrame = (iframe, offset) => {
+  let visitedIframeDocuments = 0;
+  const visitFrame = (iframe, offset, depth) => {
     if (!isVisible(iframe)) return;
+    if (depth >= maxIframeDepth) return;
+    if (visitedIframeDocuments >= maxIframeDocuments) return;
     try {
       const frameDocument = iframe.contentDocument;
       if (!frameDocument) return;
+      visitedIframeDocuments += 1;
       const rect = iframe.getBoundingClientRect();
-      visitChildren(frameDocument, { x: offset.x + rect.x, y: offset.y + rect.y });
+      visitChildren(frameDocument, { x: offset.x + rect.x, y: offset.y + rect.y }, depth + 1);
     } catch (_) {
       return;
     }
   };
-  const visitNode = (node, offset) => {
+  const visitNode = (node, offset, depth) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (isDecorativeSvgChild(node)) return;
     if (isNonContentTag(node)) return;
@@ -443,15 +449,15 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     }
     if (node.shadowRoot) {
       stats.shadow_open += 1;
-      visitChildren(node.shadowRoot, offset);
+      visitChildren(node.shadowRoot, offset, depth);
     }
-    if (tag === 'iframe' || tag === 'frame') visitFrame(node, offset);
-    visitChildren(node, offset);
+    if (tag === 'iframe' || tag === 'frame') visitFrame(node, offset, depth);
+    visitChildren(node, offset, depth);
   };
-  const visitChildren = (root, offset) => {
-    for (const child of Array.from(root.children || [])) visitNode(child, offset);
+  const visitChildren = (root, offset, depth) => {
+    for (const child of Array.from(root.children || [])) visitNode(child, offset, depth);
   };
-  visitChildren(document, { x: 0, y: 0 });
+  visitChildren(document, { x: 0, y: 0 }, 0);
   const booleanAttributeNames = new Set(['checked', 'disabled', 'multiple', 'readonly', 'required', 'selected']);
   const snapshotAttributeNames = ['id', 'class', 'name', 'type', 'placeholder', 'value', 'href', 'src', 'alt', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked', 'aria-controls', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-level', 'aria-live', 'aria-multiselectable', 'aria-owns', 'aria-placeholder', 'aria-pressed', 'aria-readonly', 'aria-required', 'aria-selected', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext', 'role', 'title', 'contenteditable', 'data-cy', 'data-selenium', 'data-test', 'data-testid', 'data-qa', 'data-state', 'data-value', 'data-mask', 'data-inputmask', 'data-datepicker', 'data-date-format', 'uib-datepicker-popup', 'for', 'required', 'disabled', 'readonly', 'selected', 'multiple', 'accept', 'target', 'rel', 'list', 'tabindex', 'inputmode', 'autocomplete', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'lang', 'itemscope', 'itemtype', 'itemprop', 'pseudo'];
   const evalAttributeNames = ['id', 'class', 'name', 'type', 'placeholder', 'aria-label', 'role', 'value', 'data-testid', 'alt', 'title', 'checked', 'selected', 'disabled', 'required', 'readonly', 'aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-invalid', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow'];
@@ -623,6 +629,21 @@ JSON.stringify((() => {
   };
 })())
 "#;
+
+fn interactive_elements_js(config: IframeTraversalConfig) -> String {
+    INTERACTIVE_ELEMENTS_JS
+        .replace(
+            "const maxIframeDepth = 5;",
+            &format!(
+                "const maxIframeDepth = {};",
+                config.max_iframe_depth_for_same_origin()
+            ),
+        )
+        .replace(
+            "const maxIframeDocuments = 100;",
+            &format!("const maxIframeDocuments = {};", config.max_iframes),
+        )
+}
 
 fn element_eval_js(index: u32, body: &str) -> String {
     format!(
@@ -1686,6 +1707,12 @@ pub struct BrowserProfile {
     pub disable_security: bool,
     #[serde(default)]
     pub deterministic_rendering: bool,
+    #[serde(default = "default_cross_origin_iframes")]
+    pub cross_origin_iframes: bool,
+    #[serde(default = "default_max_iframes")]
+    pub max_iframes: usize,
+    #[serde(default = "default_max_iframe_depth")]
+    pub max_iframe_depth: usize,
     #[serde(default)]
     pub viewport: BrowserViewport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1729,6 +1756,9 @@ impl Default for BrowserProfile {
             block_ip_addresses: false,
             disable_security: false,
             deterministic_rendering: false,
+            cross_origin_iframes: default_cross_origin_iframes(),
+            max_iframes: default_max_iframes(),
+            max_iframe_depth: default_max_iframe_depth(),
             viewport: BrowserViewport::default(),
             window_size: None,
             window_position: None,
@@ -1761,6 +1791,18 @@ fn default_browser_permissions() -> Vec<String> {
         .into_iter()
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn default_cross_origin_iframes() -> bool {
+    true
+}
+
+fn default_max_iframes() -> usize {
+    100
+}
+
+fn default_max_iframe_depth() -> usize {
+    5
 }
 
 fn default_ignore_default_args() -> Vec<String> {
@@ -3427,6 +3469,35 @@ pub struct AttachedPage {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IframeTraversalConfig {
+    cross_origin_iframes: bool,
+    max_iframes: usize,
+    max_iframe_depth: usize,
+}
+
+impl IframeTraversalConfig {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        Self {
+            cross_origin_iframes: profile.cross_origin_iframes,
+            max_iframes: profile.max_iframes,
+            max_iframe_depth: profile.max_iframe_depth,
+        }
+    }
+
+    fn max_iframe_depth_for_same_origin(self) -> usize {
+        self.max_iframe_depth
+    }
+
+    fn remaining_same_origin_depth(self, current_depth: usize) -> usize {
+        self.max_iframe_depth.saturating_sub(current_depth)
+    }
+
+    fn allows_cross_origin_depth(self, depth: usize) -> bool {
+        self.cross_origin_iframes && depth <= self.max_iframe_depth && self.max_iframes > 0
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FrameOffset {
     x: i32,
@@ -3443,12 +3514,14 @@ struct FrameElementInfo {
 struct IframeTargetInfo {
     target_id: String,
     offset: FrameOffset,
+    depth: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AttachedFramePage {
     page: AttachedPage,
     offset: FrameOffset,
+    depth: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3698,6 +3771,7 @@ pub struct CdpBrowserSession {
     lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
     url_policy: UrlAccessPolicy,
+    iframe_traversal: IframeTraversalConfig,
     storage_state_path: Option<PathBuf>,
     navigation_timeout_ms: u64,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
@@ -3751,6 +3825,7 @@ impl CdpBrowserSession {
             lifecycle_events,
             lifecycle_event_tx,
             url_policy: UrlAccessPolicy::from_profile(profile),
+            iframe_traversal: IframeTraversalConfig::from_profile(profile),
             storage_state_path: None,
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -3837,6 +3912,7 @@ impl CdpBrowserSession {
             lifecycle_events,
             lifecycle_event_tx,
             url_policy,
+            iframe_traversal: IframeTraversalConfig::from_profile(profile),
             storage_state_path: profile.storage_state_path.clone(),
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -4174,8 +4250,9 @@ impl CdpBrowserSession {
 
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let page = self.current_page().await;
+        let root_interactive_js = interactive_elements_js(self.iframe_traversal);
         let value = self
-            .evaluate_json_for_page(&page, INTERACTIVE_ELEMENTS_JS, true)
+            .evaluate_json_for_page(&page, &root_interactive_js, true)
             .await?;
         let accessibility = self
             .accessibility_enrichment(&page)
@@ -4193,8 +4270,14 @@ impl CdpBrowserSession {
         let mut child_states = Vec::new();
 
         for child_page in child_pages {
+            let child_interactive_js = interactive_elements_js(IframeTraversalConfig {
+                max_iframe_depth: self
+                    .iframe_traversal
+                    .remaining_same_origin_depth(child_page.depth),
+                ..self.iframe_traversal
+            });
             let Ok(value) = self
-                .evaluate_json_for_page(&child_page.page, INTERACTIVE_ELEMENTS_JS, true)
+                .evaluate_json_for_page(&child_page.page, &child_interactive_js, true)
                 .await
             else {
                 continue;
@@ -4282,11 +4365,19 @@ impl CdpBrowserSession {
         page: &AttachedPage,
         frame_infos: &[FrameElementInfo],
     ) -> Result<Vec<AttachedFramePage>, BrowserError> {
+        if !self.iframe_traversal.allows_cross_origin_depth(1) {
+            return Ok(Vec::new());
+        }
         let targets = self
             .connection
             .command("Target.getTargets", json!({}), None)
             .await?;
-        let target_infos = iframe_target_infos_from_targets(&targets, &page.target_id, frame_infos);
+        let target_infos = iframe_target_infos_from_targets(
+            &targets,
+            &page.target_id,
+            frame_infos,
+            self.iframe_traversal,
+        );
         let mut pages = Vec::new();
 
         for target_info in target_infos {
@@ -4294,6 +4385,7 @@ impl CdpBrowserSession {
                 Ok(page) => pages.push(AttachedFramePage {
                     page,
                     offset: target_info.offset,
+                    depth: target_info.depth,
                 }),
                 Err(error) if is_missing_target_error(&error) => {}
                 Err(error) => return Err(error),
@@ -5635,7 +5727,12 @@ fn iframe_target_infos_from_targets(
     targets: &Value,
     parent_target_id: &str,
     frame_infos: &[FrameElementInfo],
+    config: IframeTraversalConfig,
 ) -> Vec<IframeTargetInfo> {
+    let depth = 1;
+    if !config.allows_cross_origin_depth(depth) {
+        return Vec::new();
+    }
     let mut used_frames = Vec::new();
     targets
         .get("targetInfos")
@@ -5653,8 +5750,13 @@ fn iframe_target_infos_from_targets(
             let target_id = target.get("targetId")?.as_str()?.to_owned();
             let target_url = target.get("url").and_then(Value::as_str).unwrap_or("");
             let offset = frame_offset_for_target_url(target_url, frame_infos, &mut used_frames)?;
-            Some(IframeTargetInfo { target_id, offset })
+            Some(IframeTargetInfo {
+                target_id,
+                offset,
+                depth,
+            })
         })
+        .take(config.max_iframes)
         .collect()
 }
 
@@ -8440,6 +8542,35 @@ mod tests {
     }
 
     #[test]
+    fn browser_profile_iframe_traversal_defaults_match_upstream() {
+        let profile = BrowserProfile::default();
+        assert!(profile.cross_origin_iframes);
+        assert_eq!(profile.max_iframes, 100);
+        assert_eq!(profile.max_iframe_depth, 5);
+
+        let deserialized: BrowserProfile =
+            serde_json::from_value(json!({})).expect("deserialize default profile");
+        assert!(deserialized.cross_origin_iframes);
+        assert_eq!(deserialized.max_iframes, 100);
+        assert_eq!(deserialized.max_iframe_depth, 5);
+
+        let serialized = serde_json::to_value(&profile).expect("serialize profile");
+        assert_eq!(serialized["cross_origin_iframes"], json!(true));
+        assert_eq!(serialized["max_iframes"], json!(100));
+        assert_eq!(serialized["max_iframe_depth"], json!(5));
+
+        let configured: BrowserProfile = serde_json::from_value(json!({
+            "cross_origin_iframes": false,
+            "max_iframes": 2,
+            "max_iframe_depth": 0
+        }))
+        .expect("configured profile");
+        assert!(!configured.cross_origin_iframes);
+        assert_eq!(configured.max_iframes, 2);
+        assert_eq!(configured.max_iframe_depth, 0);
+    }
+
+    #[test]
     fn default_profile_uses_upstream_ignore_default_args_shape() {
         let profile = BrowserProfile::default();
         let IgnoreDefaultArgs::List(ignored_args) = &profile.ignore_default_args else {
@@ -9788,7 +9919,12 @@ mod tests {
             },
         ];
 
-        let infos = iframe_target_infos_from_targets(&targets, "root", &frame_infos);
+        let infos = iframe_target_infos_from_targets(
+            &targets,
+            "root",
+            &frame_infos,
+            IframeTraversalConfig::from_profile(&BrowserProfile::default()),
+        );
 
         assert_eq!(
             infos,
@@ -9796,13 +9932,108 @@ mod tests {
                 IframeTargetInfo {
                     target_id: "child".to_owned(),
                     offset: FrameOffset { x: 12, y: 34 },
+                    depth: 1,
                 },
                 IframeTargetInfo {
                     target_id: "fallback".to_owned(),
                     offset: FrameOffset { x: 56, y: 78 },
+                    depth: 1,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn iframe_target_limits_honor_profile_controls() {
+        let targets = json!({
+            "targetInfos": [
+                {
+                    "type": "iframe",
+                    "targetId": "one",
+                    "parentId": "root",
+                    "url": "https://example.test/one"
+                },
+                {
+                    "type": "iframe",
+                    "targetId": "two",
+                    "parentId": "root",
+                    "url": "https://example.test/two"
+                },
+                {
+                    "type": "iframe",
+                    "targetId": "three",
+                    "parentId": "root",
+                    "url": "https://example.test/three"
+                }
+            ]
+        });
+        let frame_infos = vec![
+            FrameElementInfo {
+                url: "https://example.test/one".to_owned(),
+                offset: FrameOffset { x: 1, y: 1 },
+            },
+            FrameElementInfo {
+                url: "https://example.test/two".to_owned(),
+                offset: FrameOffset { x: 2, y: 2 },
+            },
+            FrameElementInfo {
+                url: "https://example.test/three".to_owned(),
+                offset: FrameOffset { x: 3, y: 3 },
+            },
+        ];
+        let limited = IframeTraversalConfig {
+            cross_origin_iframes: true,
+            max_iframes: 2,
+            max_iframe_depth: 5,
+        };
+
+        let infos = iframe_target_infos_from_targets(&targets, "root", &frame_infos, limited);
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[0].target_id, "one");
+        assert_eq!(infos[1].target_id, "two");
+
+        let disabled = IframeTraversalConfig {
+            cross_origin_iframes: false,
+            max_iframes: 100,
+            max_iframe_depth: 5,
+        };
+        assert!(
+            iframe_target_infos_from_targets(&targets, "root", &frame_infos, disabled).is_empty()
+        );
+
+        let zero_depth = IframeTraversalConfig {
+            cross_origin_iframes: true,
+            max_iframes: 100,
+            max_iframe_depth: 0,
+        };
+        assert!(
+            iframe_target_infos_from_targets(&targets, "root", &frame_infos, zero_depth).is_empty()
+        );
+
+        let zero_iframes = IframeTraversalConfig {
+            cross_origin_iframes: true,
+            max_iframes: 0,
+            max_iframe_depth: 5,
+        };
+        assert!(
+            iframe_target_infos_from_targets(&targets, "root", &frame_infos, zero_iframes)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn interactive_snapshot_script_carries_iframe_traversal_limits() {
+        let script = interactive_elements_js(IframeTraversalConfig {
+            cross_origin_iframes: true,
+            max_iframes: 7,
+            max_iframe_depth: 2,
+        });
+
+        assert!(script.contains("const maxIframeDepth = 2;"));
+        assert!(script.contains("const maxIframeDocuments = 7;"));
+        assert!(script.contains("if (depth >= maxIframeDepth) return;"));
+        assert!(script.contains("if (visitedIframeDocuments >= maxIframeDocuments) return;"));
+        assert!(script.contains("visitChildren(frameDocument, { x: offset.x + rect.x, y: offset.y + rect.y }, depth + 1);"));
     }
 
     #[test]
