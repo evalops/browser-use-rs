@@ -92,7 +92,9 @@ exceptional lifecycle fixtures. Live CDP wiring records target crash,
 JavaScript dialog, navigation failure, configured download events, and cookie
 plus attached frame-tree origin storage-state save/load events. Root
 `Browser.grantPermissions` failures record browser diagnostics without failing
-startup. CDP websocket closure records a browser-stopped lifecycle diagnostic, and direct
+startup. `BrowserProfile.headers` are scoped to CDP websocket connection
+handshakes and reconnect handshakes; they are not injected as page request
+headers. CDP websocket closure records a browser-stopped lifecycle diagnostic, and direct
 `Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
 lifecycle diagnostics. Direct PDF viewer URLs are marked as PDF state and, when
 `BrowserProfile.auto_download_pdfs` remains enabled and `downloads_path` is

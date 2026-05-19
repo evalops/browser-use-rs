@@ -37,7 +37,9 @@ includes:
   upstream-style default Chrome launch args, `ignore_default_args` list/true
   suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
   `permissions` grants for upstream's default `clipboardReadWrite` and
-  `notifications` browser permissions over root CDP, typed Browser Use Cloud
+  `notifications` browser permissions over root CDP, profile-level CDP
+  websocket connection headers for authenticated remote endpoints, and typed
+  Browser Use Cloud
   creation/stop parameters, current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint

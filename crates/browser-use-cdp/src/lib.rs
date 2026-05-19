@@ -27,6 +27,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use unicode_normalization::UnicodeNormalization;
 
@@ -1697,6 +1699,8 @@ impl Default for IgnoreDefaultArgs {
 pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cdp_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub use_cloud: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1796,6 +1800,7 @@ impl Default for BrowserProfile {
     fn default() -> Self {
         Self {
             cdp_url: None,
+            headers: None,
             use_cloud: false,
             cloud_browser_params: None,
             cloud_api_base_url: None,
@@ -3218,6 +3223,12 @@ struct CdpRequest {
     response_tx: oneshot::Sender<Result<Value, BrowserError>>,
 }
 
+struct CdpSocketConfig {
+    cdp_url: String,
+    websocket_url: String,
+    headers: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct CdpEvent {
     method: String,
@@ -3227,15 +3238,27 @@ struct CdpEvent {
 
 impl CdpConnection {
     pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Arc<Self>, BrowserError> {
-        let socket = connect_cdp_socket(&endpoint.websocket_url).await?;
+        Self::connect_with_headers(endpoint, None).await
+    }
+
+    async fn connect_with_headers(
+        endpoint: &DevToolsEndpoint,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<Arc<Self>, BrowserError> {
+        let headers = headers.cloned().unwrap_or_default();
+        let socket = connect_cdp_socket(&endpoint.websocket_url, &headers).await?;
         let (request_tx, request_rx) = mpsc::channel(64);
         let (event_tx, _) = broadcast::channel(256);
         let intentional_stop = Arc::new(AtomicBool::new(false));
         let connection_generation = Arc::new(AtomicU64::new(0));
         let session_generations = Arc::new(Mutex::new(HashMap::new()));
+        let socket_config = CdpSocketConfig {
+            cdp_url: endpoint.http_url.clone(),
+            websocket_url: endpoint.websocket_url.clone(),
+            headers,
+        };
         tokio::spawn(cdp_connection_actor(
-            endpoint.http_url.clone(),
-            endpoint.websocket_url.clone(),
+            socket_config,
             socket,
             request_rx,
             event_tx.clone(),
@@ -3336,10 +3359,14 @@ impl CdpConnection {
     }
 }
 
-async fn connect_cdp_socket(websocket_url: &str) -> Result<CdpSocket, BrowserError> {
+async fn connect_cdp_socket(
+    websocket_url: &str,
+    headers: &BTreeMap<String, String>,
+) -> Result<CdpSocket, BrowserError> {
+    let request = cdp_websocket_request(websocket_url, headers)?;
     let connect_result = tokio::time::timeout(
         Duration::from_millis(CDP_CONNECT_TIMEOUT_MS),
-        connect_async(websocket_url),
+        connect_async(request),
     )
     .await
     .map_err(|_| {
@@ -3352,9 +3379,31 @@ async fn connect_cdp_socket(websocket_url: &str) -> Result<CdpSocket, BrowserErr
         .map_err(|error| BrowserError::Transport(error.to_string()))
 }
 
+fn cdp_websocket_request(
+    websocket_url: &str,
+    headers: &BTreeMap<String, String>,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, BrowserError> {
+    let mut request = websocket_url
+        .into_client_request()
+        .map_err(|error| BrowserError::Transport(error.to_string()))?;
+    for (name, value) in headers {
+        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            BrowserError::Transport(format!(
+                "invalid CDP websocket header name {name:?}: {error}"
+            ))
+        })?;
+        let header_value = HeaderValue::from_str(value).map_err(|error| {
+            BrowserError::Transport(format!(
+                "invalid CDP websocket header value for {name:?}: {error}"
+            ))
+        })?;
+        request.headers_mut().insert(header_name, header_value);
+    }
+    Ok(request)
+}
+
 async fn cdp_connection_actor(
-    cdp_url: String,
-    websocket_url: String,
+    socket_config: CdpSocketConfig,
     mut socket: CdpSocket,
     mut request_rx: mpsc::Receiver<CdpRequest>,
     event_tx: broadcast::Sender<CdpEvent>,
@@ -3461,9 +3510,7 @@ async fn cdp_connection_actor(
             break;
         }
 
-        match reconnect_cdp_socket(&cdp_url, &websocket_url, &event_tx, &connection_generation)
-            .await
-        {
+        match reconnect_cdp_socket(&socket_config, &event_tx, &connection_generation).await {
             Some(reconnected_socket) => {
                 socket = reconnected_socket;
             }
@@ -3473,8 +3520,7 @@ async fn cdp_connection_actor(
 }
 
 async fn reconnect_cdp_socket(
-    cdp_url: &str,
-    websocket_url: &str,
+    socket_config: &CdpSocketConfig,
     event_tx: &broadcast::Sender<CdpEvent>,
     connection_generation: &AtomicU64,
 ) -> Option<CdpSocket> {
@@ -3483,16 +3529,16 @@ async fn reconnect_cdp_socket(
 
     for attempt in 1..=CDP_RECONNECT_MAX_ATTEMPTS {
         let _ = event_tx.send(cdp_websocket_reconnecting_event(
-            cdp_url,
+            &socket_config.cdp_url,
             attempt,
             CDP_RECONNECT_MAX_ATTEMPTS,
         ));
 
-        match connect_cdp_socket(websocket_url).await {
+        match connect_cdp_socket(&socket_config.websocket_url, &socket_config.headers).await {
             Ok(socket) => {
                 let generation = connection_generation.fetch_add(1, Ordering::Relaxed) + 1;
                 let _ = event_tx.send(cdp_websocket_reconnected_event(
-                    cdp_url,
+                    &socket_config.cdp_url,
                     attempt,
                     started_at.elapsed(),
                     generation,
@@ -3509,7 +3555,7 @@ async fn reconnect_cdp_socket(
     }
 
     let _ = event_tx.send(cdp_websocket_reconnect_failed_event(
-        cdp_url,
+        &socket_config.cdp_url,
         CDP_RECONNECT_MAX_ATTEMPTS,
         started_at.elapsed(),
         last_error,
@@ -4011,7 +4057,8 @@ impl CdpBrowserSession {
         endpoint: DevToolsEndpoint,
         profile: &BrowserProfile,
     ) -> Result<Self, BrowserError> {
-        let connection = CdpConnection::connect(&endpoint).await?;
+        let connection =
+            CdpConnection::connect_with_headers(&endpoint, profile.headers.as_ref()).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
         if let Some(downloads_path) = &profile.downloads_path {
@@ -4091,7 +4138,8 @@ impl CdpBrowserSession {
                 Some(browser)
             }
         });
-        let connection = CdpConnection::connect(&endpoint).await?;
+        let connection =
+            CdpConnection::connect_with_headers(&endpoint, profile.headers.as_ref()).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
         if let Some(downloads_path) = &profile.downloads_path {
@@ -9251,6 +9299,90 @@ mod tests {
         (endpoint, handle)
     }
 
+    #[allow(clippy::result_large_err)]
+    async fn cdp_command_header_test_server(
+        expected_requests: usize,
+    ) -> (
+        DevToolsEndpoint,
+        tokio::task::JoinHandle<(Vec<RecordedCdpCommand>, BTreeMap<String, String>)>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind cdp header test server");
+        let addr = listener.local_addr().expect("cdp header test server addr");
+        let endpoint = DevToolsEndpoint {
+            http_url: format!("http://{addr}"),
+            websocket_url: format!("ws://{addr}/devtools/browser/test"),
+        };
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("accept cdp header websocket");
+            let handshake_headers =
+                Arc::new(std::sync::Mutex::new(BTreeMap::<String, String>::new()));
+            let captured_headers = handshake_headers.clone();
+            let mut websocket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                      response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                    let mut headers = captured_headers
+                        .lock()
+                        .expect("capture websocket handshake headers");
+                    for (name, value) in request.headers() {
+                        if let Ok(value) = value.to_str() {
+                            headers.insert(name.as_str().to_ascii_lowercase(), value.to_owned());
+                        }
+                    }
+                    Ok(response)
+                },
+            )
+            .await
+            .expect("accept websocket handshake");
+            let mut commands = Vec::new();
+
+            for _ in 0..expected_requests {
+                let Some(message) = websocket.next().await else {
+                    break;
+                };
+                let message = message.expect("cdp websocket message");
+                let text = match message {
+                    Message::Text(text) => text.to_string(),
+                    Message::Binary(bytes) => String::from_utf8(bytes.to_vec()).expect("utf8 cdp"),
+                    _ => continue,
+                };
+                let payload: Value = serde_json::from_str(&text).expect("cdp request json");
+                let id = payload.get("id").and_then(Value::as_u64).expect("cdp id");
+                let method = payload
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .expect("cdp method");
+                let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
+                commands.push(RecordedCdpCommand {
+                    method: method.to_owned(),
+                    params,
+                    session_id: payload
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                });
+
+                let response = cdp_command_test_response(id, method, None);
+                websocket
+                    .send(Message::Text(response.to_string().into()))
+                    .await
+                    .expect("send cdp response");
+            }
+
+            let headers = handshake_headers
+                .lock()
+                .expect("read websocket handshake headers")
+                .clone();
+            (commands, headers)
+        });
+        (endpoint, handle)
+    }
+
     fn cdp_command_test_response(
         id: u64,
         method: &str,
@@ -9493,6 +9625,58 @@ mod tests {
     }
 
     #[test]
+    fn browser_profile_headers_default_omitted_and_round_trip() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.headers, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("headers").is_none());
+
+        let configured: BrowserProfile = serde_json::from_value(json!({
+            "headers": {
+                "Authorization": "Bearer test-token",
+                "X-Browser-Use-Test": "yes"
+            }
+        }))
+        .expect("headers profile");
+        assert_eq!(
+            configured.headers,
+            Some(BTreeMap::from([
+                ("Authorization".to_owned(), "Bearer test-token".to_owned()),
+                ("X-Browser-Use-Test".to_owned(), "yes".to_owned()),
+            ]))
+        );
+        assert_eq!(
+            serde_json::to_value(configured).expect("headers profile json")["headers"],
+            json!({
+                "Authorization": "Bearer test-token",
+                "X-Browser-Use-Test": "yes"
+            })
+        );
+    }
+
+    #[test]
+    fn cdp_websocket_request_rejects_invalid_profile_headers() {
+        let invalid_name = BTreeMap::from([("Bad Header".to_owned(), "value".to_owned())]);
+        let error = cdp_websocket_request("ws://127.0.0.1/devtools/browser/test", &invalid_name)
+            .expect_err("invalid header name");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid CDP websocket header name")
+        );
+
+        let invalid_value = BTreeMap::from([("X-Test".to_owned(), "bad\nvalue".to_owned())]);
+        let error = cdp_websocket_request("ws://127.0.0.1/devtools/browser/test", &invalid_value)
+            .expect_err("invalid header value");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid CDP websocket header value")
+        );
+    }
+
+    #[test]
     fn browser_permission_grant_params_skip_empty_lists() {
         assert_eq!(browser_permission_grant_params(&[]), None);
 
@@ -9639,6 +9823,45 @@ mod tests {
             commands
                 .iter()
                 .any(|command| command.method == "Network.enable")
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_sends_profile_headers_in_websocket_handshake() {
+        let (endpoint, command_log) = cdp_command_header_test_server(5).await;
+        let profile = BrowserProfile {
+            headers: Some(BTreeMap::from([
+                ("Authorization".to_owned(), "Bearer cdp-token".to_owned()),
+                ("X-Browser-Use-Test".to_owned(), "handshake".to_owned()),
+            ])),
+            permissions: Vec::new(),
+            ..BrowserProfile::default()
+        };
+        let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect with profile headers");
+
+        let (commands, headers) = command_log.await.expect("cdp command log");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer cdp-token")
+        );
+        assert_eq!(
+            headers.get("x-browser-use-test").map(String::as_str),
+            Some("handshake")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command.method.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Target.getTargets",
+                "Target.attachToTarget",
+                "Page.enable",
+                "Network.enable",
+                "Emulation.setDeviceMetricsOverride",
+            ]
         );
     }
 

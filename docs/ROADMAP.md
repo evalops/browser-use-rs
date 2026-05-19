@@ -5,10 +5,12 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #122 lands and CI is green.
+- Next upstream parity slice after #124 lands and CI is green.
 
 ## Completed Tracks
 
+- [#124 Add BrowserProfile CDP connection headers parity](https://github.com/evalops/browser-use-rs/issues/124)
+- [#123 Detect PDF viewer state in CDP browser summaries](https://github.com/evalops/browser-use-rs/issues/123)
 - [#122 Add BrowserProfile auto_download_pdfs parity](https://github.com/evalops/browser-use-rs/issues/122)
 - [#121 Align BrowserProfile default window_position parity](https://github.com/evalops/browser-use-rs/issues/121)
 - [#119 Add BrowserProfile page-load wait timing parity](https://github.com/evalops/browser-use-rs/issues/119)
@@ -176,7 +178,9 @@ Implemented:
   ownership. `minimum_wait_page_load_time` and
   `wait_for_network_idle_page_load_time` preserve upstream settle delays before
   state capture and after successful navigation, with zero values disabling the
-  corresponding waits.
+  corresponding waits. `BrowserProfile.headers` are preserved on the wire and
+  sent on CDP websocket connection/reconnect handshakes for authenticated
+  remote browser endpoints.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

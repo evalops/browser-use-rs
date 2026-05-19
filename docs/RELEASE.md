@@ -53,7 +53,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `clipboardReadWrite` and `notifications` permissions, sends root CDP
   `Browser.grantPermissions` before target attach/create for launched and
   directly connected sessions, skips empty lists, and records non-fatal
-  lifecycle diagnostics when Chrome rejects the grant.
+  lifecycle diagnostics when Chrome rejects the grant. `BrowserProfile.headers`
+  round-trip through serde and are sent on CDP websocket handshakes, including
+  reconnect attempts, for remote browser/proxy endpoints that require
+  connection-level authentication.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged
