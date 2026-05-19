@@ -99,9 +99,10 @@ includes:
   hierarchy metadata, static history-matching attributes, plus a tree-shaped
   eval/judge DOM representation with upstream-style backend-node markers,
   hidden-element and `data-browser-use-exclude` subtree filtering, non-content
-  `head`/`script`/`style` tag pruning, occluded-element filtering, hidden
-  file-input upload targets, plain scroll-container indexing, and scrollable
-  element metadata with prompt-visible pages-above/below context,
+  `head`/`script`/`style` tag pruning, upstream-default
+  `paint_order_filtering=true` occluded-element filtering with an explicit
+  opt-out, hidden file-input upload targets, plain scroll-container indexing,
+  and scrollable element metadata with prompt-visible pages-above/below context,
   plus href-less anchor tags, common ARIA widget roles, search affordance
   signals, tabindex-backed controls including `tabindex="-1"`, ARIA
   required/autocomplete/keyshortcut interactivity signals with prompt-visible

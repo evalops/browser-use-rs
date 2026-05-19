@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #125 release verification.
+- Next upstream parity slice after #126 lands and CI is green.
 
 ## Completed Tracks
 
+- [#126 Add BrowserProfile paint_order_filtering DOM parity](https://github.com/evalops/browser-use-rs/issues/126)
 - [#125 Add BrowserProfile browser channel launch parity](https://github.com/evalops/browser-use-rs/issues/125)
 - [#124 Add BrowserProfile CDP connection headers parity](https://github.com/evalops/browser-use-rs/issues/124)
 - [#123 Detect PDF viewer state in CDP browser summaries](https://github.com/evalops/browser-use-rs/issues/123)
@@ -363,7 +364,8 @@ Implemented:
   containers, detects pagination affordances, carries page-shape stats for
   agent prompts, supports caller-selected prompt attributes, renders the
   upstream empty-DOM load hint, filters occluded elements with a topmost-center
-  check, keeps hidden file-input upload targets, indexes plain scroll containers
+  check gated by `BrowserProfile.paint_order_filtering`, keeps hidden
+  file-input upload targets, indexes plain scroll containers
   without interactive descendants, renders pages-above/below scroll context for
   indexed scroll containers, indexes href-less anchor tags and tabindex-backed
   controls including `tabindex="-1"`, renders human-readable value text, prunes

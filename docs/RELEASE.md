@@ -127,7 +127,9 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   role/name/description/state/value enrichment with compact
   `ax_name`/`ax_description` metadata and backend/frontend node ids,
   AX hidden/disabled suppression, hidden-element and
-  `data-browser-use-exclude` subtree filtering, topmost/occlusion filtering,
+  `data-browser-use-exclude` subtree filtering, upstream-default
+  `BrowserProfile.paint_order_filtering=true` topmost/occlusion filtering with
+  an explicit false opt-out,
   hidden file-input upload targets, plain scroll-container indexing,
   non-content tag pruning, prompt-visible pages-above/below context for indexed
   scroll containers, href-less anchor tags, accessible names from labels, ARIA

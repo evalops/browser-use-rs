@@ -61,6 +61,12 @@ is preserved in selector-map attributes and can be rendered through
 `include_attributes`, but is not emitted by default. Password fields continue
 to suppress `value` and `valuetext`.
 
+`BrowserProfile.paint_order_filtering` defaults to upstream's `true` and gates
+the DOM snapshot topmost-center `elementFromPoint` occlusion veto. Disabling it
+keeps normal hidden, disabled, layout-size, and CSS visibility checks while
+allowing visually covered elements to remain in the selector map for debugging
+or conformance captures.
+
 This boundary is deliberately narrower than a full browser-use AX object graph.
 The port does not currently serialize AX child-id relationships, ignored
 reasons, related-node source chains, or raw AX snapshots into normal prompts.

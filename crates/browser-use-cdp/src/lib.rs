@@ -46,6 +46,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
   const axRefAttribute = 'data-browser-use-rs-ax-ref';
   const maxIframeDepth = 5;
   const maxIframeDocuments = 100;
+  const paintOrderFiltering = true;
   const selector = [
     'a',
     'button',
@@ -220,7 +221,7 @@ const INTERACTIVE_ELEMENTS_JS: &str = r#"
     if (isFileInput(el)) return true;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
-    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && isTopmostAtCenter(el);
+    return !isDisabledOrHidden(el) && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && (!paintOrderFiltering || isTopmostAtCenter(el));
   };
   const isInteractive = (el) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -633,7 +634,7 @@ JSON.stringify((() => {
 })())
 "#;
 
-fn interactive_elements_js(config: IframeTraversalConfig) -> String {
+fn interactive_elements_js(config: IframeTraversalConfig, paint_order_filtering: bool) -> String {
     INTERACTIVE_ELEMENTS_JS
         .replace(
             "const maxIframeDepth = 5;",
@@ -645,6 +646,10 @@ fn interactive_elements_js(config: IframeTraversalConfig) -> String {
         .replace(
             "const maxIframeDocuments = 100;",
             &format!("const maxIframeDocuments = {};", config.max_iframes),
+        )
+        .replace(
+            "const paintOrderFiltering = true;",
+            &format!("const paintOrderFiltering = {paint_order_filtering};"),
         )
 }
 
@@ -1781,6 +1786,8 @@ pub struct BrowserProfile {
     pub max_iframes: usize,
     #[serde(default = "default_max_iframe_depth")]
     pub max_iframe_depth: usize,
+    #[serde(default = "default_paint_order_filtering")]
+    pub paint_order_filtering: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<BrowserViewport>,
     #[serde(default)]
@@ -1854,6 +1861,7 @@ impl Default for BrowserProfile {
             cross_origin_iframes: default_cross_origin_iframes(),
             max_iframes: default_max_iframes(),
             max_iframe_depth: default_max_iframe_depth(),
+            paint_order_filtering: default_paint_order_filtering(),
             screen: None,
             viewport: BrowserViewport::default(),
             no_viewport: false,
@@ -1914,6 +1922,10 @@ fn default_max_iframes() -> usize {
 
 fn default_max_iframe_depth() -> usize {
     5
+}
+
+fn default_paint_order_filtering() -> bool {
+    true
 }
 
 fn default_ignore_default_args() -> Vec<String> {
@@ -4229,6 +4241,7 @@ pub struct CdpBrowserSession {
     lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
     url_policy: UrlAccessPolicy,
     iframe_traversal: IframeTraversalConfig,
+    paint_order_filtering: bool,
     viewport_emulation: ViewportEmulationConfig,
     page_load_wait: PageLoadWaitConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
@@ -4302,6 +4315,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx,
             url_policy: UrlAccessPolicy::from_profile(profile),
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
+            paint_order_filtering: profile.paint_order_filtering,
             viewport_emulation,
             page_load_wait,
             network_activity,
@@ -4412,6 +4426,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx,
             url_policy,
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
+            paint_order_filtering: profile.paint_order_filtering,
             viewport_emulation,
             page_load_wait: PageLoadWaitConfig::from_profile(profile),
             network_activity,
@@ -4873,7 +4888,8 @@ impl CdpBrowserSession {
 
     async fn dom_state(&self) -> Result<SerializedDomState, BrowserError> {
         let page = self.current_page().await;
-        let root_interactive_js = interactive_elements_js(self.iframe_traversal);
+        let root_interactive_js =
+            interactive_elements_js(self.iframe_traversal, self.paint_order_filtering);
         let value = self
             .evaluate_json_for_page(&page, &root_interactive_js, true)
             .await?;
@@ -4893,12 +4909,15 @@ impl CdpBrowserSession {
         let mut child_states = Vec::new();
 
         for child_page in child_pages {
-            let child_interactive_js = interactive_elements_js(IframeTraversalConfig {
-                max_iframe_depth: self
-                    .iframe_traversal
-                    .remaining_same_origin_depth(child_page.depth),
-                ..self.iframe_traversal
-            });
+            let child_interactive_js = interactive_elements_js(
+                IframeTraversalConfig {
+                    max_iframe_depth: self
+                        .iframe_traversal
+                        .remaining_same_origin_depth(child_page.depth),
+                    ..self.iframe_traversal
+                },
+                self.paint_order_filtering,
+            );
             let Ok(value) = self
                 .evaluate_json_for_page(&child_page.page, &child_interactive_js, true)
                 .await
@@ -9375,6 +9394,7 @@ mod tests {
             lifecycle_event_tx,
             url_policy: UrlAccessPolicy::from_profile(&BrowserProfile::default()),
             iframe_traversal: IframeTraversalConfig::from_profile(&BrowserProfile::default()),
+            paint_order_filtering: default_paint_order_filtering(),
             viewport_emulation: ViewportEmulationConfig::from_profile(&BrowserProfile::default()),
             page_load_wait: PageLoadWaitConfig::from_profile(&BrowserProfile::default()),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
@@ -9745,6 +9765,25 @@ mod tests {
         assert!(!configured.cross_origin_iframes);
         assert_eq!(configured.max_iframes, 2);
         assert_eq!(configured.max_iframe_depth, 0);
+    }
+
+    #[test]
+    fn browser_profile_paint_order_filtering_defaults_true_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(decoded.paint_order_filtering);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["paint_order_filtering"], json!(true));
+
+        let disabled: BrowserProfile = serde_json::from_value(json!({
+            "paint_order_filtering": false
+        }))
+        .expect("disabled paint-order filtering profile");
+        assert!(!disabled.paint_order_filtering);
+        assert_eq!(
+            serde_json::to_value(disabled).expect("disabled profile json")["paint_order_filtering"],
+            json!(false)
+        );
     }
 
     #[test]
@@ -11624,11 +11663,14 @@ mod tests {
 
     #[test]
     fn interactive_snapshot_script_carries_iframe_traversal_limits() {
-        let script = interactive_elements_js(IframeTraversalConfig {
-            cross_origin_iframes: true,
-            max_iframes: 7,
-            max_iframe_depth: 2,
-        });
+        let script = interactive_elements_js(
+            IframeTraversalConfig {
+                cross_origin_iframes: true,
+                max_iframes: 7,
+                max_iframe_depth: 2,
+            },
+            true,
+        );
 
         assert!(script.contains("const maxIframeDepth = 2;"));
         assert!(script.contains("const maxIframeDocuments = 7;"));
@@ -14166,10 +14208,26 @@ mod tests {
         assert!(INTERACTIVE_ELEMENTS_JS.contains("isTopmostAtCenter"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("elementFromPoint"));
         assert!(INTERACTIVE_ELEMENTS_JS.contains("root.host"));
+        assert!(INTERACTIVE_ELEMENTS_JS.contains("const paintOrderFiltering = true;"));
+        assert!(
+            INTERACTIVE_ELEMENTS_JS.contains("(!paintOrderFiltering || isTopmostAtCenter(el))")
+        );
 
         let action_script = click_element_js(1);
         assert!(action_script.contains("isTopmostAtCenter"));
         assert!(action_script.contains("elementFromPoint"));
+    }
+
+    #[test]
+    fn interactive_snapshot_script_carries_paint_order_filtering_control() {
+        let config = IframeTraversalConfig::from_profile(&BrowserProfile::default());
+        let enabled = interactive_elements_js(config, true);
+        assert!(enabled.contains("const paintOrderFiltering = true;"));
+        assert!(enabled.contains("(!paintOrderFiltering || isTopmostAtCenter(el))"));
+
+        let disabled = interactive_elements_js(config, false);
+        assert!(disabled.contains("const paintOrderFiltering = false;"));
+        assert!(disabled.contains("(!paintOrderFiltering || isTopmostAtCenter(el))"));
     }
 
     #[test]
