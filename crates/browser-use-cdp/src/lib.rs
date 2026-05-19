@@ -1247,6 +1247,20 @@ where
     }
 }
 
+fn deserialize_non_negative_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "page-load wait seconds must be a finite non-negative number; got {value}"
+        )))
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserCreateRequest {
     #[serde(
@@ -1741,6 +1755,16 @@ pub struct BrowserProfile {
         deserialize_with = "deserialize_non_negative_f64_option"
     )]
     pub device_scale_factor: Option<f64>,
+    #[serde(
+        default = "default_minimum_wait_page_load_time",
+        deserialize_with = "deserialize_non_negative_f64"
+    )]
+    pub minimum_wait_page_load_time: f64,
+    #[serde(
+        default = "default_wait_for_network_idle_page_load_time",
+        deserialize_with = "deserialize_non_negative_f64"
+    )]
+    pub wait_for_network_idle_page_load_time: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<BrowserViewport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1790,6 +1814,8 @@ impl Default for BrowserProfile {
             viewport: BrowserViewport::default(),
             no_viewport: false,
             device_scale_factor: None,
+            minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
+            wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             window_size: None,
             window_position: None,
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
@@ -1852,6 +1878,14 @@ fn default_navigation_timeout_ms() -> u64 {
 
 fn default_network_request_timeout_ms() -> u64 {
     10_000
+}
+
+fn default_minimum_wait_page_load_time() -> f64 {
+    0.25
+}
+
+fn default_wait_for_network_idle_page_load_time() -> f64 {
+    0.5
 }
 
 fn profile_keeps_launched_browser_alive(profile: &BrowserProfile) -> bool {
@@ -3557,6 +3591,64 @@ impl ViewportEmulationConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PageLoadWaitConfig {
+    minimum_wait: Duration,
+    network_idle_wait: Duration,
+}
+
+impl PageLoadWaitConfig {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        Self {
+            minimum_wait: Duration::from_secs_f64(profile.minimum_wait_page_load_time),
+            network_idle_wait: Duration::from_secs_f64(
+                profile.wait_for_network_idle_page_load_time,
+            ),
+        }
+    }
+
+    fn is_disabled(self) -> bool {
+        self.minimum_wait.is_zero() && self.network_idle_wait.is_zero()
+    }
+}
+
+#[derive(Debug)]
+struct NetworkActivityState {
+    active_request_ids: BTreeSet<String>,
+    last_activity_at: Instant,
+}
+
+impl NetworkActivityState {
+    fn new(now: Instant) -> Self {
+        Self {
+            active_request_ids: BTreeSet::new(),
+            last_activity_at: now,
+        }
+    }
+
+    fn observe_request_started(&mut self, request_id: &str, now: Instant) {
+        self.active_request_ids.insert(request_id.to_owned());
+        self.last_activity_at = now;
+    }
+
+    fn observe_request_finished(&mut self, request_id: &str, now: Instant) {
+        self.active_request_ids.remove(request_id);
+        self.last_activity_at = now;
+    }
+
+    fn idle_remaining(&self, now: Instant, idle_for: Duration) -> Option<Duration> {
+        if !self.active_request_ids.is_empty() {
+            return Some(idle_for);
+        }
+        let elapsed = now.saturating_duration_since(self.last_activity_at);
+        if elapsed >= idle_for {
+            None
+        } else {
+            Some(idle_for - elapsed)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FrameOffset {
     x: i32,
@@ -3832,6 +3924,8 @@ pub struct CdpBrowserSession {
     url_policy: UrlAccessPolicy,
     iframe_traversal: IframeTraversalConfig,
     viewport_emulation: ViewportEmulationConfig,
+    page_load_wait: PageLoadWaitConfig,
+    network_activity: Arc<Mutex<NetworkActivityState>>,
     storage_state_path: Option<PathBuf>,
     navigation_timeout_ms: u64,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
@@ -3859,6 +3953,7 @@ impl CdpBrowserSession {
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -3876,7 +3971,9 @@ impl CdpBrowserSession {
             lifecycle_events.clone(),
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
+            network_activity.clone(),
         );
+        let page_load_wait = PageLoadWaitConfig::from_profile(profile);
 
         Ok(Self {
             connection,
@@ -3889,6 +3986,8 @@ impl CdpBrowserSession {
             url_policy: UrlAccessPolicy::from_profile(profile),
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
             viewport_emulation,
+            page_load_wait,
+            network_activity,
             storage_state_path: None,
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -3941,6 +4040,7 @@ impl CdpBrowserSession {
         let pending_url_policy_error = Arc::new(Mutex::new(None));
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
+        let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -3961,6 +4061,7 @@ impl CdpBrowserSession {
             lifecycle_events.clone(),
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
+            network_activity.clone(),
         );
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
@@ -3987,6 +4088,8 @@ impl CdpBrowserSession {
             url_policy,
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
             viewport_emulation,
+            page_load_wait: PageLoadWaitConfig::from_profile(profile),
+            network_activity,
             storage_state_path: profile.storage_state_path.clone(),
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -4057,6 +4160,44 @@ impl CdpBrowserSession {
 
     async fn apply_viewport_emulation(&self, page: &AttachedPage) -> Result<(), BrowserError> {
         apply_viewport_emulation_for_page(&self.connection, page, self.viewport_emulation).await
+    }
+
+    async fn wait_for_page_load_settle(&self) {
+        if self.page_load_wait.is_disabled() {
+            return;
+        }
+        if !self.page_load_wait.minimum_wait.is_zero() {
+            sleep(self.page_load_wait.minimum_wait).await;
+        }
+        if !self.page_load_wait.network_idle_wait.is_zero() {
+            self.wait_for_network_idle(self.page_load_wait.network_idle_wait)
+                .await;
+        }
+    }
+
+    async fn wait_for_network_idle(&self, idle_for: Duration) {
+        let deadline = Instant::now() + idle_for;
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return;
+            }
+            let remaining = {
+                self.network_activity
+                    .lock()
+                    .await
+                    .idle_remaining(now, idle_for)
+            };
+            let Some(remaining) = remaining else {
+                return;
+            };
+            let until_deadline = deadline.saturating_duration_since(now);
+            let sleep_for = remaining.min(until_deadline).min(Duration::from_millis(50));
+            if sleep_for.is_zero() {
+                return;
+            }
+            sleep(sleep_for).await;
+        }
     }
 
     async fn reattach_current_page(
@@ -4679,6 +4820,7 @@ impl BrowserLifecycleWatchdog {
         lifecycle_events: Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
         lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
         network_request_timeout_ms: u64,
+        network_activity: Arc<Mutex<NetworkActivityState>>,
     ) -> Self {
         let mut events = connection.subscribe_events();
         let handle = tokio::spawn(async move {
@@ -4697,6 +4839,7 @@ impl BrowserLifecycleWatchdog {
                                     &lifecycle_events,
                                     &lifecycle_event_tx,
                                     &mut active_network_requests,
+                                    &network_activity,
                                     event,
                                 )
                                 .await;
@@ -4742,14 +4885,17 @@ async fn handle_lifecycle_cdp_event(
     lifecycle_events: &Arc<Mutex<VecDeque<BrowserLifecycleEvent>>>,
     lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
+    network_activity: &Arc<Mutex<NetworkActivityState>>,
     event: CdpEvent,
 ) {
     match event.method.as_str() {
         "Network.requestWillBeSent" => {
             track_network_request(active_network_requests, &event);
+            track_network_activity_started(network_activity, &event).await;
         }
         "Network.loadingFinished" | "Network.loadingFailed" => {
             forget_network_request(active_network_requests, &event);
+            track_network_activity_finished(network_activity, &event).await;
         }
         "browser-use-rs.websocket-closed" => {
             record_lifecycle_event_in_buffer(
@@ -4844,6 +4990,19 @@ fn track_network_request(
     );
 }
 
+async fn track_network_activity_started(
+    network_activity: &Arc<Mutex<NetworkActivityState>>,
+    event: &CdpEvent,
+) {
+    let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {
+        return;
+    };
+    network_activity
+        .lock()
+        .await
+        .observe_request_started(request_id, Instant::now());
+}
+
 fn forget_network_request(
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     event: &CdpEvent,
@@ -4851,6 +5010,19 @@ fn forget_network_request(
     if let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) {
         active_network_requests.remove(request_id);
     }
+}
+
+async fn track_network_activity_finished(
+    network_activity: &Arc<Mutex<NetworkActivityState>>,
+    event: &CdpEvent,
+) {
+    let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {
+        return;
+    };
+    network_activity
+        .lock()
+        .await
+        .observe_request_finished(request_id, Instant::now());
 }
 
 fn lifecycle_events_for_timed_out_network_requests(
@@ -7385,6 +7557,7 @@ impl BrowserSession for CdpBrowserSession {
 
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
         self.enforce_open_tab_url_policy().await?;
+        self.wait_for_page_load_settle().await;
         let (url, title) = self.page_location().await?;
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
@@ -7463,6 +7636,9 @@ impl BrowserSession for CdpBrowserSession {
                 .await;
             self.clear_cached_dom_state().await;
             let result = self.enforce_url_policy_after_settle().await;
+            if result.is_ok() {
+                self.wait_for_page_load_settle().await;
+            }
             match &result {
                 Ok(()) => {
                     self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
@@ -7530,6 +7706,9 @@ impl BrowserSession for CdpBrowserSession {
         }
         self.clear_cached_dom_state().await;
         let result = self.enforce_url_policy_after_settle().await;
+        if result.is_ok() {
+            self.wait_for_page_load_settle().await;
+        }
         match &result {
             Ok(()) => {
                 self.record_lifecycle_event(BrowserLifecycleEvent::navigation_completed(
@@ -9082,6 +9261,64 @@ mod tests {
         .expect("null keep alive profile");
         assert_eq!(null_keep_alive.keep_alive, None);
         assert!(!profile_keeps_launched_browser_alive(&null_keep_alive));
+    }
+
+    #[test]
+    fn browser_profile_page_load_wait_defaults_and_validation() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.minimum_wait_page_load_time, 0.25);
+        assert_eq!(decoded.wait_for_network_idle_page_load_time, 0.5);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["minimum_wait_page_load_time"], json!(0.25));
+        assert_eq!(encoded["wait_for_network_idle_page_load_time"], json!(0.5));
+
+        let zero_waits: BrowserProfile = serde_json::from_value(json!({
+            "minimum_wait_page_load_time": 0.0,
+            "wait_for_network_idle_page_load_time": 0.0
+        }))
+        .expect("zero wait profile");
+        assert_eq!(zero_waits.minimum_wait_page_load_time, 0.0);
+        assert_eq!(zero_waits.wait_for_network_idle_page_load_time, 0.0);
+        assert!(PageLoadWaitConfig::from_profile(&zero_waits).is_disabled());
+
+        let negative = serde_json::from_value::<BrowserProfile>(json!({
+            "minimum_wait_page_load_time": -0.1
+        }))
+        .expect_err("negative page-load wait should be rejected");
+        assert!(negative.to_string().contains("page-load wait"));
+    }
+
+    #[test]
+    fn network_activity_state_reports_idle_remaining_from_requests_and_finish_events() {
+        let start = Instant::now();
+        let mut state = NetworkActivityState::new(start);
+        let idle_for = Duration::from_millis(500);
+
+        assert_eq!(
+            state.idle_remaining(start + Duration::from_millis(200), idle_for),
+            Some(Duration::from_millis(300))
+        );
+        assert_eq!(
+            state.idle_remaining(start + Duration::from_millis(500), idle_for),
+            None
+        );
+
+        state.observe_request_started("request-1", start + Duration::from_millis(600));
+        assert_eq!(
+            state.idle_remaining(start + Duration::from_millis(900), idle_for),
+            Some(idle_for)
+        );
+
+        state.observe_request_finished("request-1", start + Duration::from_millis(1_000));
+        assert_eq!(
+            state.idle_remaining(start + Duration::from_millis(1_250), idle_for),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(
+            state.idle_remaining(start + Duration::from_millis(1_500), idle_for),
+            None
+        );
     }
 
     #[test]
