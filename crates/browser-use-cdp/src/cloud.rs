@@ -1,13 +1,16 @@
 use crate::{
-    BrowserError, CLOUD_HTTP_TIMEOUT, CloudProxyCountryCode, DevToolsEndpoint,
-    deserialize_cloud_proxy_country_code, is_false, serialize_cloud_proxy_country_code,
+    BrowserError, CloudProxyCountryCode, DevToolsEndpoint, deserialize_cloud_proxy_country_code,
+    is_false, serialize_cloud_proxy_country_code,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
+
+const CLOUD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserCreateRequest {
