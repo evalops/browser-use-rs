@@ -2088,6 +2088,8 @@ pub struct BrowserProfile {
     pub record_video_size: Option<BrowserViewport>,
     #[serde(default = "default_record_video_framerate")]
     pub record_video_framerate: u32,
+    #[serde(default, skip_serializing_if = "is_default_video_recording_format")]
+    pub record_video_format: VideoRecordingFormat,
     #[serde(default, alias = "trace_path", skip_serializing_if = "Option::is_none")]
     pub traces_dir: Option<PathBuf>,
     #[serde(
@@ -2173,6 +2175,7 @@ impl Default for BrowserProfile {
             record_video_dir: None,
             record_video_size: None,
             record_video_framerate: default_record_video_framerate(),
+            record_video_format: VideoRecordingFormat::default(),
             traces_dir: None,
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
@@ -2205,6 +2208,63 @@ fn default_chromium_sandbox() -> bool {
 
 fn default_record_video_framerate() -> u32 {
     30
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+pub enum VideoRecordingFormat {
+    #[default]
+    Mp4,
+    Webm,
+    Gif,
+}
+
+impl VideoRecordingFormat {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value
+            .trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "mp4" => Ok(Self::Mp4),
+            "webm" => Ok(Self::Webm),
+            "gif" => Ok(Self::Gif),
+            other => Err(format!(
+                "record_video_format must be mp4, webm, or gif; got {other:?}"
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Webm => "webm",
+            Self::Gif => "gif",
+        }
+    }
+}
+
+impl Serialize for VideoRecordingFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for VideoRecordingFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn is_default_video_recording_format(value: &VideoRecordingFormat) -> bool {
+    *value == VideoRecordingFormat::default()
 }
 
 fn default_profile_directory() -> String {
@@ -5310,6 +5370,8 @@ struct CdpVideoRecorder {
     dir: PathBuf,
     size: BrowserViewport,
     framerate: u32,
+    format: VideoRecordingFormat,
+    ffmpeg_path: PathBuf,
     state: Mutex<CdpVideoState>,
 }
 
@@ -5320,6 +5382,10 @@ impl CdpVideoRecorder {
             dir,
             size: profile.record_video_size.unwrap_or(profile.viewport),
             framerate: profile.record_video_framerate.max(1),
+            format: profile.record_video_format,
+            ffmpeg_path: std::env::var_os("BROWSER_USE_RS_FFMPEG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("ffmpeg")),
             state: Mutex::new(CdpVideoState::default()),
         }))
     }
@@ -5395,7 +5461,7 @@ impl CdpVideoRecorder {
     async fn stop_and_write(
         &self,
         connection: &CdpConnection,
-    ) -> Result<Option<PathBuf>, BrowserError> {
+    ) -> Result<(Option<PathBuf>, Option<BrowserError>), BrowserError> {
         let (active_session_id, frames) = {
             let mut state = self.state.lock().await;
             (
@@ -5404,43 +5470,78 @@ impl CdpVideoRecorder {
             )
         };
         let Some(active_session_id) = active_session_id else {
-            return Ok(None);
+            return Ok((None, None));
         };
 
         let stop_result = connection
             .command("Page.stopScreencast", json!({}), Some(&active_session_id))
             .await
             .map(|_| ());
-        let path = self.unique_artifact_path(trace_epoch_millis()).await?;
-        self.write_gif(&path, &frames)?;
+        let (path, encoder_error) = self
+            .write_recording_artifact(trace_epoch_millis(), &frames)
+            .await?;
         stop_result?;
-        Ok(Some(path))
+        Ok((Some(path), encoder_error))
     }
 
-    async fn unique_artifact_path(&self, epoch_millis: u128) -> Result<PathBuf, BrowserError> {
+    async fn write_recording_artifact(
+        &self,
+        epoch_millis: u128,
+        frames: &[String],
+    ) -> Result<(PathBuf, Option<BrowserError>), BrowserError> {
+        let path = self.unique_artifact_path(epoch_millis, self.format).await?;
+        if self.format == VideoRecordingFormat::Gif {
+            self.write_gif(&path, frames)?;
+            return Ok((path, None));
+        }
+
+        match self.write_ffmpeg_video(&path, frames, self.format) {
+            Ok(()) => Ok((path, None)),
+            Err(error) => {
+                let _ = std::fs::remove_file(&path);
+                let fallback_path = self
+                    .unique_artifact_path(epoch_millis, VideoRecordingFormat::Gif)
+                    .await?;
+                self.write_gif(&fallback_path, frames)?;
+                Ok((fallback_path, Some(error)))
+            }
+        }
+    }
+
+    async fn unique_artifact_path(
+        &self,
+        epoch_millis: u128,
+        format: VideoRecordingFormat,
+    ) -> Result<PathBuf, BrowserError> {
         tokio::fs::create_dir_all(&self.dir)
             .await
             .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
         for attempt in 0..1_000 {
-            let path = self.artifact_path(epoch_millis, attempt);
+            let path = self.artifact_path(epoch_millis, attempt, format);
             match tokio::fs::metadata(&path).await {
                 Ok(_) => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
                 Err(error) => return Err(BrowserError::StateUnavailable(error.to_string())),
             }
         }
-        Ok(self.artifact_path(epoch_millis, 1_000))
+        Ok(self.artifact_path(epoch_millis, 1_000, format))
     }
 
-    fn artifact_path(&self, epoch_millis: u128, attempt: usize) -> PathBuf {
+    fn artifact_path(
+        &self,
+        epoch_millis: u128,
+        attempt: usize,
+        format: VideoRecordingFormat,
+    ) -> PathBuf {
         let suffix = if attempt == 0 {
             String::new()
         } else {
             format!("-{attempt}")
         };
         self.dir.join(format!(
-            "browser-use-rs-video-{epoch_millis}-{}{suffix}.gif",
-            std::process::id()
+            "browser-use-rs-video-{epoch_millis}-{}{suffix}.{}",
+            std::process::id(),
+            format.as_str()
         ))
     }
 
@@ -5498,10 +5599,169 @@ impl CdpVideoRecorder {
 
         Ok(())
     }
+
+    fn write_ffmpeg_video(
+        &self,
+        path: &Path,
+        frames: &[String],
+        format: VideoRecordingFormat,
+    ) -> Result<(), BrowserError> {
+        let frame_dir = tempfile::Builder::new()
+            .prefix("browser-use-rs-video-frames-")
+            .tempdir_in(&self.dir)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        self.write_frame_png_sequence(frame_dir.path(), frames)?;
+
+        let input_pattern = frame_dir.path().join("frame-%06d.png");
+        let mut command = std::process::Command::new(&self.ffmpeg_path);
+        command
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-y")
+            .arg("-framerate")
+            .arg(self.framerate.to_string())
+            .arg("-i")
+            .arg(&input_pattern)
+            .arg("-an")
+            .arg("-pix_fmt")
+            .arg("yuv420p");
+
+        match format {
+            VideoRecordingFormat::Mp4 => {
+                command
+                    .arg("-c:v")
+                    .arg("libx264")
+                    .arg("-preset")
+                    .arg("veryfast")
+                    .arg("-crf")
+                    .arg("23")
+                    .arg("-movflags")
+                    .arg("+faststart");
+            }
+            VideoRecordingFormat::Webm => {
+                command
+                    .arg("-c:v")
+                    .arg("libvpx-vp9")
+                    .arg("-b:v")
+                    .arg("0")
+                    .arg("-crf")
+                    .arg("35");
+            }
+            VideoRecordingFormat::Gif => {
+                return Err(BrowserError::StateUnavailable(
+                    "GIF recording does not use ffmpeg video encoding".to_owned(),
+                ));
+            }
+        }
+
+        let output = command
+            .arg(path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| {
+                BrowserError::StateUnavailable(format!(
+                    "ffmpeg video encoder unavailable at {}: {error}",
+                    self.ffmpeg_path.display()
+                ))
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        let detail = if stderr.is_empty() {
+            format!("ffmpeg exited with status {}", output.status)
+        } else {
+            format!("ffmpeg exited with status {}: {stderr}", output.status)
+        };
+        Err(BrowserError::StateUnavailable(detail))
+    }
+
+    fn write_frame_png_sequence(
+        &self,
+        frame_dir: &Path,
+        frames: &[String],
+    ) -> Result<(), BrowserError> {
+        if frames.is_empty() {
+            self.write_frame_png(frame_dir, 0, self.blank_video_frame())?;
+            return Ok(());
+        }
+
+        for (index, frame) in frames.iter().enumerate() {
+            let frame = self.normalized_video_frame(frame)?;
+            self.write_frame_png(frame_dir, index, frame)?;
+        }
+        Ok(())
+    }
+
+    fn write_frame_png(
+        &self,
+        frame_dir: &Path,
+        index: usize,
+        frame: image::RgbaImage,
+    ) -> Result<(), BrowserError> {
+        let path = frame_dir.join(format!("frame-{index:06}.png"));
+        image::DynamicImage::ImageRgba8(self.pad_video_frame(frame))
+            .save_with_format(path, image::ImageFormat::Png)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))
+    }
+
+    fn normalized_video_frame(&self, frame: &str) -> Result<image::RgbaImage, BrowserError> {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(frame)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let image = image::load_from_memory(&bytes)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        Ok(
+            if image.width() == self.size.width && image.height() == self.size.height {
+                image.to_rgba8()
+            } else {
+                image
+                    .resize_exact(
+                        self.size.width.max(1),
+                        self.size.height.max(1),
+                        image::imageops::FilterType::Triangle,
+                    )
+                    .to_rgba8()
+            },
+        )
+    }
+
+    fn blank_video_frame(&self) -> image::RgbaImage {
+        image::RgbaImage::from_pixel(
+            self.size.width.max(1),
+            self.size.height.max(1),
+            image::Rgba([0, 0, 0, 255]),
+        )
+    }
+
+    fn pad_video_frame(&self, frame: image::RgbaImage) -> image::RgbaImage {
+        let padded_width = padded_video_dimension(frame.width(), 16);
+        let padded_height = padded_video_dimension(frame.height(), 16);
+        if padded_width == frame.width() && padded_height == frame.height() {
+            return frame;
+        }
+
+        let mut padded =
+            image::RgbaImage::from_pixel(padded_width, padded_height, image::Rgba([0, 0, 0, 255]));
+        let x_offset = ((padded_width - frame.width()) / 2) as i64;
+        let y_offset = ((padded_height - frame.height()) / 2) as i64;
+        image::imageops::overlay(&mut padded, &frame, x_offset, y_offset);
+        padded
+    }
 }
 
 fn video_frame_delay(framerate: u32) -> image::Delay {
     image::Delay::from_numer_denom_ms(1_000, framerate.max(1))
+}
+
+fn padded_video_dimension(value: u32, macro_block_size: u32) -> u32 {
+    let value = value.max(1);
+    value.div_ceil(macro_block_size) * macro_block_size
 }
 
 fn format_har_timestamp(timestamp: Option<f64>) -> String {
@@ -6101,9 +6361,16 @@ impl CdpBrowserSession {
             let _ = har_recorder.write_har().await;
         }
         if let Some(video_recorder) = &self.video_recorder {
-            if let Err(error) = video_recorder.stop_and_write(&self.connection).await {
-                self.record_lifecycle_event(video_recording_failed_event("stop", &error))
-                    .await;
+            match video_recorder.stop_and_write(&self.connection).await {
+                Ok((_path, Some(error))) => {
+                    self.record_lifecycle_event(video_recording_failed_event("encode", &error))
+                        .await;
+                }
+                Ok((_path, None)) => {}
+                Err(error) => {
+                    self.record_lifecycle_event(video_recording_failed_event("stop", &error))
+                        .await;
+                }
             }
         }
         let _ = self.write_trace_artifact().await;
@@ -12515,11 +12782,13 @@ mod tests {
         assert_eq!(decoded.record_video_dir, None);
         assert_eq!(decoded.record_video_size, None);
         assert_eq!(decoded.record_video_framerate, 30);
+        assert_eq!(decoded.record_video_format, VideoRecordingFormat::Mp4);
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert!(encoded.get("record_video_dir").is_none());
         assert!(encoded.get("record_video_size").is_none());
         assert_eq!(encoded["record_video_framerate"], json!(30));
+        assert!(encoded.get("record_video_format").is_none());
 
         let save_recording_path = "/tmp/browser-use-rs/videos";
         let configured: BrowserProfile = serde_json::from_value(json!({
@@ -12528,7 +12797,8 @@ mod tests {
                 "width": 1024,
                 "height": 768
             },
-            "record_video_framerate": 24
+            "record_video_framerate": 24,
+            "record_video_format": ".webm"
         }))
         .expect("video recording profile");
         assert_eq!(
@@ -12543,6 +12813,7 @@ mod tests {
             })
         );
         assert_eq!(configured.record_video_framerate, 24);
+        assert_eq!(configured.record_video_format, VideoRecordingFormat::Webm);
 
         let encoded = serde_json::to_value(&configured).expect("canonical video profile json");
         assert_eq!(encoded["record_video_dir"], json!(save_recording_path));
@@ -12552,10 +12823,204 @@ mod tests {
             json!({ "width": 1024, "height": 768 })
         );
         assert_eq!(encoded["record_video_framerate"], json!(24));
+        assert_eq!(encoded["record_video_format"], json!("webm"));
         assert_eq!(
             configured.launch_plan().args,
             BrowserProfile::default().launch_plan().args
         );
+    }
+
+    fn video_recorder_for_test(
+        dir: PathBuf,
+        format: VideoRecordingFormat,
+        ffmpeg_path: impl Into<PathBuf>,
+    ) -> CdpVideoRecorder {
+        CdpVideoRecorder {
+            dir,
+            size: BrowserViewport {
+                width: 2,
+                height: 2,
+            },
+            framerate: 12,
+            format,
+            ffmpeg_path: ffmpeg_path.into(),
+            state: Mutex::new(CdpVideoState::default()),
+        }
+    }
+
+    #[test]
+    fn video_recording_format_selection_uses_video_extensions() {
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let recorder = video_recorder_for_test(
+            temp_dir.path().to_path_buf(),
+            VideoRecordingFormat::Mp4,
+            "ffmpeg",
+        );
+
+        let mp4 = recorder.artifact_path(42, 0, VideoRecordingFormat::Mp4);
+        assert_eq!(
+            mp4.extension().and_then(|extension| extension.to_str()),
+            Some("mp4")
+        );
+        assert!(
+            mp4.file_name()
+                .and_then(|name| name.to_str())
+                .expect("mp4 file name")
+                .starts_with("browser-use-rs-video-42-")
+        );
+
+        let webm = recorder.artifact_path(42, 1, VideoRecordingFormat::Webm);
+        assert_eq!(
+            webm.extension().and_then(|extension| extension.to_str()),
+            Some("webm")
+        );
+        assert!(
+            webm.file_name()
+                .and_then(|name| name.to_str())
+                .expect("webm file name")
+                .contains("-1.webm")
+        );
+    }
+
+    #[tokio::test]
+    async fn video_recording_encoder_failure_falls_back_to_gif_and_reports_diagnostic() {
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let recorder = video_recorder_for_test(
+            temp_dir.path().to_path_buf(),
+            VideoRecordingFormat::Mp4,
+            "__browser_use_rs_missing_ffmpeg__",
+        );
+
+        let (path, encoder_error) = recorder
+            .write_recording_artifact(123, &[test_png_frame_base64(2, 2)])
+            .await
+            .expect("fallback video artifact");
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("gif")
+        );
+        assert!(
+            std::fs::read(&path)
+                .expect("fallback gif")
+                .starts_with(b"GIF")
+        );
+        let encoder_error = encoder_error.expect("mp4 encoder error");
+        assert!(
+            encoder_error
+                .to_string()
+                .contains("ffmpeg video encoder unavailable")
+        );
+
+        let event = video_recording_failed_event("encode", &encoder_error);
+        assert_eq!(event.kind, BrowserLifecycleEventKind::BrowserDiagnostic);
+        assert_eq!(event.reason.as_deref(), Some("video_recording_failed"));
+        assert_eq!(
+            event.details.get("phase").map(String::as_str),
+            Some("encode")
+        );
+        assert!(event.error.expect("diagnostic error").contains("ffmpeg"));
+    }
+
+    fn command_available(command: &str) -> bool {
+        std::process::Command::new(command)
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    fn assert_ffprobe_reads_video(path: &Path) {
+        let output = std::process::Command::new("ffprobe")
+            .arg("-v")
+            .arg("error")
+            .arg("-select_streams")
+            .arg("v:0")
+            .arg("-show_entries")
+            .arg("stream=codec_type,width,height")
+            .arg("-of")
+            .arg("default=noprint_wrappers=1")
+            .arg(path)
+            .output()
+            .expect("run ffprobe");
+        assert!(
+            output.status.success(),
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("codec_type=video"),
+            "ffprobe output: {stdout}"
+        );
+        assert!(stdout.contains("width="), "ffprobe output: {stdout}");
+        assert!(stdout.contains("height="), "ffprobe output: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn video_recording_writes_mp4_with_ffmpeg_when_available() {
+        if !command_available("ffmpeg") || !command_available("ffprobe") {
+            eprintln!("skipping mp4 encoder smoke; ffmpeg/ffprobe unavailable");
+            return;
+        }
+
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let recorder = video_recorder_for_test(
+            temp_dir.path().to_path_buf(),
+            VideoRecordingFormat::Mp4,
+            "ffmpeg",
+        );
+        let (path, encoder_error) = recorder
+            .write_recording_artifact(456, &[test_png_frame_base64(2, 2)])
+            .await
+            .expect("mp4 video artifact");
+        assert!(encoder_error.is_none());
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("mp4")
+        );
+        assert!(std::fs::metadata(&path).expect("mp4 metadata").len() > 0);
+        assert_ffprobe_reads_video(&path);
+    }
+
+    #[tokio::test]
+    async fn video_recording_writes_webm_or_falls_back_when_encoder_is_unavailable() {
+        if !command_available("ffmpeg") || !command_available("ffprobe") {
+            eprintln!("skipping webm encoder smoke; ffmpeg/ffprobe unavailable");
+            return;
+        }
+
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let recorder = video_recorder_for_test(
+            temp_dir.path().to_path_buf(),
+            VideoRecordingFormat::Webm,
+            "ffmpeg",
+        );
+        let (path, encoder_error) = recorder
+            .write_recording_artifact(789, &[test_png_frame_base64(2, 2)])
+            .await
+            .expect("webm or fallback video artifact");
+
+        if let Some(error) = encoder_error {
+            eprintln!("webm encoder unavailable, verified fallback path: {error}");
+            assert_eq!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("gif")
+            );
+            assert!(
+                std::fs::read(&path)
+                    .expect("fallback gif")
+                    .starts_with(b"GIF")
+            );
+            return;
+        }
+
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("webm")
+        );
+        assert!(std::fs::metadata(&path).expect("webm metadata").len() > 0);
+        assert_ffprobe_reads_video(&path);
     }
 
     #[tokio::test]
@@ -12569,6 +13034,7 @@ mod tests {
                 height: 2,
             }),
             record_video_framerate: 12,
+            record_video_format: VideoRecordingFormat::Gif,
             ..BrowserProfile::default()
         };
         let (endpoint, command_log) = cdp_command_test_server(None, 11).await;
@@ -12635,6 +13101,61 @@ mod tests {
             .await
             .expect("read video artifact");
         assert!(bytes.starts_with(b"GIF"));
+
+        let lifecycle_json =
+            serde_json::to_string(&session.lifecycle_events().await).expect("lifecycle json");
+        assert!(!lifecycle_json.contains("browser-use-rs-video"));
+        assert!(!lifecycle_json.contains(video_dir.to_str().expect("video dir utf8")));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chrome/Chromium plus ffmpeg and ffprobe on the local machine"]
+    async fn cdp_session_record_video_dir_writes_playable_mp4_with_ffmpeg() {
+        if !command_available("ffmpeg") || !command_available("ffprobe") {
+            eprintln!("skipping browser-backed mp4 smoke; ffmpeg/ffprobe unavailable");
+            return;
+        }
+
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let video_dir = temp_dir.path().join("videos");
+        let profile = BrowserProfile {
+            record_video_dir: Some(video_dir.clone()),
+            record_video_size: Some(BrowserViewport {
+                width: 320,
+                height: 240,
+            }),
+            record_video_framerate: 8,
+            record_video_format: VideoRecordingFormat::Mp4,
+            ..BrowserProfile::default()
+        };
+        let session = CdpBrowserSession::launch(&profile)
+            .await
+            .expect("launch video smoke browser");
+
+        session
+            .navigate(
+                "data:text/html,<html><head><title>video smoke</title></head><body><main id='box' style='width:320px;height:240px;background:#0b7285;color:white;font-size:32px'>Frame</main><script>let i=0;setInterval(()=>{i++;document.getElementById('box').textContent='Frame '+i;document.body.style.background=i%2?'#0b7285':'#c92a2a';},80);</script></body></html>",
+                false,
+            )
+            .await
+            .expect("navigate video smoke");
+        sleep(Duration::from_millis(700)).await;
+        session
+            .close_browser()
+            .await
+            .expect("close video smoke browser");
+
+        let videos = std::fs::read_dir(&video_dir)
+            .expect("video dir")
+            .map(|entry| entry.expect("video entry").path())
+            .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("mp4"))
+            .collect::<Vec<_>>();
+        assert!(
+            !videos.is_empty(),
+            "expected an mp4 artifact in {video_dir:?}"
+        );
+        assert!(std::fs::metadata(&videos[0]).expect("mp4 metadata").len() > 0);
+        assert_ffprobe_reads_video(&videos[0]);
 
         let lifecycle_json =
             serde_json::to_string(&session.lifecycle_events().await).expect("lifecycle json");

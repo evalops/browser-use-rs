@@ -128,14 +128,17 @@ recording work.
 `BrowserProfile.record_video_dir` defaults to unset and accepts upstream
 `save_recording_path`; canonical JSON emits `record_video_dir`.
 `record_video_size` uses the same viewport-size shape, and
-`record_video_framerate` defaults to `30`. When configured, direct-CDP sessions
-start PNG screencast capture for the focused target, acknowledge captured
-frames, switch screencast sessions when the focused target changes, and write an
-animated GIF artifact under `record_video_dir` during best-effort
-`close_browser()` flush. The GIF path is dependency-light; MP4/WebM encoder
-parity remains tracked separately. Video start/stop/encode failures record
-browser diagnostics rather than failing normal startup/close, and video
-artifact paths stay out of normal browser state, action, and agent replies.
+`record_video_framerate` defaults to `30`. `record_video_format` defaults to
+`mp4`, also accepts `.webm`/`webm` and `.gif`/`gif`, and serializes only when
+overriding the MP4 default. When configured, direct-CDP sessions start PNG
+screencast capture for the focused target, acknowledge captured frames, switch
+screencast sessions when the focused target changes, and write a close-time
+recording under `record_video_dir`. MP4 and WebM output use a runtime `ffmpeg`
+encoder with codec-compatible padded frames; if that encoder is unavailable or
+fails, the Rust port records an encode diagnostic and preserves a
+dependency-light GIF fallback. Video start/stop/encode failures record browser
+diagnostics rather than failing normal startup/close, and video artifact paths
+stay out of normal browser state, action, and agent replies.
 `BrowserProfile.traces_dir` defaults to unset and accepts upstream
 `trace_path`; canonical JSON emits `traces_dir`. When configured, direct-CDP
 sessions write a best-effort JSON trace artifact during `close_browser()` in

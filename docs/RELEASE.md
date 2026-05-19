@@ -79,9 +79,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `save_recording_path` alias, optional `record_video_size`, and
   `record_video_framerate=30`. Configured direct-CDP sessions start PNG
   screencast capture, acknowledge frames, switch capture on focused-target
-  changes, and write an animated GIF under the configured directory during
-  best-effort `close_browser()` flush. MP4/WebM encoder parity remains tracked
-  separately.
+  changes, and write MP4 by default through a runtime `ffmpeg` encoder during
+  best-effort `close_browser()` flush. `record_video_format=webm|gif` selects
+  WebM or the dependency-light GIF path, and MP4/WebM encoder failures record a
+  browser diagnostic before falling back to GIF.
 - Trace path configuration parity for `traces_dir` with upstream `trace_path`
   alias. Configured direct-CDP sessions write a best-effort close-time JSON
   trace artifact with lifecycle events, security diagnostics, current target
