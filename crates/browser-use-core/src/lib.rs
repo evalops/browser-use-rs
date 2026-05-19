@@ -28,8 +28,8 @@ pub use browser_use_dom::{
     DomInteractedElementMatchLevel, SerializedDomState,
 };
 pub use browser_use_llm::{
-    AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ContentPart,
-    GeminiChatModel, ImageDetailLevel, LlmError, MessageRole, OllamaChatModel,
+    AnthropicChatModel, ChatCompletion, ChatMessage, ChatModel, ChatRequest, ChatUsage,
+    ContentPart, GeminiChatModel, ImageDetailLevel, LlmError, MessageRole, OllamaChatModel,
     OpenAiCompatibleChatModel,
 };
 pub use browser_use_tools::{BrowserAction, SearchEngine};
@@ -40,6 +40,8 @@ pub const INITIAL_UPSTREAM_COMMIT: &str = "157779338afdcc03023010ec3c24ad63d8204
 const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
 const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
 const WAIT_BETWEEN_ACTIONS_FALLBACK_SECONDS: f64 = 0.1;
+const DEFAULT_MODEL_PRICING_URL: &str =
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct LlmScreenshotSize {
@@ -1103,9 +1105,37 @@ impl StepMetadata {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UsageSummary {
+    pub total_prompt_tokens: u64,
+    pub total_prompt_cost: f64,
+    pub total_prompt_cached_tokens: u64,
+    pub total_prompt_cached_cost: f64,
+    pub total_completion_tokens: u64,
+    pub total_completion_cost: f64,
+    pub total_tokens: u64,
+    pub total_cost: f64,
+    pub entry_count: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub by_model: BTreeMap<String, ModelUsageStats>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelUsageStats {
+    pub model: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cost: f64,
+    pub invocations: usize,
+    pub average_tokens_per_invocation: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentHistory {
     #[serde(default)]
     pub items: Vec<AgentHistoryItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compacted_memory: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -4953,6 +4983,219 @@ fn new_agent_id() -> Uuid {
     Uuid::now_v7()
 }
 
+#[derive(Debug, Clone)]
+struct TokenUsageEntry {
+    model: String,
+    usage: ChatUsage,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelPricing {
+    input_cost_per_token: Option<f64>,
+    output_cost_per_token: Option<f64>,
+    cache_read_input_token_cost: Option<f64>,
+    cache_creation_input_token_cost: Option<f64>,
+}
+
+struct TokenUsageTracker {
+    include_cost: bool,
+    pricing_url: String,
+    base_summary: Option<UsageSummary>,
+    entries: Vec<TokenUsageEntry>,
+    pricing_data: Option<BTreeMap<String, ModelPricing>>,
+    pricing_loaded: bool,
+    client: reqwest::Client,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UsageCost {
+    prompt_cost: f64,
+    prompt_cached_cost: f64,
+    completion_cost: f64,
+    total_cost: f64,
+}
+
+impl TokenUsageTracker {
+    fn for_settings(settings: &AgentSettings) -> Self {
+        let include_cost = settings.calculate_cost
+            || std::env::var("BROWSER_USE_CALCULATE_COST")
+                .is_ok_and(|value| value.eq_ignore_ascii_case("true"));
+        let pricing_url = std::env::var("BROWSER_USE_MODEL_PRICING_URL")
+            .unwrap_or_else(|_| DEFAULT_MODEL_PRICING_URL.to_owned());
+        Self {
+            include_cost,
+            pricing_url,
+            base_summary: None,
+            entries: Vec::new(),
+            pricing_data: None,
+            pricing_loaded: false,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn with_base_summary(mut self, base_summary: Option<UsageSummary>) -> Self {
+        self.base_summary = base_summary;
+        self
+    }
+
+    fn add_completion(&mut self, completion: &ChatCompletion<Value>) {
+        let Some(usage) = completion.usage.clone() else {
+            return;
+        };
+        self.entries.push(TokenUsageEntry {
+            model: completion.model.clone(),
+            usage,
+        });
+    }
+
+    async fn summary(&mut self) -> UsageSummary {
+        self.ensure_pricing_loaded().await;
+        let mut summary = self.base_summary.clone().unwrap_or_default();
+
+        for entry in &self.entries {
+            add_usage_to_summary(
+                &mut summary,
+                entry,
+                self.pricing_for_model(&entry.model)
+                    .map(|pricing| calculate_usage_cost(&entry.usage, pricing)),
+            );
+        }
+
+        refresh_usage_averages(&mut summary);
+        summary
+    }
+
+    async fn ensure_pricing_loaded(&mut self) {
+        if !self.include_cost || self.pricing_loaded {
+            return;
+        }
+        self.pricing_loaded = true;
+        let mut pricing = custom_model_pricing();
+        if let Ok(response) = self.client.get(&self.pricing_url).send().await {
+            if let Ok(value) = response.json::<Value>().await {
+                merge_litellm_pricing(&mut pricing, value);
+            }
+        }
+        self.pricing_data = Some(pricing);
+    }
+
+    fn pricing_for_model(&self, model: &str) -> Option<&ModelPricing> {
+        if !self.include_cost {
+            return None;
+        }
+        let pricing = self.pricing_data.as_ref()?;
+        pricing
+            .get(model)
+            .or_else(|| litellm_model_alias(model).and_then(|alias| pricing.get(alias)))
+    }
+}
+
+fn custom_model_pricing() -> BTreeMap<String, ModelPricing> {
+    let bu_1_0 = ModelPricing {
+        input_cost_per_token: Some(0.2 / 1_000_000.0),
+        output_cost_per_token: Some(2.0 / 1_000_000.0),
+        cache_read_input_token_cost: Some(0.02 / 1_000_000.0),
+        cache_creation_input_token_cost: None,
+    };
+    let bu_2_0 = ModelPricing {
+        input_cost_per_token: Some(0.60 / 1_000_000.0),
+        output_cost_per_token: Some(3.50 / 1_000_000.0),
+        cache_read_input_token_cost: Some(0.06 / 1_000_000.0),
+        cache_creation_input_token_cost: None,
+    };
+
+    [
+        ("bu-1-0".to_owned(), bu_1_0.clone()),
+        ("bu-latest".to_owned(), bu_1_0.clone()),
+        ("smart".to_owned(), bu_1_0),
+        ("bu-2-0".to_owned(), bu_2_0),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn merge_litellm_pricing(pricing: &mut BTreeMap<String, ModelPricing>, value: Value) {
+    let Value::Object(map) = value else {
+        return;
+    };
+    for (model, value) in map {
+        let Ok(model_pricing) = serde_json::from_value::<ModelPricing>(value) else {
+            continue;
+        };
+        pricing.insert(model, model_pricing);
+    }
+}
+
+fn litellm_model_alias(model: &str) -> Option<&'static str> {
+    match model {
+        "gemini-flash-latest" => Some("gemini/gemini-flash-latest"),
+        _ => None,
+    }
+}
+
+fn add_usage_to_summary(
+    summary: &mut UsageSummary,
+    entry: &TokenUsageEntry,
+    cost: Option<UsageCost>,
+) {
+    let usage = &entry.usage;
+    summary.total_prompt_tokens += usage.prompt_tokens;
+    summary.total_prompt_cached_tokens += usage.prompt_cached_tokens.unwrap_or(0);
+    summary.total_completion_tokens += usage.completion_tokens;
+    summary.total_tokens += usage.prompt_tokens + usage.completion_tokens;
+    summary.entry_count += 1;
+
+    let stats = summary
+        .by_model
+        .entry(entry.model.clone())
+        .or_insert_with(|| ModelUsageStats {
+            model: entry.model.clone(),
+            ..ModelUsageStats::default()
+        });
+    stats.prompt_tokens += usage.prompt_tokens;
+    stats.completion_tokens += usage.completion_tokens;
+    stats.total_tokens += usage.prompt_tokens + usage.completion_tokens;
+    stats.invocations += 1;
+
+    if let Some(cost) = cost {
+        summary.total_prompt_cost += cost.prompt_cost;
+        summary.total_prompt_cached_cost += cost.prompt_cached_cost;
+        summary.total_completion_cost += cost.completion_cost;
+        summary.total_cost += cost.total_cost + cost.prompt_cached_cost;
+        stats.cost += cost.total_cost;
+    }
+}
+
+fn refresh_usage_averages(summary: &mut UsageSummary) {
+    for stats in summary.by_model.values_mut() {
+        if stats.invocations > 0 {
+            stats.average_tokens_per_invocation =
+                stats.total_tokens as f64 / stats.invocations as f64;
+        }
+    }
+}
+
+fn calculate_usage_cost(usage: &ChatUsage, pricing: &ModelPricing) -> UsageCost {
+    let cached_tokens = usage.prompt_cached_tokens.unwrap_or(0);
+    let uncached_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+    let prompt_new_cost =
+        uncached_prompt_tokens as f64 * pricing.input_cost_per_token.unwrap_or(0.0);
+    let prompt_cached_cost =
+        cached_tokens as f64 * pricing.cache_read_input_token_cost.unwrap_or(0.0);
+    let prompt_cache_creation_cost = usage.prompt_cache_creation_tokens.unwrap_or(0) as f64
+        * pricing.cache_creation_input_token_cost.unwrap_or(0.0);
+    let prompt_cost = prompt_new_cost + prompt_cached_cost + prompt_cache_creation_cost;
+    let completion_cost =
+        usage.completion_tokens as f64 * pricing.output_cost_per_token.unwrap_or(0.0);
+
+    UsageCost {
+        prompt_cost,
+        prompt_cached_cost,
+        completion_cost,
+        total_cost: prompt_cost + completion_cost,
+    }
+}
+
 pub type AgentCallbackFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type AgentStepCallback = Box<
     dyn for<'a> FnMut(
@@ -4981,6 +5224,7 @@ pub struct Agent<M, S> {
     using_fallback_llm: bool,
     executor: BrowserActionExecutor<S>,
     history: AgentHistory,
+    token_usage: TokenUsageTracker,
     initial_actions_executed: bool,
     stopped: bool,
     paused: bool,
@@ -5051,6 +5295,7 @@ where
         executor.set_display_files_in_done_text(settings.display_files_in_done_text);
         executor.set_action_timeout_seconds(settings.action_timeout_seconds);
         executor.set_upload_file_availability(true, settings.available_file_paths.clone());
+        let token_usage = TokenUsageTracker::for_settings(&settings);
         Self {
             id: new_agent_id(),
             task,
@@ -5062,6 +5307,7 @@ where
             using_fallback_llm: false,
             executor,
             history: AgentHistory::default(),
+            token_usage,
             initial_actions_executed: false,
             stopped: false,
             paused: false,
@@ -5083,6 +5329,8 @@ where
         executor.set_action_timeout_seconds(checkpoint.settings.action_timeout_seconds);
         executor
             .set_upload_file_availability(true, checkpoint.settings.available_file_paths.clone());
+        let token_usage = TokenUsageTracker::for_settings(&checkpoint.settings)
+            .with_base_summary(checkpoint.history.usage.clone());
         Ok(Self {
             id: checkpoint.id,
             task: checkpoint.task,
@@ -5094,6 +5342,7 @@ where
             using_fallback_llm: false,
             executor,
             history: checkpoint.history,
+            token_usage,
             initial_actions_executed: checkpoint.initial_actions_executed,
             stopped: checkpoint.stopped,
             paused: checkpoint.paused,
@@ -5414,9 +5663,15 @@ where
         let first = Self::invoke_json_once(&self.llm, seconds, request.clone()).await;
         match first {
             Err(AgentLlmCallError::Provider(error)) if self.try_switch_to_fallback_llm(&error) => {
-                Self::invoke_json_once(&self.llm, seconds, request).await
+                let completion = Self::invoke_json_once(&self.llm, seconds, request).await?;
+                self.record_completion_usage(&completion).await;
+                Ok(completion)
             }
-            result => result,
+            Ok(completion) => {
+                self.record_completion_usage(&completion).await;
+                Ok(completion)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -5441,6 +5696,15 @@ where
         self.llm = fallback_llm;
         self.using_fallback_llm = true;
         true
+    }
+
+    async fn record_completion_usage(&mut self, completion: &ChatCompletion<Value>) {
+        self.token_usage.add_completion(completion);
+        self.refresh_usage_summary().await;
+    }
+
+    async fn refresh_usage_summary(&mut self) {
+        self.history.usage = Some(self.token_usage.summary().await);
     }
 
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
@@ -5795,6 +6059,7 @@ where
                 ));
             }
         };
+        self.record_completion_usage(&completion).await;
 
         complete_llm_extract_result(
             params,
@@ -5986,6 +6251,7 @@ where
         else {
             return;
         };
+        self.record_completion_usage(&completion).await;
         let Ok(judgement) = serde_json::from_value::<JudgementResult>(completion.content) else {
             return;
         };
@@ -6003,6 +6269,7 @@ where
 
     async fn finish_successful_run(&mut self) -> Result<&AgentHistory, AgentRunError> {
         self.maybe_judge_done_result().await;
+        self.refresh_usage_summary().await;
         self.save_history_gif()?;
         self.invoke_done_callbacks().await?;
         Ok(&self.history)
@@ -6042,6 +6309,7 @@ where
         let Ok(completion) = completion else {
             return false;
         };
+        self.record_completion_usage(&completion).await;
         let Ok(output) = serde_json::from_value::<MessageCompactionOutput>(completion.content)
         else {
             return false;
@@ -12695,6 +12963,7 @@ mod tests {
     struct QueueModel {
         model_name: String,
         outputs: Mutex<VecDeque<Result<Value, LlmError>>>,
+        usages: Mutex<VecDeque<Option<ChatUsage>>>,
         requests: Mutex<Vec<ChatRequest>>,
     }
 
@@ -12712,9 +12981,25 @@ mod tests {
         }
 
         fn with_model_and_results(model_name: &str, outputs: Vec<Result<Value, LlmError>>) -> Self {
+            let output_count = outputs.len();
             Self {
                 model_name: model_name.to_owned(),
                 outputs: Mutex::new(outputs.into()),
+                usages: Mutex::new(vec![None; output_count].into()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_model_outputs_and_usages(
+            model_name: &str,
+            outputs: Vec<Value>,
+            usages: Vec<Option<ChatUsage>>,
+        ) -> Self {
+            assert_eq!(outputs.len(), usages.len());
+            Self {
+                model_name: model_name.to_owned(),
+                outputs: Mutex::new(outputs.into_iter().map(Ok).collect()),
+                usages: Mutex::new(usages.into()),
                 requests: Mutex::new(Vec::new()),
             }
         }
@@ -12764,10 +13049,71 @@ mod tests {
             Ok(ChatCompletion {
                 model: self.model().to_owned(),
                 content,
-                usage: None,
+                usage: self
+                    .usages
+                    .lock()
+                    .expect("usages lock")
+                    .pop_front()
+                    .flatten(),
                 raw_response: None,
             })
         }
+    }
+
+    #[tokio::test]
+    async fn agent_history_records_token_usage_summary_and_costs() {
+        let done_output = serde_json::json!({
+            "current_state": {
+                "thinking": "done"
+            },
+            "action": [
+                {
+                    "done": {
+                        "text": "finished",
+                        "success": true
+                    }
+                }
+            ]
+        });
+        let usage = ChatUsage {
+            prompt_tokens: 100,
+            prompt_cached_tokens: Some(40),
+            prompt_cache_creation_tokens: None,
+            prompt_image_tokens: None,
+            completion_tokens: 20,
+            total_tokens: 120,
+        };
+        let settings = AgentSettings {
+            calculate_cost: true,
+            use_judge: false,
+            ..AgentSettings::default()
+        };
+        let mut agent = Agent::with_settings(
+            "finish",
+            settings,
+            QueueModel::with_model_outputs_and_usages(
+                "bu-1-0",
+                vec![done_output],
+                vec![Some(usage)],
+            ),
+            MockSession::new(),
+        );
+
+        let history = agent.run(1).await.expect("run");
+        let usage = history.usage.as_ref().expect("usage summary");
+        let stats = usage.by_model.get("bu-1-0").expect("model stats");
+
+        assert_eq!(usage.entry_count, 1);
+        assert_eq!(usage.total_prompt_tokens, 100);
+        assert_eq!(usage.total_prompt_cached_tokens, 40);
+        assert_eq!(usage.total_completion_tokens, 20);
+        assert_eq!(usage.total_tokens, 120);
+        assert_eq!(stats.invocations, 1);
+        assert_eq!(stats.average_tokens_per_invocation, 120.0);
+        assert!((usage.total_prompt_cost - 0.0000128).abs() < 0.0000000001);
+        assert!((usage.total_prompt_cached_cost - 0.0000008).abs() < 0.0000000001);
+        assert!((usage.total_completion_cost - 0.00004).abs() < 0.0000000001);
+        assert!((usage.total_cost - 0.0000536).abs() < 0.0000000001);
     }
 
     #[tokio::test]
@@ -17280,6 +17626,7 @@ mod tests {
                 state: blank_state(),
                 metadata: None,
             }],
+            ..AgentHistory::default()
         };
 
         let rendered = render_previous_results(&history, Some(1));

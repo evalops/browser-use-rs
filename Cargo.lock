@@ -230,6 +230,7 @@ dependencies = [
  "pdf-extract",
  "quick-xml",
  "regex",
+ "reqwest",
  "ring",
  "schemars",
  "serde",
