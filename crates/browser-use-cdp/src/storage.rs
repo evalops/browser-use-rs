@@ -1,3 +1,10 @@
+//! Browser storage-state capture and restore.
+//!
+//! Storage state combines cookies and origin storage into a JSON shape that is
+//! compatible with browser-use/Playwright-style persistence. CDP session launch
+//! and close paths call these helpers to load and save authenticated browser
+//! state.
+
 use crate::{
     AttachedPage, BrowserError, CdpConnection, runtime_evaluate_params, runtime_evaluate_value,
 };

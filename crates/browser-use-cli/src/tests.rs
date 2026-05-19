@@ -1,3 +1,10 @@
+//! CLI, daemon, and MCP adapter tests.
+//!
+//! The CLI has a large integration surface: argument translation, provider
+//! configuration, persistent session bookkeeping, JSON-RPC framing, HTTP/TCP
+//! daemon handling, and MCP tool execution. These tests pin that behavior
+//! without requiring a real browser unless a test explicitly opts into it.
+
 use super::*;
 
 #[test]

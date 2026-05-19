@@ -1,4 +1,10 @@
 //! Chrome DevTools Protocol browser-session layer.
+//!
+//! This crate turns Chrome DevTools Protocol commands into the
+//! provider-neutral [`BrowserSession`] trait used by the core agent. The public
+//! entry point is [`CdpBrowserSession`], while the internal modules split CDP
+//! transport, DOM capture, input synthesis, launch profile handling, lifecycle
+//! events, recordings, storage state, URL policy, and watchdog behavior.
 
 #[cfg(test)]
 use std::collections::HashMap;
@@ -345,6 +351,12 @@ struct CachedDomElementRef {
     target_local_index: u32,
 }
 
+/// Browser session backed by a Chrome DevTools Protocol connection.
+///
+/// The session owns shared, async-safe state: the active page target, latest DOM
+/// snapshot, navigation policy, lifecycle event streams, recording hooks,
+/// download state, and watchdogs. Methods on [`BrowserSession`] translate
+/// high-level browser-use actions into CDP commands against this state.
 pub struct CdpBrowserSession {
     connection: Arc<CdpConnection>,
     page: Arc<Mutex<AttachedPage>>,
@@ -406,10 +418,17 @@ impl SessionDownloads {
 }
 
 impl CdpBrowserSession {
+    /// Connects to an existing DevTools endpoint with the default profile.
     pub async fn connect(endpoint: DevToolsEndpoint) -> Result<Self, BrowserError> {
         Self::connect_with_profile(endpoint, &BrowserProfile::default()).await
     }
 
+    /// Connects to an existing DevTools endpoint using profile-specific options.
+    ///
+    /// This path does not launch or own the browser process. It still applies
+    /// permissions, download behavior, viewport emulation, recording hooks, and
+    /// lifecycle watchdogs where those settings make sense for an attached
+    /// browser.
     pub async fn connect_with_profile(
         endpoint: DevToolsEndpoint,
         profile: &BrowserProfile,
@@ -500,6 +519,11 @@ impl CdpBrowserSession {
         Ok(session)
     }
 
+    /// Launches or creates a browser described by `profile` and connects to it.
+    ///
+    /// Local profiles spawn Chrome and keep a process handle unless
+    /// `keep_alive` asks to detach. Cloud profiles create a Browser Use Cloud
+    /// session and connect to its returned CDP websocket.
     pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
         let downloads = SessionDownloads::from_profile(profile)?;
         let url_policy = UrlAccessPolicy::from_profile(profile);
@@ -631,6 +655,7 @@ impl CdpBrowserSession {
         Ok(session)
     }
 
+    /// Closes the browser after flushing configured storage, HAR, video, and trace artifacts.
     pub async fn close_browser(&self) -> Result<(), BrowserError> {
         self.record_lifecycle_event(BrowserLifecycleEvent::browser_close_requested())
             .await;
@@ -664,6 +689,7 @@ impl CdpBrowserSession {
             .map(|_| ())
     }
 
+    /// Saves cookies and origin storage to a Playwright/browser-use compatible JSON file.
     pub async fn save_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
         let page = self.current_page().await;
         let storage_state = browser_storage_state(&self.connection, Some(&page)).await?;
@@ -678,6 +704,7 @@ impl CdpBrowserSession {
         Ok(())
     }
 
+    /// Loads cookies and origin storage from a storage-state JSON file.
     pub async fn load_storage_state(&self, path: &Path) -> Result<(), BrowserError> {
         let storage_state = load_browser_storage_state(&self.connection, path).await?;
         let page = self.current_page().await;
@@ -963,18 +990,22 @@ impl CdpBrowserSession {
         push_lifecycle_event_and_publish(&mut events, &self.lifecycle_event_tx, event);
     }
 
+    /// Returns a snapshot of fine-grained lifecycle events recorded so far.
     pub async fn lifecycle_events(&self) -> Vec<BrowserLifecycleEvent> {
         self.lifecycle_events.lock().await.iter().cloned().collect()
     }
 
+    /// Returns recorded lifecycle events converted to the adapter taxonomy.
     pub async fn lifecycle_adapter_events(&self) -> Vec<BrowserLifecycleAdapterEvent> {
         browser_lifecycle_adapter_events(&self.lifecycle_events().await)
     }
 
+    /// Subscribes to future fine-grained lifecycle events.
     pub fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
         BrowserLifecycleEventSubscription::new(self.lifecycle_event_tx.subscribe())
     }
 
+    /// Subscribes to future lifecycle events converted to adapter events.
     pub fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
         BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
     }
@@ -2382,43 +2413,66 @@ fn previous_navigation_entry_id(history: &Value) -> Result<i64, BrowserError> {
 }
 
 #[async_trait]
+/// Provider-neutral browser-control interface used by the core executor.
+///
+/// The trait lets tests and future browser backends satisfy the same contract
+/// as [`CdpBrowserSession`]. Each method is intentionally action-shaped: the
+/// core executor should not need to know whether a backend uses CDP,
+/// Playwright, WebDriver, or a mock session.
 pub trait BrowserSession: Send + Sync {
+    /// Subscribes to fine-grained lifecycle events, or returns a closed stream by default.
     fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
         BrowserLifecycleEventSubscription::closed()
     }
 
+    /// Subscribes to adapter lifecycle events derived from the fine-grained stream.
     fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
         BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
     }
 
+    /// Captures current browser state for the agent.
     async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
 
+    /// Navigates to a URL in the current tab or a new tab.
     async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
 
+    /// Goes back in the active tab history.
     async fn go_back(&self) -> Result<(), BrowserError>;
 
+    /// Switches focus to a tab by short tab id or full target id.
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError>;
 
+    /// Closes a tab by short tab id or full target id.
     async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError>;
 
+    /// Clicks an indexed DOM element.
     async fn click(&self, index: u32) -> Result<(), BrowserError>;
 
+    /// Clicks explicit viewport coordinates.
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError>;
 
+    /// Inputs text into an indexed element.
     async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError>;
 
+    /// Scrolls the page or an indexed scrollable element.
     async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError>;
 
+    /// Finds text on the active page.
     async fn find_text(&self, text: &str) -> Result<bool, BrowserError>;
 
+    /// Evaluates JavaScript on the active page and returns serialized output.
     async fn evaluate(&self, code: &str) -> Result<String, BrowserError>;
 
+    /// Returns options for an indexed dropdown.
     async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError>;
 
+    /// Selects an option in an indexed dropdown by visible text.
     async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
 
+    /// Returns visible page text used by search/extract actions.
     async fn page_text(&self) -> Result<String, BrowserError>;
 
+    /// Finds elements by CSS selector with optional attributes and text.
     async fn find_elements(
         &self,
         selector: &str,
@@ -2427,12 +2481,16 @@ pub trait BrowserSession: Send + Sync {
         include_text: bool,
     ) -> Result<Vec<FoundElement>, BrowserError>;
 
+    /// Sends keyboard input to the active page.
     async fn send_keys(&self, keys: &str) -> Result<(), BrowserError>;
 
+    /// Uploads a file through an indexed file input element.
     async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError>;
 
+    /// Captures a PNG screenshot.
     async fn screenshot(&self) -> Result<Screenshot, BrowserError>;
 
+    /// Prints the active page to PDF.
     async fn save_pdf(
         &self,
         print_background: bool,

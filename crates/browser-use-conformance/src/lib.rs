@@ -1,4 +1,9 @@
 //! Golden fixtures and parity utilities for browser-use-rs.
+//!
+//! The fixtures in this crate are shared by tests in multiple crates. Keeping
+//! them as Rust builders instead of static JSON makes it easier to reuse the
+//! same DOM/browser states while still exercising serialization, rendering, and
+//! replay behavior through the real public types.
 
 use browser_use_dom::{
     BrowserStateSummary, DomElementRef, DomEvalNode, DomPageStats, ElementBounds, NetworkRequest,
@@ -7,6 +12,7 @@ use browser_use_dom::{
 use std::collections::BTreeMap;
 
 #[must_use]
+/// Returns a tiny two-element DOM state used by baseline prompt/render tests.
 pub fn simple_interactive_state() -> SerializedDomState {
     SerializedDomState::from_elements(vec![
         DomElementRef {
@@ -43,6 +49,7 @@ pub fn simple_interactive_state() -> SerializedDomState {
 }
 
 #[must_use]
+/// Returns a DOM state covering rich attributes, scrollable elements, and media widgets.
 pub fn mixed_interactive_state() -> SerializedDomState {
     SerializedDomState::from_elements(vec![
         DomElementRef {
@@ -217,6 +224,7 @@ pub fn mixed_interactive_state() -> SerializedDomState {
 }
 
 #[must_use]
+/// Returns a DOM state with root and child-frame targets plus shadow-like elements.
 pub fn frame_shadow_state() -> SerializedDomState {
     SerializedDomState::from_elements(vec![
         DomElementRef {
@@ -292,6 +300,7 @@ pub fn frame_shadow_state() -> SerializedDomState {
 }
 
 #[must_use]
+/// Returns a tree-shaped DOM state for judge/evaluation rendering tests.
 pub fn eval_tree_state() -> SerializedDomState {
     let root = DomEvalNode::element("html").with_children(vec![
         DomEvalNode::element("body").with_children(vec![
@@ -337,6 +346,7 @@ pub fn eval_tree_state() -> SerializedDomState {
 }
 
 #[must_use]
+/// Returns a full browser-state summary with tabs, metrics, network, and pagination fixtures.
 pub fn rich_browser_state_summary() -> BrowserStateSummary {
     let dom_state = simple_interactive_state().with_page_stats(DomPageStats {
         links: 2,
@@ -420,10 +430,11 @@ mod tests {
         AgentHistoryReplayStop, AgentHistoryReplayStopReason, AgentOutput, AgentRunError,
         AgentSettings, BrowserActionExecutor, ChatCompletion, ChatModel, ChatRequest, ContentPart,
         FileSystemState, LlmError, ManagedFileSystem, MessageRole, execute_action_sequence,
+        schema_to_compat_value,
     };
     use browser_use_dom::{DomInteractedElementMatch, DomInteractedElementMatchLevel};
     use browser_use_tools::{BrowserAction, ClickElementAction, InputTextAction, WaitAction};
-    use schemars::schema_for;
+    use schemars::{JsonSchema, schema_for};
     use serde_json::{Value, json};
     use std::{
         collections::VecDeque,
@@ -507,7 +518,7 @@ mod tests {
 
     #[test]
     fn browser_action_schema_matches_golden_fixture() {
-        let actual = serde_json::to_value(schema_for!(BrowserAction)).expect("serialize schema");
+        let actual = fixture_schema_value::<BrowserAction>();
 
         assert_matches_fixture(
             actual,
@@ -517,8 +528,7 @@ mod tests {
 
     #[test]
     fn browser_state_summary_schema_matches_golden_fixture() {
-        let actual =
-            serde_json::to_value(schema_for!(BrowserStateSummary)).expect("serialize schema");
+        let actual = fixture_schema_value::<BrowserStateSummary>();
 
         assert_matches_fixture(
             actual,
@@ -528,8 +538,7 @@ mod tests {
 
     #[test]
     fn agent_history_replay_run_schema_matches_golden_fixture() {
-        let actual =
-            serde_json::to_value(schema_for!(AgentHistoryReplayRun)).expect("serialize schema");
+        let actual = fixture_schema_value::<AgentHistoryReplayRun>();
 
         assert_matches_fixture(
             actual,
@@ -892,6 +901,13 @@ mod tests {
         let expected: Value = serde_json::from_str(expected_json).expect("golden fixture");
 
         assert_eq!(actual, expected);
+    }
+
+    fn fixture_schema_value<T>() -> Value
+    where
+        T: JsonSchema,
+    {
+        schema_to_compat_value(schemars::schema_for!(T))
     }
 
     fn agent_history_replay_run_fixture() -> AgentHistoryReplayRun {

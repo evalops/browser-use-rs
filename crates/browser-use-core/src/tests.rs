@@ -1,3 +1,10 @@
+//! Core conformance and behavior tests.
+//!
+//! These tests pin browser-use-compatible JSON shapes, prompt schemas, agent
+//! loop behavior, managed-file semantics, history replay, timeout handling, and
+//! callback/resume behavior. They are intentionally colocated with private
+//! helpers so regressions can exercise the real internal control flow.
+
 use super::*;
 use browser_use_cdp::{FoundElement, Pdf, Screenshot};
 use browser_use_dom::SerializedDomState;

@@ -1,56 +1,98 @@
+//! Browser lifecycle event vocabulary and subscriptions.
+//!
+//! CDP sessions publish structured events for browser connection, navigation,
+//! downloads, storage, and diagnostics. The adapter event layer preserves a
+//! simpler browser-use-compatible taxonomy for downstream consumers that do
+//! not need every low-level event kind.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
+/// Fine-grained lifecycle event category emitted by the CDP session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserLifecycleEventKind {
+    /// CDP connection was established.
     BrowserConnected,
+    /// Browser close was requested.
     BrowserCloseRequested,
+    /// Browser stopped or disconnected intentionally.
     BrowserStopped,
+    /// Transport is attempting to reconnect.
     BrowserReconnecting,
+    /// Transport reconnected successfully.
     BrowserReconnected,
+    /// Non-fatal diagnostic information.
     BrowserDiagnostic,
+    /// Chrome target was created.
     TargetCreated,
+    /// Chrome target was closed.
     TargetClosed,
+    /// Agent focus switched to another target.
     TargetSwitched,
+    /// Target crashed.
     TargetCrashed,
+    /// Navigation started.
     NavigationStarted,
+    /// Navigation completed.
     NavigationCompleted,
+    /// Navigation failed.
     NavigationFailed,
+    /// Network activity exceeded the configured timeout.
     NetworkTimeout,
+    /// Navigation was blocked by URL policy.
     NavigationBlocked,
+    /// Current target was reset successfully.
     CurrentTargetReset,
+    /// Current target reset failed.
     CurrentTargetResetFailed,
+    /// Popup was closed automatically.
     PopupClosed,
+    /// Popup close attempt failed.
     PopupCloseFailed,
+    /// JavaScript dialog was accepted or dismissed.
     JavaScriptDialogHandled,
+    /// Download started.
     DownloadStarted,
+    /// Download progress update.
     DownloadProgress,
+    /// Download completed and was written to disk.
     FileDownloaded,
+    /// Browser storage state was saved.
     StorageStateSaved,
+    /// Browser storage state was loaded.
     StorageStateLoaded,
 }
 
+/// Structured lifecycle event emitted by browser sessions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserLifecycleEvent {
+    /// Event category.
     pub kind: BrowserLifecycleEventKind,
+    /// Target id associated with the event, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_id: Option<String>,
+    /// URL associated with the event, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Machine-readable reason string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Error text for failed events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Additional structured string details.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub details: BTreeMap<String, String>,
+    /// Human-readable event message.
     pub message: String,
 }
 
 impl BrowserLifecycleEvent {
+    /// Creates a lifecycle event with all fields supplied explicitly.
     pub fn new(
         kind: BrowserLifecycleEventKind,
         target_id: Option<String>,
@@ -71,6 +113,7 @@ impl BrowserLifecycleEvent {
         }
     }
 
+    /// Event emitted after a browser connection is established.
     pub fn browser_connected(url: impl Into<String>) -> Self {
         let url = url.into();
         Self::new(
@@ -84,6 +127,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted before attempting to close the browser.
     pub fn browser_close_requested() -> Self {
         Self::new(
             BrowserLifecycleEventKind::BrowserCloseRequested,
@@ -96,6 +140,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when the browser stops.
     pub fn browser_stopped(reason: impl Into<String>) -> Self {
         let reason = reason.into();
         Self::new(
@@ -109,6 +154,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted before a reconnect attempt.
     pub fn browser_reconnecting(url: impl Into<String>, attempt: u32, max_attempts: u32) -> Self {
         let url = url.into();
         Self::new(
@@ -125,6 +171,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted after a successful reconnect.
     pub fn browser_reconnected(
         url: impl Into<String>,
         attempt: u32,
@@ -146,6 +193,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted for non-fatal browser diagnostics.
     pub fn browser_diagnostic(
         reason: impl Into<String>,
         details: BTreeMap<String, String>,
@@ -164,6 +212,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when permission grant via CDP fails.
     pub fn permissions_grant_failed(permissions: &[String], error: impl Into<String>) -> Self {
         let error = error.into();
         Self::browser_diagnostic(
@@ -180,6 +229,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when Chrome creates a target.
     pub fn target_created(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
@@ -194,6 +244,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when Chrome closes a target.
     pub fn target_closed(target_id: impl Into<String>) -> Self {
         let target_id = target_id.into();
         Self::new(
@@ -207,6 +258,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when the agent switches focus to a target.
     pub fn target_switched(target_id: impl Into<String>) -> Self {
         let target_id = target_id.into();
         Self::new(
@@ -220,6 +272,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when a target crash is observed.
     pub fn target_crashed(target_id: impl Into<String>, error: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let error = error.into();
@@ -234,6 +287,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when navigation begins.
     pub fn navigation_started(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
@@ -248,6 +302,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when navigation completes.
     pub fn navigation_completed(target_id: impl Into<String>, url: impl Into<String>) -> Self {
         let target_id = target_id.into();
         let url = url.into();
@@ -262,6 +317,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when navigation fails.
     pub fn navigation_failed(
         target_id: impl Into<String>,
         url: impl Into<String>,
@@ -281,6 +337,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when network activity does not become idle in time.
     pub fn network_timeout(
         target_id: impl Into<String>,
         url: impl Into<String>,
@@ -300,6 +357,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when an alert/confirm/prompt dialog is handled.
     pub fn javascript_dialog_handled(
         url: impl Into<String>,
         dialog_type: impl Into<String>,
@@ -325,6 +383,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when Chrome reports a download start.
     pub fn download_started(
         guid: impl Into<String>,
         url: impl Into<String>,
@@ -347,6 +406,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted for Chrome download progress updates.
     pub fn download_progress(
         guid: impl Into<String>,
         received_bytes: u64,
@@ -374,6 +434,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when a download is written to disk.
     pub fn file_downloaded(
         guid: impl Into<String>,
         path: impl Into<String>,
@@ -399,6 +460,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when the PDF auto-download path writes a PDF file.
     pub fn pdf_auto_downloaded(
         url: impl Into<String>,
         path: impl Into<String>,
@@ -426,6 +488,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted when PDF auto-download fails.
     pub fn pdf_auto_download_failed(url: impl Into<String>, error: impl Into<String>) -> Self {
         let url = url.into();
         let error = error.into();
@@ -440,6 +503,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted after storage state is saved.
     pub fn storage_state_saved(
         path: impl Into<String>,
         cookies_count: usize,
@@ -463,6 +527,7 @@ impl BrowserLifecycleEvent {
         )
     }
 
+    /// Event emitted after storage state is loaded.
     pub fn storage_state_loaded(
         path: impl Into<String>,
         cookies_count: usize,
@@ -487,47 +552,76 @@ impl BrowserLifecycleEvent {
     }
 }
 
+/// Coarser lifecycle category compatible with browser-use adapter events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserLifecycleAdapterEventKind {
+    /// Browser stop was requested.
     BrowserStop,
+    /// Browser connected.
     BrowserConnected,
+    /// Browser stopped.
     BrowserStopped,
+    /// Browser reconnect attempt started.
     BrowserReconnecting,
+    /// Browser reconnected.
     BrowserReconnected,
+    /// Tab was created.
     TabCreated,
+    /// Tab was closed.
     TabClosed,
+    /// Agent focus changed tabs/targets.
     AgentFocusChanged,
+    /// Target crashed.
     TargetCrashed,
+    /// Navigation started.
     NavigationStarted,
+    /// Navigation completed.
     NavigationComplete,
+    /// Browser-level error.
     BrowserError,
+    /// JavaScript dialog was handled.
     JavaScriptDialogHandled,
+    /// Download started.
     DownloadStarted,
+    /// Download progress changed.
     DownloadProgress,
+    /// File downloaded.
     FileDownloaded,
+    /// Storage state changed.
     StorageState,
+    /// Browser diagnostic event.
     BrowserDiagnostic,
 }
 
+/// Adapter event derived from a [`BrowserLifecycleEvent`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserLifecycleAdapterEvent {
+    /// Adapter event category.
     pub kind: BrowserLifecycleAdapterEventKind,
+    /// Original fine-grained lifecycle kind.
     pub source_kind: BrowserLifecycleEventKind,
+    /// Target id associated with the source event, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_id: Option<String>,
+    /// URL associated with the source event, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Machine-readable reason string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Error text for failed events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Additional structured string details.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub details: BTreeMap<String, String>,
+    /// Human-readable event message.
     pub message: String,
 }
 
 impl BrowserLifecycleAdapterEvent {
+    /// Converts a fine-grained lifecycle event to the adapter taxonomy.
     pub fn from_lifecycle_event(event: &BrowserLifecycleEvent) -> Self {
         let kind = match &event.kind {
             BrowserLifecycleEventKind::BrowserConnected => {
@@ -606,6 +700,7 @@ impl BrowserLifecycleAdapterEvent {
     }
 }
 
+/// Converts a slice of lifecycle events to adapter events.
 pub fn browser_lifecycle_adapter_events(
     events: &[BrowserLifecycleEvent],
 ) -> Vec<BrowserLifecycleAdapterEvent> {
@@ -615,14 +710,18 @@ pub fn browser_lifecycle_adapter_events(
         .collect()
 }
 
+/// Error returned by lifecycle event subscriptions.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BrowserLifecycleEventStreamError {
+    /// Sender side closed.
     #[error("lifecycle event stream closed")]
     Closed,
+    /// Receiver lagged behind and missed events.
     #[error("lifecycle event stream lagged by {0} events")]
     Lagged(u64),
 }
 
+/// Subscription for fine-grained lifecycle events.
 #[derive(Debug)]
 pub struct BrowserLifecycleEventSubscription {
     receiver: broadcast::Receiver<BrowserLifecycleEvent>,
@@ -633,12 +732,14 @@ impl BrowserLifecycleEventSubscription {
         Self { receiver }
     }
 
+    /// Creates a subscription that is already closed.
     pub fn closed() -> Self {
         let (sender, receiver) = broadcast::channel(1);
         drop(sender);
         Self::new(receiver)
     }
 
+    /// Waits for the next lifecycle event.
     pub async fn recv(
         &mut self,
     ) -> Result<BrowserLifecycleEvent, BrowserLifecycleEventStreamError> {
@@ -653,6 +754,7 @@ impl BrowserLifecycleEventSubscription {
         }
     }
 
+    /// Attempts to receive one lifecycle event without waiting.
     pub fn try_recv(
         &mut self,
     ) -> Result<Option<BrowserLifecycleEvent>, BrowserLifecycleEventStreamError> {
@@ -668,25 +770,30 @@ impl BrowserLifecycleEventSubscription {
         }
     }
 
+    /// Creates another receiver on the same broadcast stream.
     pub fn resubscribe(&self) -> Self {
         Self::new(self.receiver.resubscribe())
     }
 }
 
+/// Subscription that maps lifecycle events to adapter events as they arrive.
 #[derive(Debug)]
 pub struct BrowserLifecycleAdapterEventSubscription {
     subscription: BrowserLifecycleEventSubscription,
 }
 
 impl BrowserLifecycleAdapterEventSubscription {
+    /// Wraps a fine-grained lifecycle subscription.
     pub fn new(subscription: BrowserLifecycleEventSubscription) -> Self {
         Self { subscription }
     }
 
+    /// Creates an adapter subscription that is already closed.
     pub fn closed() -> Self {
         Self::new(BrowserLifecycleEventSubscription::closed())
     }
 
+    /// Waits for the next adapter event.
     pub async fn recv(
         &mut self,
     ) -> Result<BrowserLifecycleAdapterEvent, BrowserLifecycleEventStreamError> {
@@ -696,6 +803,7 @@ impl BrowserLifecycleAdapterEventSubscription {
             .map(|event| BrowserLifecycleAdapterEvent::from_lifecycle_event(&event))
     }
 
+    /// Attempts to receive one adapter event without waiting.
     pub fn try_recv(
         &mut self,
     ) -> Result<Option<BrowserLifecycleAdapterEvent>, BrowserLifecycleEventStreamError> {
@@ -704,6 +812,7 @@ impl BrowserLifecycleAdapterEventSubscription {
         })
     }
 
+    /// Creates another adapter receiver on the same broadcast stream.
     pub fn resubscribe(&self) -> Self {
         Self::new(self.subscription.resubscribe())
     }

@@ -1,3 +1,10 @@
+//! Browser Use Cloud API client and wire contracts.
+//!
+//! Local sessions launch Chrome directly, while cloud sessions ask the Browser
+//! Use Cloud API to create a browser and then connect to the returned CDP
+//! endpoint. This module keeps that HTTP boundary separate from the browser
+//! session implementation.
+
 use crate::{
     BrowserError, CloudProxyCountryCode, DevToolsEndpoint, deserialize_cloud_proxy_country_code,
     is_false, serialize_cloud_proxy_country_code,
@@ -12,14 +19,17 @@ use tokio::sync::Mutex;
 
 const CLOUD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Request body for creating a Browser Use Cloud browser.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserCreateRequest {
+    /// Optional cloud profile id to attach to the session.
     #[serde(
         default,
         alias = "cloud_profile_id",
         skip_serializing_if = "Option::is_none"
     )]
     pub profile_id: Option<String>,
+    /// Optional cloud proxy country behavior.
     #[serde(
         default,
         alias = "cloud_proxy_country_code",
@@ -28,30 +38,41 @@ pub struct CloudBrowserCreateRequest {
         deserialize_with = "deserialize_cloud_proxy_country_code"
     )]
     pub proxy_country_code: CloudProxyCountryCode,
+    /// Optional session timeout in seconds.
     #[serde(
         default,
         alias = "cloud_timeout",
         skip_serializing_if = "Option::is_none"
     )]
     pub timeout: Option<u32>,
+    /// Enables cloud-side recording when supported by the API.
     #[serde(default, alias = "enableRecording", skip_serializing_if = "is_false")]
     pub enable_recording: bool,
 }
 
+/// Backward-compatible alias for the cloud create request.
 pub type CreateCloudBrowserRequest = CloudBrowserCreateRequest;
 
+/// Response body returned by Browser Use Cloud browser create/stop calls.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudBrowserResponse {
+    /// Cloud browser session id.
     pub id: String,
+    /// Cloud session status string.
     pub status: String,
+    /// Browser Use Cloud live-view URL.
     #[serde(rename = "liveUrl", alias = "live_url")]
     pub live_url: String,
+    /// Chrome DevTools Protocol websocket URL.
     #[serde(rename = "cdpUrl", alias = "cdp_url")]
     pub cdp_url: String,
+    /// Cloud-side timeout timestamp.
     #[serde(rename = "timeoutAt", alias = "timeout_at")]
     pub timeout_at: String,
+    /// Session start timestamp.
     #[serde(rename = "startedAt", alias = "started_at")]
     pub started_at: String,
+    /// Session finish timestamp, present after stop/termination.
     #[serde(
         default,
         rename = "finishedAt",
@@ -62,11 +83,17 @@ pub struct CloudBrowserResponse {
 }
 
 impl CloudBrowserResponse {
+    /// Converts the cloud `cdp_url` into the endpoint shape used by CDP transport.
     pub fn devtools_endpoint(&self) -> Result<DevToolsEndpoint, BrowserError> {
         DevToolsEndpoint::from_cdp_url(&self.cdp_url)
     }
 }
 
+/// Small async client for Browser Use Cloud browser lifecycle calls.
+///
+/// The client stores the most recently created session id so callers can call
+/// [`CloudBrowserClient::close`] or [`CloudBrowserClient::stop_browser`]
+/// without threading that id through every layer.
 pub struct CloudBrowserClient {
     api_base_url: String,
     api_key: Option<String>,
@@ -82,6 +109,7 @@ impl Default for CloudBrowserClient {
 }
 
 impl CloudBrowserClient {
+    /// Creates a client using `https://api.browser-use.com` and env/config auth.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -93,6 +121,7 @@ impl CloudBrowserClient {
         }
     }
 
+    /// Creates a client with an explicit API key.
     #[must_use]
     pub fn with_api_key(api_key: impl Into<String>) -> Self {
         Self {
@@ -101,27 +130,32 @@ impl CloudBrowserClient {
         }
     }
 
+    /// Overrides the Browser Use Cloud API base URL.
     #[must_use]
     pub fn with_api_base_url(mut self, api_base_url: impl Into<String>) -> Self {
         self.api_base_url = api_base_url.into().trim_end_matches('/').to_owned();
         self
     }
 
+    /// Alias for [`CloudBrowserClient::with_api_base_url`].
     #[must_use]
     pub fn with_base_url(self, api_base_url: impl Into<String>) -> Self {
         self.with_api_base_url(api_base_url)
     }
 
+    /// Reads Browser Use Cloud auth from an explicit config file path.
     #[must_use]
     pub fn with_auth_config_path(mut self, auth_config_path: impl Into<PathBuf>) -> Self {
         self.auth_config_path = Some(auth_config_path.into());
         self
     }
 
+    /// Returns the session id last created by this client, if any.
     pub async fn current_session_id(&self) -> Option<String> {
         self.current_session_id.lock().await.clone()
     }
 
+    /// Creates a cloud browser with no extra request headers.
     pub async fn create_browser(
         &self,
         request: &CloudBrowserCreateRequest,
@@ -130,6 +164,10 @@ impl CloudBrowserClient {
             .await
     }
 
+    /// Creates a cloud browser with additional request headers.
+    ///
+    /// Tests and embedding applications use this to exercise auth/routing
+    /// behavior while keeping the default client path simple.
     pub async fn create_browser_with_headers<K, V, I>(
         &self,
         request: &CloudBrowserCreateRequest,
@@ -183,6 +221,7 @@ impl CloudBrowserClient {
         Ok(response)
     }
 
+    /// Stops a cloud browser with no extra request headers.
     pub async fn stop_browser(
         &self,
         session_id: Option<&str>,
@@ -191,6 +230,7 @@ impl CloudBrowserClient {
             .await
     }
 
+    /// Stops a cloud browser with additional request headers.
     pub async fn stop_browser_with_headers<K, V, I>(
         &self,
         session_id: Option<&str>,
@@ -252,6 +292,7 @@ impl CloudBrowserClient {
         Ok(response)
     }
 
+    /// Best-effort cleanup for the current cloud session.
     pub async fn close(&self) {
         let _ = self.stop_browser(None).await;
     }

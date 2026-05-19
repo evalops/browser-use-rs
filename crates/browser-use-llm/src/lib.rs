@@ -1,4 +1,10 @@
 //! LLM provider contracts for schema-guided agent calls.
+//!
+//! The core agent talks to language models through the [`ChatModel`] trait
+//! instead of depending on a single provider SDK. Each concrete model below
+//! converts the common [`ChatRequest`] shape into that provider's HTTP API,
+//! parses the provider response back into JSON, and normalizes usage/error
+//! data for the rest of the system.
 
 use async_trait::async_trait;
 use reqwest::{
@@ -12,22 +18,32 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Role attached to one chat message.
 pub enum MessageRole {
+    /// System/developer instructions.
     System,
+    /// User-authored task or observation content.
     User,
+    /// Model-authored content from a previous turn.
     Assistant,
+    /// Tool result content, retained for provider compatibility.
     Tool,
 }
 
+/// Image detail hint used by vision-capable providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageDetailLevel {
+    /// Let the provider choose image detail.
     Auto,
+    /// Ask the provider for a low-token image encoding.
     Low,
+    /// Ask the provider for a higher-detail image encoding.
     High,
 }
 
 impl ImageDetailLevel {
+    /// Returns the provider-facing string for this detail level.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -38,26 +54,36 @@ impl ImageDetailLevel {
     }
 }
 
+/// One piece of multimodal chat-message content.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
+    /// Plain text content.
     Text {
+        /// Text payload.
         text: String,
     },
+    /// Image content referenced by URL or data URL.
     ImageUrl {
+        /// Image URL, often a `data:` URL for screenshots.
         image_url: String,
+        /// Optional vision detail hint.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<ImageDetailLevel>,
     },
 }
 
+/// A provider-neutral chat message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatMessage {
+    /// Conversation role for this message.
     pub role: MessageRole,
+    /// Ordered content parts in the message.
     pub content: Vec<ContentPart>,
 }
 
 impl ChatMessage {
+    /// Creates a text-only message.
     #[must_use]
     pub fn text(role: MessageRole, text: impl Into<String>) -> Self {
         Self {
@@ -67,52 +93,80 @@ impl ChatMessage {
     }
 }
 
+/// Provider-neutral request sent from the agent to a chat model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatRequest {
+    /// Messages to send in order.
     pub messages: Vec<ChatMessage>,
+    /// Optional JSON Schema describing the structured response expected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
 }
 
+/// Normalized token accounting returned by providers when available.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatUsage {
+    /// Tokens in the prompt/input side of the request.
     pub prompt_tokens: u64,
+    /// Prompt tokens served from a provider cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cached_tokens: Option<u64>,
+    /// Tokens written into a provider cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_creation_tokens: Option<u64>,
+    /// Provider-reported image tokens, when separate from text tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_image_tokens: Option<u64>,
+    /// Tokens in the completion/output side of the response.
     pub completion_tokens: u64,
+    /// Total tokens reported by the provider.
     pub total_tokens: u64,
 }
 
+/// Normalized completion returned by any [`ChatModel`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatCompletion<T> {
+    /// Provider model identifier that produced the response.
     pub model: String,
+    /// Parsed completion content.
     pub content: T,
+    /// Optional usage accounting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<ChatUsage>,
+    /// Raw provider response retained for diagnostics and conformance tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_response: Option<Value>,
 }
 
+/// Errors normalized across provider clients.
 #[derive(Debug, Error)]
 pub enum LlmError {
+    /// Provider returned an error or the local HTTP call failed.
     #[error("provider error: {0}")]
     Provider(String),
+    /// Provider indicated a rate limit.
     #[error("rate limited: {0}")]
     RateLimited(String),
+    /// Provider response could not be parsed as the requested structured JSON.
     #[error("invalid structured output: {0}")]
     InvalidStructuredOutput(String),
 }
 
 #[async_trait]
+/// Async interface implemented by all chat providers.
+///
+/// The trait returns JSON because the browser-use agent asks providers for a
+/// schema-shaped `AgentOutput`. Provider adapters are responsible for turning
+/// provider-specific response formats, tool calls, or JSON-mode text into that
+/// common JSON value.
 pub trait ChatModel: Send + Sync {
+    /// Stable provider name used for logging and configuration.
     fn provider(&self) -> &str;
 
+    /// Provider model identifier.
     fn model(&self) -> &str;
 
+    /// Invokes the model and returns structured JSON content.
     async fn invoke_json(&self, request: ChatRequest) -> Result<ChatCompletion<Value>, LlmError>;
 }
 
@@ -135,19 +189,28 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Strategy used when asking OpenAI-compatible APIs for structured output.
 pub enum OpenAiStructuredOutputMode {
+    /// Use `response_format: json_schema`.
     JsonSchema,
+    /// Use `response_format: json_object`.
     JsonObject,
+    /// Add schema instructions to the prompt without API-level enforcement.
     PromptOnly,
+    /// Ask the model to return a tool call whose arguments contain the JSON.
     ToolCall,
 }
 
+/// Optional JSON Schema rewrite applied before sending OpenAI-wire requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenAiSchemaTransform {
+    /// Send the schema as generated.
     Default,
+    /// Remove schema keywords unsupported by Mistral's OpenAI-compatible API.
     MistralCompatible,
 }
 
+/// Chat model for OpenAI-compatible `/chat/completions` APIs.
 #[derive(Clone)]
 pub struct OpenAiCompatibleChatModel {
     api_key: String,
@@ -161,6 +224,7 @@ pub struct OpenAiCompatibleChatModel {
     client: reqwest::Client,
 }
 
+/// Chat model for Anthropic's Messages API.
 #[derive(Clone)]
 pub struct AnthropicChatModel {
     api_key: String,
@@ -171,6 +235,7 @@ pub struct AnthropicChatModel {
     client: reqwest::Client,
 }
 
+/// Chat model for Google's Gemini `generateContent` API.
 #[derive(Clone)]
 pub struct GeminiChatModel {
     api_key: String,
@@ -180,6 +245,7 @@ pub struct GeminiChatModel {
     client: reqwest::Client,
 }
 
+/// Chat model for a local or remote Ollama chat endpoint.
 #[derive(Clone)]
 pub struct OllamaChatModel {
     model: String,
@@ -188,6 +254,7 @@ pub struct OllamaChatModel {
 }
 
 impl OllamaChatModel {
+    /// Creates an Ollama model using the default local base URL.
     #[must_use]
     pub fn new(model: impl Into<String>) -> Self {
         Self {
@@ -197,6 +264,7 @@ impl OllamaChatModel {
         }
     }
 
+    /// Overrides the Ollama base URL.
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
@@ -260,6 +328,7 @@ impl ChatModel for OllamaChatModel {
 }
 
 impl GeminiChatModel {
+    /// Creates a Gemini model from an API key and model id.
     #[must_use]
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
@@ -271,18 +340,21 @@ impl GeminiChatModel {
         }
     }
 
+    /// Creates a Gemini model from `GEMINI_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> Result<Self, LlmError> {
         let api_key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| LlmError::Provider("GEMINI_API_KEY is not set".to_owned()))?;
         Ok(Self::new(api_key, model))
     }
 
+    /// Overrides the Gemini API base URL.
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
         self
     }
 
+    /// Enables or disables Gemini's native structured-output configuration.
     #[must_use]
     pub fn with_structured_output_support(mut self, supports_structured_output: bool) -> Self {
         self.supports_structured_output = supports_structured_output;
@@ -352,6 +424,7 @@ impl ChatModel for GeminiChatModel {
 }
 
 impl AnthropicChatModel {
+    /// Creates an Anthropic model from an API key and model id.
     #[must_use]
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
@@ -364,24 +437,28 @@ impl AnthropicChatModel {
         }
     }
 
+    /// Creates an Anthropic model from `ANTHROPIC_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> Result<Self, LlmError> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| LlmError::Provider("ANTHROPIC_API_KEY is not set".to_owned()))?;
         Ok(Self::new(api_key, model))
     }
 
+    /// Overrides the Anthropic API base URL.
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
         self
     }
 
+    /// Overrides the `anthropic-version` request header.
     #[must_use]
     pub fn with_anthropic_version(mut self, anthropic_version: impl Into<String>) -> Self {
         self.anthropic_version = anthropic_version.into();
         self
     }
 
+    /// Sets the maximum output tokens requested from Anthropic.
     #[must_use]
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
@@ -447,6 +524,7 @@ impl ChatModel for AnthropicChatModel {
 }
 
 impl OpenAiCompatibleChatModel {
+    /// Creates an OpenAI-wire model using the default OpenAI base URL.
     #[must_use]
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
@@ -462,30 +540,35 @@ impl OpenAiCompatibleChatModel {
         }
     }
 
+    /// Creates an OpenAI-compatible model from `OPENAI_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> Result<Self, LlmError> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| LlmError::Provider("OPENAI_API_KEY is not set".to_owned()))?;
         Ok(Self::new(api_key, model))
     }
 
+    /// Overrides the OpenAI-wire API base URL.
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
         self
     }
 
+    /// Sets the provider label returned by [`ChatModel::provider`].
     #[must_use]
     pub fn with_provider_name(mut self, provider_name: impl Into<String>) -> Self {
         self.provider_name = provider_name.into();
         self
     }
 
+    /// Sets the JSON Schema name sent to structured-output APIs.
     #[must_use]
     pub fn with_schema_name(mut self, schema_name: impl Into<String>) -> Self {
         self.schema_name = schema_name.into();
         self
     }
 
+    /// Selects the structured-output strategy for OpenAI-wire APIs.
     #[must_use]
     pub fn with_structured_output_mode(
         mut self,
@@ -495,12 +578,18 @@ impl OpenAiCompatibleChatModel {
         self
     }
 
+    /// Selects a provider-specific schema rewrite.
     #[must_use]
     pub fn with_schema_transform(mut self, schema_transform: OpenAiSchemaTransform) -> Self {
         self.schema_transform = schema_transform;
         self
     }
 
+    /// Adds a default HTTP header to every OpenAI-wire request.
+    ///
+    /// Authorization and content-type are rejected because this adapter owns
+    /// those headers and overriding them would make provider behavior hard to
+    /// reason about.
     pub fn try_with_default_header(
         mut self,
         name: impl AsRef<str>,
@@ -522,6 +611,7 @@ impl OpenAiCompatibleChatModel {
         Ok(self)
     }
 
+    /// Returns a configured default header value, if present and valid UTF-8.
     #[must_use]
     pub fn default_header_value(&self, name: &str) -> Option<&str> {
         let name = HeaderName::from_bytes(name.as_bytes()).ok()?;
