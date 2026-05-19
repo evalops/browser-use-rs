@@ -930,6 +930,142 @@ fn element_action_function_js(action: &str) -> String {
     element_function_js(&format!("{action}\n  return true;"))
 }
 
+fn interaction_highlight_duration_ms(duration_seconds: f64) -> u64 {
+    if !duration_seconds.is_finite() || duration_seconds <= 0.0 {
+        return 0;
+    }
+    (duration_seconds.min(86_400.0) * 1000.0).round() as u64
+}
+
+fn interaction_element_highlight_script(
+    bounds: ElementBounds,
+    color: &str,
+    duration_seconds: f64,
+) -> String {
+    let rect = json!({
+        "x": bounds.x,
+        "y": bounds.y,
+        "width": bounds.width,
+        "height": bounds.height,
+    });
+    let color = serde_json::to_string(color).unwrap_or_else(|_| "\"rgb(255, 127, 39)\"".to_owned());
+    let duration_ms = interaction_highlight_duration_ms(duration_seconds);
+    format!(
+        r#"(function() {{
+  const rect = {rect};
+  if (!rect || rect.width <= 0 || rect.height <= 0) return true;
+  const color = {color};
+  const duration = {duration_ms};
+  const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+  const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+  const container = document.createElement('div');
+  container.setAttribute('data-browser-use-interaction-highlight', 'true');
+  container.style.cssText = `
+    position: absolute;
+    left: ${{rect.x + scrollX}}px;
+    top: ${{rect.y + scrollY}}px;
+    width: ${{rect.width}}px;
+    height: ${{rect.height}}px;
+    pointer-events: none;
+    z-index: 2147483647;
+  `;
+  const cornerSize = Math.max(8, Math.min(20, Math.min(rect.width, rect.height) * 0.35));
+  const borderWidth = 3;
+  const corners = [
+    ['top-left', 'top', 'left', 'borderTop', 'borderLeft'],
+    ['top-right', 'top', 'right', 'borderTop', 'borderRight'],
+    ['bottom-left', 'bottom', 'left', 'borderBottom', 'borderLeft'],
+    ['bottom-right', 'bottom', 'right', 'borderBottom', 'borderRight'],
+  ];
+  for (const corner of corners) {{
+    const bracket = document.createElement('div');
+    bracket.setAttribute('data-browser-use-interaction-highlight', corner[0]);
+    bracket.style.cssText = `
+      position: absolute;
+      width: ${{cornerSize}}px;
+      height: ${{cornerSize}}px;
+      pointer-events: none;
+      opacity: 0.92;
+      transition: opacity 0.3s ease-out;
+    `;
+    bracket.style[corner[1]] = '-3px';
+    bracket.style[corner[2]] = '-3px';
+    bracket.style[corner[3]] = `${{borderWidth}}px solid ${{color}}`;
+    bracket.style[corner[4]] = `${{borderWidth}}px solid ${{color}}`;
+    container.appendChild(bracket);
+  }}
+  document.body.appendChild(container);
+  setTimeout(() => {{
+    container.style.opacity = '0';
+    container.style.transition = 'opacity 0.3s ease-out';
+    setTimeout(() => container.remove(), 300);
+  }}, duration);
+  return true;
+}})()"#
+    )
+}
+
+fn interaction_coordinate_highlight_script(
+    x: i32,
+    y: i32,
+    color: &str,
+    duration_seconds: f64,
+) -> String {
+    let color = serde_json::to_string(color).unwrap_or_else(|_| "\"rgb(255, 127, 39)\"".to_owned());
+    let duration_ms = interaction_highlight_duration_ms(duration_seconds);
+    format!(
+        r#"(function() {{
+  const x = {x};
+  const y = {y};
+  const color = {color};
+  const duration = {duration_ms};
+  const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+  const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+  const container = document.createElement('div');
+  container.setAttribute('data-browser-use-coordinate-highlight', 'true');
+  container.style.cssText = `
+    position: absolute;
+    left: ${{x + scrollX}}px;
+    top: ${{y + scrollY}}px;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 2147483647;
+  `;
+  const ring = document.createElement('div');
+  ring.style.cssText = `
+    position: absolute;
+    left: -15px;
+    top: -15px;
+    width: 30px;
+    height: 30px;
+    border: 3px solid ${{color}};
+    border-radius: 50%;
+    opacity: 0.85;
+  `;
+  const dot = document.createElement('div');
+  dot.style.cssText = `
+    position: absolute;
+    left: -4px;
+    top: -4px;
+    width: 8px;
+    height: 8px;
+    background: ${{color}};
+    border-radius: 50%;
+  `;
+  container.appendChild(ring);
+  container.appendChild(dot);
+  document.body.appendChild(container);
+  setTimeout(() => {{
+    container.style.opacity = '0';
+    container.style.transition = 'opacity 0.3s ease-out';
+    setTimeout(() => container.remove(), 300);
+  }}, duration);
+  return true;
+}})()"#
+    )
+}
+
 const CLICK_ELEMENT_ACTION_JS: &str = r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
   if (tag === 'select') {
     throw new Error('Cannot click on <select> elements. Use get_dropdown_options and select_dropdown_option instead.');
@@ -1817,6 +1953,12 @@ pub struct BrowserProfile {
         deserialize_with = "deserialize_non_negative_f64"
     )]
     pub wait_for_network_idle_page_load_time: f64,
+    #[serde(default = "default_highlight_elements")]
+    pub highlight_elements: bool,
+    #[serde(default = "default_interaction_highlight_color")]
+    pub interaction_highlight_color: String,
+    #[serde(default = "default_interaction_highlight_duration")]
+    pub interaction_highlight_duration: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<BrowserViewport>,
     #[serde(
@@ -1876,6 +2018,9 @@ impl Default for BrowserProfile {
             device_scale_factor: None,
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
+            highlight_elements: default_highlight_elements(),
+            interaction_highlight_color: default_interaction_highlight_color(),
+            interaction_highlight_duration: default_interaction_highlight_duration(),
             window_size: None,
             window_position: default_window_position(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
@@ -1915,6 +2060,18 @@ fn default_auto_download_pdfs() -> bool {
 
 fn default_accept_downloads() -> bool {
     true
+}
+
+fn default_highlight_elements() -> bool {
+    true
+}
+
+fn default_interaction_highlight_color() -> String {
+    "rgb(255, 127, 39)".to_owned()
+}
+
+fn default_interaction_highlight_duration() -> f64 {
+    1.0
 }
 
 fn default_window_position() -> Option<BrowserViewport> {
@@ -3942,6 +4099,50 @@ impl PageLoadWaitConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct InteractionHighlightConfig {
+    enabled: bool,
+    color: String,
+    duration_seconds: f64,
+}
+
+impl InteractionHighlightConfig {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        Self {
+            enabled: profile.highlight_elements,
+            color: profile.interaction_highlight_color.clone(),
+            duration_seconds: profile.interaction_highlight_duration,
+        }
+    }
+
+    fn element_script(&self, bounds: Option<ElementBounds>) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        let bounds = bounds?;
+        if bounds.width == 0 || bounds.height == 0 {
+            return None;
+        }
+        Some(interaction_element_highlight_script(
+            bounds,
+            &self.color,
+            self.duration_seconds,
+        ))
+    }
+
+    fn coordinate_script(&self, x: i32, y: i32) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        Some(interaction_coordinate_highlight_script(
+            x,
+            y,
+            &self.color,
+            self.duration_seconds,
+        ))
+    }
+}
+
 #[derive(Debug)]
 struct NetworkActivityState {
     active_request_ids: BTreeSet<String>,
@@ -4256,6 +4457,7 @@ pub struct CdpBrowserSession {
     paint_order_filtering: bool,
     viewport_emulation: ViewportEmulationConfig,
     page_load_wait: PageLoadWaitConfig,
+    interaction_highlight: InteractionHighlightConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
     downloads_path: Option<PathBuf>,
     auto_download_pdfs: bool,
@@ -4365,6 +4567,7 @@ impl CdpBrowserSession {
             paint_order_filtering: profile.paint_order_filtering,
             viewport_emulation,
             page_load_wait,
+            interaction_highlight: InteractionHighlightConfig::from_profile(profile),
             network_activity,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -4481,6 +4684,7 @@ impl CdpBrowserSession {
             paint_order_filtering: profile.paint_order_filtering,
             viewport_emulation,
             page_load_wait: PageLoadWaitConfig::from_profile(profile),
+            interaction_highlight: InteractionHighlightConfig::from_profile(profile),
             network_activity,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -4819,6 +5023,24 @@ impl CdpBrowserSession {
             .await?;
         let _ = runtime_evaluate_value(result)?;
         Ok(())
+    }
+
+    async fn highlight_element_if_enabled(&self, element: &DomElementRef) {
+        let Some(script) = self.interaction_highlight.element_script(element.bounds) else {
+            return;
+        };
+        let Ok(page) = self.page_for_element(element).await else {
+            return;
+        };
+        let _ = self.evaluate_effect_for_page(&page, script).await;
+    }
+
+    async fn highlight_coordinates_if_enabled(&self, x: i32, y: i32) {
+        let Some(script) = self.interaction_highlight.coordinate_script(x, y) else {
+            return;
+        };
+        let page = self.current_page().await;
+        let _ = self.evaluate_effect_for_page(&page, script).await;
     }
 
     async fn page_for_element(
@@ -8584,6 +8806,7 @@ impl BrowserSession for CdpBrowserSession {
     async fn click(&self, index: u32) -> Result<(), BrowserError> {
         let cached_element = self.cached_element(index).await;
         if let Some(cached) = cached_element.as_ref() {
+            self.highlight_element_if_enabled(&cached.element).await;
             match self
                 .call_element_function(
                     &cached.element,
@@ -8610,6 +8833,7 @@ impl BrowserSession for CdpBrowserSession {
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
         let page = self.current_page().await;
+        self.highlight_coordinates_if_enabled(x, y).await;
         for event_type in ["mousePressed", "mouseReleased"] {
             self.connection
                 .command(
@@ -8642,6 +8866,7 @@ impl BrowserSession for CdpBrowserSession {
         };
         let cached_element = self.cached_element(index).await;
         if let Some(cached) = cached_element.as_ref() {
+            self.highlight_element_if_enabled(&cached.element).await;
             match self
                 .call_element_function(&cached.element, element_action_function_js(&action))
                 .await
@@ -9451,6 +9676,9 @@ mod tests {
             paint_order_filtering: default_paint_order_filtering(),
             viewport_emulation: ViewportEmulationConfig::from_profile(&BrowserProfile::default()),
             page_load_wait: PageLoadWaitConfig::from_profile(&BrowserProfile::default()),
+            interaction_highlight: InteractionHighlightConfig::from_profile(
+                &BrowserProfile::default(),
+            ),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
             downloads_path,
             auto_download_pdfs,
@@ -9839,6 +10067,32 @@ mod tests {
             serde_json::to_value(disabled).expect("disabled profile json")["paint_order_filtering"],
             json!(false)
         );
+    }
+
+    #[test]
+    fn browser_profile_interaction_highlight_defaults_match_upstream() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(decoded.highlight_elements);
+        assert_eq!(decoded.interaction_highlight_color, "rgb(255, 127, 39)");
+        assert_eq!(decoded.interaction_highlight_duration, 1.0);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["highlight_elements"], json!(true));
+        assert_eq!(
+            encoded["interaction_highlight_color"],
+            json!("rgb(255, 127, 39)")
+        );
+        assert_eq!(encoded["interaction_highlight_duration"], json!(1.0));
+
+        let disabled: BrowserProfile = serde_json::from_value(json!({
+            "highlight_elements": false,
+            "interaction_highlight_color": "lime",
+            "interaction_highlight_duration": 0.25
+        }))
+        .expect("highlight profile");
+        assert!(!disabled.highlight_elements);
+        assert_eq!(disabled.interaction_highlight_color, "lime");
+        assert_eq!(disabled.interaction_highlight_duration, 0.25);
     }
 
     #[test]
@@ -13830,6 +14084,65 @@ mod tests {
         assert!(function.contains("Cannot click on file input elements."));
         assert!(function.contains("el.click();"));
         assert!(function.contains("dispatchEvent(new MouseEvent('click'"));
+    }
+
+    #[test]
+    fn interaction_highlight_config_respects_enabled_and_bounds() {
+        let config = InteractionHighlightConfig::from_profile(&BrowserProfile {
+            interaction_highlight_color: "lime".to_owned(),
+            interaction_highlight_duration: 0.25,
+            ..BrowserProfile::default()
+        });
+        let bounds = ElementBounds {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        let script = config
+            .element_script(Some(bounds))
+            .expect("highlight script");
+
+        assert!(script.contains("data-browser-use-interaction-highlight"));
+        assert!(script.contains("const color = \"lime\";"));
+        assert!(script.contains("const duration = 250;"));
+        assert!(config.element_script(None).is_none());
+        assert!(
+            config
+                .element_script(Some(ElementBounds { width: 0, ..bounds }))
+                .is_none()
+        );
+
+        let disabled = InteractionHighlightConfig::from_profile(&BrowserProfile {
+            highlight_elements: false,
+            ..BrowserProfile::default()
+        });
+        assert!(disabled.element_script(Some(bounds)).is_none());
+        assert!(disabled.coordinate_script(1, 2).is_none());
+    }
+
+    #[test]
+    fn interaction_highlight_scripts_escape_color_and_mark_coordinates() {
+        let script = interaction_element_highlight_script(
+            ElementBounds {
+                x: 1,
+                y: 2,
+                width: 30,
+                height: 20,
+            },
+            "rgb(1, 2, 3)\";window.__bad=true;//",
+            1.5,
+        );
+        assert!(script.contains("const rect = {\"height\":20,\"width\":30,\"x\":1,\"y\":2};"));
+        assert!(script.contains("const duration = 1500;"));
+        assert!(script.contains("rgb(1, 2, 3)\\\";window.__bad=true;//"));
+        assert!(script.contains("document.body.appendChild(container);"));
+
+        let coordinate_script = interaction_coordinate_highlight_script(12, 34, "cyan", -1.0);
+        assert!(coordinate_script.contains("data-browser-use-coordinate-highlight"));
+        assert!(coordinate_script.contains("const x = 12;"));
+        assert!(coordinate_script.contains("const y = 34;"));
+        assert!(coordinate_script.contains("const duration = 0;"));
     }
 
     #[test]

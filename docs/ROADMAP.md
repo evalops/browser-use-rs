@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#129 Add BrowserProfile interaction highlight parity](https://github.com/evalops/browser-use-rs/issues/129)
+- Next upstream parity slice after #129 lands and CI is green.
 
 ## Completed Tracks
 
+- [#129 Add BrowserProfile interaction highlight parity](https://github.com/evalops/browser-use-rs/issues/129)
 - [#128 Add BrowserProfile downloads_path alias parity](https://github.com/evalops/browser-use-rs/issues/128)
 - [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
 - [#126 Add BrowserProfile paint_order_filtering DOM parity](https://github.com/evalops/browser-use-rs/issues/126)
@@ -187,6 +188,11 @@ Implemented:
   remote browser endpoints. `BrowserProfile.channel` preserves upstream
   browser-channel strings and uses channel-specific executable candidates when
   no explicit executable path or `BROWSER_USE_CHROME` override is supplied.
+  `BrowserProfile.highlight_elements`, `interaction_highlight_color`, and
+  `interaction_highlight_duration` preserve upstream defaults; indexed
+  click/input actions and coordinate clicks attempt non-fatal temporary
+  browser-side interaction highlights, while `highlight_elements=false`
+  disables those markers.
   `BrowserProfile.accept_downloads` defaults to true; accepted sessions use an
   explicit `downloads_path` or a session-owned `browser-use-downloads-*`
   temporary directory for Chrome download behavior. Upstream aliases

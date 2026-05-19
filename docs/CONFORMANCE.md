@@ -157,6 +157,18 @@ and is emitted in launch plans even when callers do not supply an override.
 Explicit window positions still override the default before raw custom args are
 de-duped with last-wins switch behavior.
 
+## Interaction Highlight Boundary
+
+`BrowserProfile.highlight_elements` defaults to `true`, with upstream-default
+`interaction_highlight_color="rgb(255, 127, 39)"` and
+`interaction_highlight_duration=1.0`. Indexed click/input actions attempt a
+non-fatal temporary highlight when the cached DOM element has viewport bounds,
+and coordinate clicks attempt a non-fatal temporary marker at the clicked
+viewport coordinate. `highlight_elements=false` disables those injected
+markers without changing the underlying action behavior. The upstream
+`dom_highlight_elements` debug overlay remains outside the current Rust CDP
+surface.
+
 ## Page-Load Wait Boundary
 
 `BrowserProfile.minimum_wait_page_load_time` and

@@ -34,6 +34,8 @@ includes:
   is disabled, upstream-style `keep_alive=true` ownership detachment for
   locally launched browsers, typed `env` launch-process overrides with
   upstream-style string/number/bool JSON coercion,
+  upstream-default interaction highlights for indexed click/input actions and
+  coordinate clicks with configurable highlight color and duration,
   upstream-style default Chrome launch args, `ignore_default_args` list/true
   suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
   `permissions` grants for upstream's default `clipboardReadWrite` and
