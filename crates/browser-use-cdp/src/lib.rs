@@ -1717,6 +1717,8 @@ pub struct BrowserProfile {
     pub prohibited_domains: Vec<String>,
     #[serde(default)]
     pub block_ip_addresses: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_alive: Option<bool>,
     #[serde(default)]
     pub disable_security: bool,
     #[serde(default)]
@@ -1778,6 +1780,7 @@ impl Default for BrowserProfile {
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
             block_ip_addresses: false,
+            keep_alive: None,
             disable_security: false,
             deterministic_rendering: false,
             cross_origin_iframes: default_cross_origin_iframes(),
@@ -1849,6 +1852,10 @@ fn default_navigation_timeout_ms() -> u64 {
 
 fn default_network_request_timeout_ms() -> u64 {
     10_000
+}
+
+fn profile_keeps_launched_browser_alive(profile: &BrowserProfile) -> bool {
+    profile.keep_alive == Some(true)
 }
 
 const CHROME_DEFAULT_ARGS: &[&str] = &[
@@ -3898,6 +3905,14 @@ impl CdpBrowserSession {
             let launched_browser = profile.launch_local().await?;
             (launched_browser.endpoint().clone(), Some(launched_browser))
         };
+        let launched_browser = launched_browser.and_then(|browser| {
+            if profile_keeps_launched_browser_alive(profile) {
+                let _ = browser.detach();
+                None
+            } else {
+                Some(browser)
+            }
+        });
         let connection = CdpConnection::connect(&endpoint).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
@@ -9037,6 +9052,36 @@ mod tests {
         }))
         .expect_err("negative device_scale_factor should be rejected");
         assert!(negative.to_string().contains("device_scale_factor"));
+    }
+
+    #[test]
+    fn browser_profile_keep_alive_preserves_upstream_wire_shape() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.keep_alive, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("keep_alive").is_none());
+
+        let keep_alive: BrowserProfile = serde_json::from_value(json!({
+            "keep_alive": true
+        }))
+        .expect("keep alive profile");
+        assert_eq!(keep_alive.keep_alive, Some(true));
+        assert!(profile_keeps_launched_browser_alive(&keep_alive));
+
+        let close_on_drop: BrowserProfile = serde_json::from_value(json!({
+            "keep_alive": false
+        }))
+        .expect("close on drop profile");
+        assert_eq!(close_on_drop.keep_alive, Some(false));
+        assert!(!profile_keeps_launched_browser_alive(&close_on_drop));
+
+        let null_keep_alive: BrowserProfile = serde_json::from_value(json!({
+            "keep_alive": null
+        }))
+        .expect("null keep alive profile");
+        assert_eq!(null_keep_alive.keep_alive, None);
+        assert!(!profile_keeps_launched_browser_alive(&null_keep_alive));
     }
 
     #[test]
