@@ -85,9 +85,10 @@ includes:
   and `record_video_framerate` while keeping video artifact metadata out of
   normal browser state and action replies.
   Trace config fields (`traces_dir` with `trace_path`) also round-trip and
-  write best-effort close-time JSON trace artifacts containing lifecycle,
-  security, current-page, and last-DOM snapshots without adding trace artifact
-  metadata to normal browser state responses.
+  write best-effort close-time direct-CDP JSON trace artifacts containing
+  lifecycle, security, current-page, and last-DOM snapshots. The trace contract
+  is explicitly not a Playwright `trace.zip`, and trace artifact metadata stays
+  out of normal browser state, action, and agent replies.
   `BrowserProfile.channel` accepts upstream browser channel names such as
   `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
   channel-specific executable candidates when no explicit executable path or

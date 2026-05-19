@@ -84,10 +84,17 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   WebM or the dependency-light GIF path, and MP4/WebM encoder failures record a
   browser diagnostic before falling back to GIF.
 - Trace path configuration parity for `traces_dir` with upstream `trace_path`
-  alias. Configured direct-CDP sessions write a best-effort close-time JSON
-  trace artifact with lifecycle events, security diagnostics, current target
-  ids, and the last cached DOM state while keeping trace artifact paths and
-  metadata out of normal browser state responses.
+  alias. At the frozen upstream target, that field is described as a
+  Playwright trace zip directory but no browser trace watchdog is wired, so the
+  Rust port exposes an explicit direct-CDP JSON boundary instead of emulating a
+  Playwright `trace.zip`. Configured direct-CDP sessions write a best-effort
+  close-time JSON trace artifact with schema `browser-use-rs.trace.v1`, kind
+  `browser-use-rs.cdp_json_trace`, `runtime="direct_cdp"`, and
+  `playwright_trace_zip=false`. The artifact contains lifecycle events,
+  security diagnostics, current target ids, and the last cached DOM state.
+  Trace write failures record a browser diagnostic without failing normal close,
+  and trace artifact paths/kinds/metadata stay out of normal browser state,
+  action, and agent replies.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

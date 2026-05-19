@@ -164,8 +164,7 @@ configured, the direct-CDP session records HTTPS request/response/loading data
 into a HAR 1.2 file on best-effort `close_browser()` flush. `minimal` mode
 keeps entries for the main page origin, `full` keeps captured HTTPS entries
 except favicon requests, and `omit`/`embed`/`attach` control response and
-request body representation. Playwright trace surfaces remain separate future
-recording work.
+request body representation.
 `BrowserProfile.record_video_dir` defaults to unset and accepts upstream
 `save_recording_path`; canonical JSON emits `record_video_dir`.
 `record_video_size` uses the same viewport-size shape, and
@@ -181,12 +180,18 @@ dependency-light GIF fallback. Video start/stop/encode failures record browser
 diagnostics rather than failing normal startup/close, and video artifact paths
 stay out of normal browser state, action, and agent replies.
 `BrowserProfile.traces_dir` defaults to unset and accepts upstream
-`trace_path`; canonical JSON emits `traces_dir`. When configured, direct-CDP
-sessions write a best-effort JSON trace artifact during `close_browser()` in
-the same close-time recording family as storage state and HAR. The artifact
-captures lifecycle events, security diagnostics, current target ids, and the
-last cached DOM state, but trace artifact paths and metadata are not added to
-normal browser state responses.
+`trace_path`; canonical JSON emits `traces_dir`. At the frozen upstream target,
+`traces_dir` is a profile field described as a Playwright trace zip directory,
+but no `browser_use/browser` trace watchdog or Playwright tracing runtime is
+wired. The Rust direct-CDP boundary is therefore explicit: configured sessions
+write a best-effort close-time JSON artifact with schema
+`browser-use-rs.trace.v1`, artifact kind `browser-use-rs.cdp_json_trace`,
+`runtime="direct_cdp"`, and `playwright_trace_zip=false`. The artifact captures
+lifecycle events, security diagnostics, current target ids, and the last cached
+DOM state. Trace artifact write failures record a browser diagnostic with phase
+`write` and still allow normal browser close to proceed. Trace artifact paths,
+artifact kind, and trace metadata are not added to normal browser state,
+action, or agent replies.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail

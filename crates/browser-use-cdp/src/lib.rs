@@ -41,6 +41,8 @@ const CDP_RECONNECT_MAX_ATTEMPTS: u32 = 3;
 const CDP_RECONNECT_DELAYS_MS: [u64; 3] = [1_000, 2_000, 4_000];
 const CDP_CONNECT_TIMEOUT_MS: u64 = 15_000;
 const CLOUD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const TRACE_ARTIFACT_SCHEMA_VERSION: &str = "browser-use-rs.trace.v1";
+const TRACE_ARTIFACT_KIND: &str = "browser-use-rs.cdp_json_trace";
 
 const INTERACTIVE_ELEMENTS_JS: &str = r#"
 (() => {
@@ -5359,6 +5361,15 @@ fn video_recording_failed_event(phase: &str, error: &BrowserError) -> BrowserLif
     )
 }
 
+fn trace_recording_failed_event(phase: &str, error: &BrowserError) -> BrowserLifecycleEvent {
+    BrowserLifecycleEvent::browser_diagnostic(
+        "trace_recording_failed",
+        BTreeMap::from([("phase".to_owned(), phase.to_owned())]),
+        Some(error.to_string()),
+        format!("Browser trace recording {phase} failed: {error}"),
+    )
+}
+
 #[derive(Debug, Default)]
 struct CdpVideoState {
     active_session_id: Option<String>,
@@ -6373,7 +6384,10 @@ impl CdpBrowserSession {
                 }
             }
         }
-        let _ = self.write_trace_artifact().await;
+        if let Err(error) = self.write_trace_artifact().await {
+            self.record_lifecycle_event(trace_recording_failed_event("write", &error))
+                .await;
+        }
         self.connection.mark_intentional_stop();
         self.connection
             .command("Browser.close", json!({}), None)
@@ -6431,7 +6445,13 @@ impl CdpBrowserSession {
             .collect::<Vec<_>>();
         let last_dom_state = self.last_dom_state.lock().await.clone();
         let artifact = json!({
-            "schema_version": "browser-use-rs.trace.v1",
+            "schema_version": TRACE_ARTIFACT_SCHEMA_VERSION,
+            "artifact": {
+                "kind": TRACE_ARTIFACT_KIND,
+                "format": "json",
+                "runtime": "direct_cdp",
+                "playwright_trace_zip": false,
+            },
             "generated_at": trace_timestamp(generated_at_millis),
             "current_page": {
                 "target_id": current_page.target_id,
@@ -13272,7 +13292,14 @@ mod tests {
                 .expect("read trace artifact"),
         )
         .expect("trace artifact json");
-        assert_eq!(trace["schema_version"], json!("browser-use-rs.trace.v1"));
+        assert_eq!(
+            trace["schema_version"],
+            json!(TRACE_ARTIFACT_SCHEMA_VERSION)
+        );
+        assert_eq!(trace["artifact"]["kind"], json!(TRACE_ARTIFACT_KIND));
+        assert_eq!(trace["artifact"]["format"], json!("json"));
+        assert_eq!(trace["artifact"]["runtime"], json!("direct_cdp"));
+        assert_eq!(trace["artifact"]["playwright_trace_zip"], json!(false));
         assert!(
             trace["generated_at"]
                 .as_str()
@@ -13296,6 +13323,55 @@ mod tests {
         let lifecycle_json =
             serde_json::to_string(&session.lifecycle_events().await).expect("lifecycle json");
         assert!(!lifecycle_json.contains("browser-use-rs-trace"));
+        assert!(!lifecycle_json.contains(traces_dir.to_str().expect("trace dir utf8")));
+    }
+
+    #[tokio::test]
+    async fn trace_recording_failure_records_diagnostic_without_artifact_metadata() {
+        let temp_dir = TempDir::new().expect("trace temp dir");
+        let traces_dir = temp_dir.path().join("trace-output-is-file");
+        tokio::fs::write(&traces_dir, b"not a directory")
+            .await
+            .expect("seed trace file path");
+        let profile = BrowserProfile {
+            traces_dir: Some(traces_dir.clone()),
+            ..BrowserProfile::default()
+        };
+        let (endpoint, command_log) = cdp_command_test_server(None, 8).await;
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect traced session");
+
+        session.close_browser().await.expect("close traced browser");
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(
+            commands.last().map(|command| command.method.as_str()),
+            Some("Browser.close")
+        );
+
+        let events = session.lifecycle_events().await;
+        let diagnostic = events
+            .iter()
+            .find(|event| event.reason.as_deref() == Some("trace_recording_failed"))
+            .expect("trace failure diagnostic");
+        assert_eq!(
+            diagnostic.kind,
+            BrowserLifecycleEventKind::BrowserDiagnostic
+        );
+        assert_eq!(
+            diagnostic.details.get("phase").map(String::as_str),
+            Some("write")
+        );
+        assert!(
+            diagnostic
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("browser state unavailable"))
+        );
+
+        let lifecycle_json = serde_json::to_string(&events).expect("lifecycle json");
+        assert!(!lifecycle_json.contains("browser-use-rs-trace"));
+        assert!(!lifecycle_json.contains(TRACE_ARTIFACT_KIND));
         assert!(!lifecycle_json.contains(traces_dir.to_str().expect("trace dir utf8")));
     }
 
