@@ -5,6 +5,10 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
+No open tracked completion gaps remain against the frozen upstream target.
+Refresh this list when a future upstream target changes or new behavioral
+surfaces are accepted into scope.
+
 ## Completed Tracks
 
 - [#141 Complete provider structured-output fallback parity](https://github.com/evalops/browser-use-rs/issues/141)

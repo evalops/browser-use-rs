@@ -365,7 +365,7 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   rather than a Unix socket file, so that chmod fix is tracked as audited and
   not directly applicable to the present Rust transport boundary.
 
-## Known Gaps
+## Compatibility Boundaries
 
 - Browser profile lifecycle support now exposes bounded public lifecycle
   diagnostics for core browser/target/navigation/security transitions and
@@ -407,9 +407,10 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   liveness, and explicit cleanup removes stale records while refusing to remove
   running sessions unless forced through normal stop semantics; the daemon does
   not automatically restart stale browser processes.
-- The packaged daemon service files are local user-service templates; distro
+- The packaged daemon service files are local user-service templates. Distro
   packages, additional macOS architectures, and installer-managed secret stores
-  are not implemented. Homebrew tap publication is wired but requires the
+  are outside the current release surface. Homebrew tap publication is wired
+  but requires the
   `evalops/homebrew-tap` repository plus a `HOMEBREW_TAP_TOKEN` repository
   secret before tagged releases publish there.
   Tagged releases now emit Linux and macOS tarballs, cross-tarball checksums,
