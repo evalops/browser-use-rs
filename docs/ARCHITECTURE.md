@@ -151,6 +151,7 @@ management and live CDP session behavior.
 | `storage.rs` | Cookie/origin storage save/load, frame-origin discovery, DOMStorage conversion, storage-state counts and file writes. |
 | `target.rs` | Page target selection, target attach/create, viewport emulation commands, browser permission grants, download-event enablement, and tab-id resolution. |
 | `watchdog.rs` | Lifecycle watchdog, security watchdog, URL-policy actions, bounded event buffers, websocket lifecycle event mapping, network timeouts, download event mapping, auto-PDF download handling. |
+| `tests.rs` | CDP compatibility and live-browser conformance tests that need private session/module access. |
 
 ### CDP Session Shape
 
@@ -237,6 +238,11 @@ new tabs, applying viewport emulation, granting browser permissions, enabling
 download events, and resolving full/short tab ids. Session methods decide when
 those operations are needed; target helpers decide the CDP payloads and target
 selection rules.
+
+`tests.rs` is a private child module of `lib.rs`, not an integration-test crate,
+so it can exercise private CDP helpers while keeping the implementation root
+readable. Keep browser-use compatibility fixtures and ignored live-Chrome
+conformance tests there unless a test naturally belongs beside a smaller module.
 
 ### Profile, Recording, And Storage Boundaries
 
@@ -330,6 +336,8 @@ Compatibility-sensitive public exports include:
   `browser-use-cdp/src/runtime.rs` or `browser-use-cdp/src/input.rs`.
 - New page target, viewport emulation, browser permission, or download-event
   setup behavior: `browser-use-cdp/src/target.rs`.
+- New CDP compatibility/conformance regression that needs private helper access:
+  `browser-use-cdp/src/tests.rs`.
 - New profile/cloud launch behavior: `browser-use-cdp/src/profile.rs` or
   `browser-use-cdp/src/cloud.rs`.
 - New artifact or storage behavior: `browser-use-cdp/src/recording.rs` or
