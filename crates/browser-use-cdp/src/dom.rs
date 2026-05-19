@@ -1934,7 +1934,8 @@ pub(crate) fn is_missing_target_error(error: &BrowserError) -> bool {
     matches!(
         error,
         BrowserError::CommandFailed { method, message }
-            if method == "Target.attachToTarget" && message.contains("No target with given id found")
+            if matches!(method.as_str(), "Target.attachToTarget" | "Target.closeTarget")
+                && message.contains("No target with given id found")
     )
 }
 

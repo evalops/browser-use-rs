@@ -138,6 +138,7 @@ management and live CDP session behavior.
 | Module | Owns |
 | --- | --- |
 | `lib.rs` | Public browser primitives, CDP session state, action methods, root re-exports, `BrowserSession` trait, and compatibility tests. |
+| `types.rs` | Shared public DTOs and serde helpers: errors, screenshots, PDFs, found elements, viewport/proxy settings, cloud proxy country codes. |
 | `cloud.rs` | Browser Use Cloud request/response/client types, API-key discovery, auth-config lookup, cloud HTTP error rendering. |
 | `profile.rs` | Browser profile serde defaults and aliases, Chrome launch plans, executable discovery, local process launch, `DevToolsActivePort` parsing. |
 | `policy.rs` | Browser profile URL-access policy, allow/prohibit pattern matching, IP-address blocking, and navigation block reasons. |
@@ -224,6 +225,10 @@ but allowlist/prohibit matching and IP canonicalization should stay in
 `runtime.rs` and `input.rs` own protocol value shaping for JavaScript
 evaluation and keyboard events. Session methods choose when to evaluate or
 dispatch; these modules decide how CDP payloads and responses are represented.
+
+`types.rs` owns DTOs that are shared across CDP submodules or exported publicly.
+Keep serde compatibility helpers next to the DTOs they shape, then re-export the
+public API from `lib.rs`.
 
 ### Profile, Recording, And Storage Boundaries
 
@@ -322,6 +327,7 @@ Compatibility-sensitive public exports include:
 - New provider behavior: `browser-use-llm/src/lib.rs`.
 - New CLI/MCP surface: `browser-use-cli/src/main.rs` and
   `browser-use-mcp/src/lib.rs`.
+- New CDP public DTO or serde-helper behavior: `browser-use-cdp/src/types.rs`.
 
 ## Verification Gates
 

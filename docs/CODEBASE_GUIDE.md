@@ -178,6 +178,22 @@ Review risks:
 - `BrowserSession` methods are consumed by `browser-use-core`; errors and
   side effects should stay action-shaped.
 
+### `types.rs`
+
+Responsibilities:
+
+- public error and browser-output DTOs;
+- viewport and proxy settings shared by profile, recording, and session code;
+- Browser Use Cloud proxy-country wire shape;
+- serde validation helpers for profile/cloud DTOs.
+
+Review risks:
+
+- Public DTO field names and serde aliases are compatibility surface.
+- Keep serde helper error messages stable enough for downstream debugging.
+- Re-export public types from `lib.rs`; downstream crates should not import the
+  private module path.
+
 ### `policy.rs`
 
 Responsibilities:
