@@ -94,12 +94,16 @@ plus attached frame-tree origin storage-state save/load events. Root
 `Browser.grantPermissions` failures record browser diagnostics without failing
 startup. CDP websocket closure records a browser-stopped lifecycle diagnostic, and direct
 `Page.navigate` timeouts plus stuck HTTP(S) requests record network-timeout
-lifecycle diagnostics. Unexpected websocket drops trigger bounded actor-level
-attempts with reconnecting/reconnected/failure lifecycle diagnostics. Registered
-CDP target sessions are invalidated after reconnect so stale session-scoped
-commands fail locally with a clear reattach error, and the current target is
-reattached automatically on the next session access when Chrome still exposes
-it.
+lifecycle diagnostics. Direct PDF viewer URLs are marked as PDF state and, when
+`BrowserProfile.auto_download_pdfs` remains enabled and `downloads_path` is
+configured, are downloaded once per session with safe filenames and
+`auto_download=true` lifecycle metadata. Explicit `auto_download_pdfs=false`
+preserves normal download events but skips that PDF auto-download path.
+Unexpected websocket drops trigger bounded actor-level attempts with
+reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
+sessions are invalidated after reconnect so stale session-scoped commands fail
+locally with a clear reattach error, and the current target is reattached
+automatically on the next session access when Chrome still exposes it.
 
 The bounded history and `subscribe_lifecycle_events` subscription facade are
 both kept out of normal agent replies unless an integration explicitly reads

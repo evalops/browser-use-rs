@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#122 Add BrowserProfile auto_download_pdfs parity](https://github.com/evalops/browser-use-rs/issues/122)
+- Next upstream parity slice after #122 lands and CI is green.
 
 ## Completed Tracks
 
+- [#122 Add BrowserProfile auto_download_pdfs parity](https://github.com/evalops/browser-use-rs/issues/122)
 - [#121 Align BrowserProfile default window_position parity](https://github.com/evalops/browser-use-rs/issues/121)
 - [#119 Add BrowserProfile page-load wait timing parity](https://github.com/evalops/browser-use-rs/issues/119)
 - [#120 Add BrowserProfile keep_alive launch ownership parity](https://github.com/evalops/browser-use-rs/issues/120)
@@ -200,8 +201,10 @@ Implemented:
   shapes without placing the full lifecycle stream into normal agent replies.
   Live CDP wiring records target crash, JavaScript dialog, navigation failure,
   configured download events, cookie plus attached frame-tree origin
-  storage-state save/load events, CDP websocket closure diagnostics, and direct
-  `Page.navigate` plus stuck HTTP(S) request timeout diagnostics. Unexpected
+  storage-state save/load events, direct PDF viewer state and one-per-session
+  `auto_download_pdfs` direct-PDF downloads into `downloads_path`, CDP websocket
+  closure diagnostics, and direct `Page.navigate` plus stuck HTTP(S) request
+  timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with
   reconnecting/reconnected/failure lifecycle diagnostics, and registered CDP
   target sessions are invalidated after reconnect so stale session-scoped

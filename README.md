@@ -68,9 +68,10 @@ includes:
   `minimum_wait_page_load_time` and `wait_for_network_idle_page_load_time`
   settle state capture and successful navigations, with zero values disabling
   each wait.
-  Launch profiles can set `downloads_path` to enable Chrome download behavior
-  and browser-level download lifecycle events with safe basename normalization
-  for page-controlled filenames, and `storage_state_path` to
+  Launch profiles can set `downloads_path` to enable Chrome download behavior,
+  browser-level download lifecycle events with safe basename normalization for
+  page-controlled filenames, and upstream-default `auto_download_pdfs=true`
+  direct-PDF URL downloads, while `storage_state_path` can
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
   the attached frame tree is outside the safe CDP boundary documented in

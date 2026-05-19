@@ -1534,6 +1534,13 @@ fn cloud_http_client() -> reqwest::Client {
         .expect("valid Browser Use Cloud HTTP client")
 }
 
+fn download_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(CLOUD_HTTP_TIMEOUT)
+        .build()
+        .expect("valid Browser Use download HTTP client")
+}
+
 fn cloud_request_headers<K, V, I>(
     api_key: String,
     extra_headers: I,
@@ -1717,6 +1724,8 @@ pub struct BrowserProfile {
     pub downloads_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_state_path: Option<PathBuf>,
+    #[serde(default = "default_auto_download_pdfs")]
+    pub auto_download_pdfs: bool,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -1800,6 +1809,7 @@ impl Default for BrowserProfile {
             profile_directory: default_profile_directory(),
             downloads_path: None,
             storage_state_path: None,
+            auto_download_pdfs: default_auto_download_pdfs(),
             args: Vec::new(),
             ignore_default_args: IgnoreDefaultArgs::default(),
             user_agent: None,
@@ -1850,6 +1860,10 @@ fn default_browser_permissions() -> Vec<String> {
         .into_iter()
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn default_auto_download_pdfs() -> bool {
+    true
 }
 
 fn default_window_position() -> Option<BrowserViewport> {
@@ -2650,6 +2664,47 @@ impl BrowserLifecycleEvent {
                 ("file_size".to_owned(), file_size.to_string()),
             ]),
             format!("Download {guid} completed at {path} ({file_name}, {file_size} bytes)"),
+        )
+    }
+
+    pub fn pdf_auto_downloaded(
+        url: impl Into<String>,
+        path: impl Into<String>,
+        file_name: impl Into<String>,
+        file_size: u64,
+    ) -> Self {
+        let url = url.into();
+        let path = path.into();
+        let file_name = file_name.into();
+        let guid = format!("auto-pdf:{url}");
+        Self::new(
+            BrowserLifecycleEventKind::FileDownloaded,
+            None,
+            Some(url.clone()),
+            Some("pdf_auto_download".to_owned()),
+            None,
+            BTreeMap::from([
+                ("guid".to_owned(), guid.clone()),
+                ("path".to_owned(), path.clone()),
+                ("file_name".to_owned(), file_name.clone()),
+                ("file_size".to_owned(), file_size.to_string()),
+                ("auto_download".to_owned(), "true".to_owned()),
+            ]),
+            format!("Auto-downloaded PDF {url} to {path} ({file_name}, {file_size} bytes)"),
+        )
+    }
+
+    pub fn pdf_auto_download_failed(url: impl Into<String>, error: impl Into<String>) -> Self {
+        let url = url.into();
+        let error = error.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserDiagnostic,
+            None,
+            Some(url.clone()),
+            Some("pdf_auto_download_failed".to_owned()),
+            Some(error.clone()),
+            BTreeMap::from([("auto_download".to_owned(), "true".to_owned())]),
+            format!("Failed to auto-download PDF {url}: {error}"),
         )
     }
 
@@ -3936,6 +3991,9 @@ pub struct CdpBrowserSession {
     viewport_emulation: ViewportEmulationConfig,
     page_load_wait: PageLoadWaitConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
+    downloads_path: Option<PathBuf>,
+    auto_download_pdfs: bool,
+    auto_pdf_downloads: Arc<Mutex<BTreeMap<String, PathBuf>>>,
     storage_state_path: Option<PathBuf>,
     navigation_timeout_ms: u64,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
@@ -3964,6 +4022,7 @@ impl CdpBrowserSession {
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
+        let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -3998,6 +4057,9 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait,
             network_activity,
+            downloads_path: profile.downloads_path.clone(),
+            auto_download_pdfs: profile.auto_download_pdfs,
+            auto_pdf_downloads,
             storage_state_path: None,
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -4051,6 +4113,7 @@ impl CdpBrowserSession {
         let security_events = Arc::new(Mutex::new(VecDeque::new()));
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
+        let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -4100,6 +4163,9 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait: PageLoadWaitConfig::from_profile(profile),
             network_activity,
+            downloads_path: profile.downloads_path.clone(),
+            auto_download_pdfs: profile.auto_download_pdfs,
+            auto_pdf_downloads,
             storage_state_path: profile.storage_state_path.clone(),
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -4208,6 +4274,81 @@ impl CdpBrowserSession {
             }
             sleep(sleep_for).await;
         }
+    }
+
+    async fn auto_download_pdf_if_needed(&self, url: &str) {
+        if !self.auto_download_pdfs || !is_pdf_viewer_url(url) {
+            return;
+        }
+        let Some(downloads_path) = &self.downloads_path else {
+            return;
+        };
+
+        match self.auto_download_pdf(url, downloads_path).await {
+            Ok(Some(event)) => self.record_lifecycle_event(event).await,
+            Ok(None) => {}
+            Err(error) => {
+                self.record_lifecycle_event(BrowserLifecycleEvent::pdf_auto_download_failed(
+                    url,
+                    error.to_string(),
+                ))
+                .await;
+            }
+        }
+    }
+
+    async fn auto_download_pdf(
+        &self,
+        url: &str,
+        downloads_path: &Path,
+    ) -> Result<Option<BrowserLifecycleEvent>, BrowserError> {
+        if let Some(path) = self.cached_auto_pdf_download(url).await {
+            if tokio::fs::metadata(&path).await.is_ok() {
+                return Ok(None);
+            }
+        }
+
+        let response = download_http_client()
+            .get(url)
+            .send()
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(BrowserError::StateUnavailable(format!(
+                "PDF download returned HTTP {}",
+                response.status()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        tokio::fs::create_dir_all(downloads_path)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let file_name = pdf_download_filename_from_url(url);
+        let path = unique_download_path(downloads_path, &file_name).await?;
+        tokio::fs::write(&path, &bytes)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        self.auto_pdf_downloads
+            .lock()
+            .await
+            .insert(url.to_owned(), path.clone());
+
+        Ok(Some(BrowserLifecycleEvent::pdf_auto_downloaded(
+            url,
+            path.display().to_string(),
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+                .unwrap_or(file_name),
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        )))
+    }
+
+    async fn cached_auto_pdf_download(&self, url: &str) -> Option<PathBuf> {
+        self.auto_pdf_downloads.lock().await.get(url).cloned()
     }
 
     async fn reattach_current_page(
@@ -5391,6 +5532,70 @@ fn sanitize_download_filename(name: &str) -> String {
     } else {
         basename.to_owned()
     }
+}
+
+fn is_pdf_viewer_url(url: &str) -> bool {
+    let path = url::Url::parse(url)
+        .map(|parsed| parsed.path().to_owned())
+        .unwrap_or_else(|_| url.split(['?', '#']).next().unwrap_or_default().to_owned());
+    let path = path.to_ascii_lowercase();
+    path.ends_with(".pdf") || path.contains("/pdf/")
+}
+
+fn pdf_download_filename_from_url(url: &str) -> String {
+    let decoded_name = url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(|segment| percent_decode_str(segment).decode_utf8_lossy().to_string())
+        })
+        .unwrap_or_else(|| "download.pdf".to_owned());
+    let file_name = sanitize_download_filename(&decoded_name);
+    ensure_pdf_extension(file_name)
+}
+
+fn ensure_pdf_extension(file_name: String) -> String {
+    if file_name.to_ascii_lowercase().ends_with(".pdf") {
+        file_name
+    } else {
+        format!("{file_name}.pdf")
+    }
+}
+
+async fn unique_download_path(
+    downloads_path: &Path,
+    file_name: &str,
+) -> Result<PathBuf, BrowserError> {
+    let file_name = sanitize_download_filename(file_name);
+    let path = downloads_path.join(&file_name);
+    if tokio::fs::metadata(&path).await.is_err() {
+        return Ok(path);
+    }
+
+    let extension = Path::new(&file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_owned);
+    let stem = Path::new(&file_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("download");
+
+    for suffix in 1_u32.. {
+        let candidate_name = match &extension {
+            Some(extension) if !extension.is_empty() => format!("{stem}-{suffix}.{extension}"),
+            _ => format!("{stem}-{suffix}"),
+        };
+        let candidate = downloads_path.join(candidate_name);
+        if tokio::fs::metadata(&candidate).await.is_err() {
+            return Ok(candidate);
+        }
+    }
+
+    unreachable!("unbounded suffix search should always return")
 }
 
 #[cfg(test)]
@@ -7569,6 +7774,10 @@ impl BrowserSession for CdpBrowserSession {
         self.enforce_open_tab_url_policy().await?;
         self.wait_for_page_load_settle().await;
         let (url, title) = self.page_location().await?;
+        let is_pdf_viewer = is_pdf_viewer_url(&url);
+        if is_pdf_viewer {
+            self.auto_download_pdf_if_needed(&url).await;
+        }
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
         self.set_cached_dom_state(dom_state.clone()).await;
@@ -7605,7 +7814,7 @@ impl BrowserSession for CdpBrowserSession {
             pixels_above: page_info.pixels_above,
             pixels_below: page_info.pixels_below,
             browser_errors,
-            is_pdf_viewer: false,
+            is_pdf_viewer,
             recent_events,
             pending_network_requests: vec![],
             pagination_buttons,
@@ -8607,6 +8816,80 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    async fn pdf_download_test_server(
+        body: &'static [u8],
+    ) -> (String, tokio::task::JoinHandle<usize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind PDF test server");
+        let addr = listener.local_addr().expect("PDF test server addr");
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept PDF request");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await.expect("read PDF request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/pdf\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write PDF response headers");
+            stream
+                .write_all(body)
+                .await
+                .expect("write PDF response body");
+            1
+        });
+        (format!("http://{addr}/docs/report.pdf"), handle)
+    }
+
+    fn test_session_for_pdf_downloads(
+        downloads_path: Option<PathBuf>,
+        auto_download_pdfs: bool,
+    ) -> CdpBrowserSession {
+        let (request_tx, _request_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(16);
+        let connection = Arc::new(CdpConnection {
+            request_tx,
+            event_tx,
+            next_id: AtomicU64::new(1),
+            intentional_stop: Arc::new(AtomicBool::new(false)),
+            connection_generation: Arc::new(AtomicU64::new(0)),
+            session_generations: Arc::new(Mutex::new(HashMap::new())),
+        });
+        let (lifecycle_event_tx, _) = broadcast::channel(16);
+        CdpBrowserSession {
+            connection,
+            page: Arc::new(Mutex::new(AttachedPage {
+                target_id: "target-1".to_owned(),
+                session_id: "session-1".to_owned(),
+            })),
+            last_dom_state: Arc::new(Mutex::new(None)),
+            pending_url_policy_error: Arc::new(Mutex::new(None)),
+            security_events: Arc::new(Mutex::new(VecDeque::new())),
+            lifecycle_events: Arc::new(Mutex::new(VecDeque::new())),
+            lifecycle_event_tx,
+            url_policy: UrlAccessPolicy::from_profile(&BrowserProfile::default()),
+            iframe_traversal: IframeTraversalConfig::from_profile(&BrowserProfile::default()),
+            viewport_emulation: ViewportEmulationConfig::from_profile(&BrowserProfile::default()),
+            page_load_wait: PageLoadWaitConfig::from_profile(&BrowserProfile::default()),
+            network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
+            downloads_path,
+            auto_download_pdfs,
+            auto_pdf_downloads: Arc::new(Mutex::new(BTreeMap::new())),
+            storage_state_path: None,
+            navigation_timeout_ms: default_navigation_timeout_ms(),
+            _lifecycle_watchdog: BrowserLifecycleWatchdog {
+                handle: tokio::spawn(async {}),
+            },
+            _security_watchdog: None,
+            _launched_browser: None,
+        }
+    }
+
     fn http_request_complete(buffer: &[u8]) -> bool {
         let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
             return false;
@@ -9278,6 +9561,25 @@ mod tests {
         .expect("null keep alive profile");
         assert_eq!(null_keep_alive.keep_alive, None);
         assert!(!profile_keeps_launched_browser_alive(&null_keep_alive));
+    }
+
+    #[test]
+    fn browser_profile_auto_download_pdfs_defaults_true_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(decoded.auto_download_pdfs);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["auto_download_pdfs"], json!(true));
+
+        let disabled: BrowserProfile = serde_json::from_value(json!({
+            "auto_download_pdfs": false
+        }))
+        .expect("disabled auto PDF profile");
+        assert!(!disabled.auto_download_pdfs);
+        assert_eq!(
+            serde_json::to_value(disabled).expect("disabled profile json")["auto_download_pdfs"],
+            json!(false)
+        );
     }
 
     #[test]
@@ -11481,6 +11783,103 @@ mod tests {
         assert_eq!(sanitize_download_filename(".bashrc"), ".bashrc");
         assert_eq!(sanitize_download_filename("résumé.pdf"), "résumé.pdf");
         assert_eq!(sanitize_download_filename("文档.pdf"), "文档.pdf");
+    }
+
+    #[test]
+    fn pdf_viewer_url_detection_is_conservative() {
+        assert!(is_pdf_viewer_url("https://example.test/report.pdf"));
+        assert!(is_pdf_viewer_url(
+            "https://example.test/report.PDF?download=1#page=2"
+        ));
+        assert!(is_pdf_viewer_url("https://example.test/viewer/pdf/123"));
+        assert!(!is_pdf_viewer_url("https://example.test/report.html"));
+        assert!(!is_pdf_viewer_url(
+            "https://example.test/report.html?file=report.pdf"
+        ));
+    }
+
+    #[test]
+    fn pdf_download_filename_uses_safe_pdf_basename() {
+        assert_eq!(
+            pdf_download_filename_from_url("https://example.test/docs/report.pdf?x=1"),
+            "report.pdf"
+        );
+        assert_eq!(
+            pdf_download_filename_from_url("https://example.test/pdf/monthly%20report"),
+            "monthly report.pdf"
+        );
+        assert_eq!(
+            pdf_download_filename_from_url("https://example.test/docs/..%2Fsecret.pdf"),
+            "secret.pdf"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_pdf_download_writes_once_and_reuses_session_cache() {
+        let temp_dir = TempDir::new().expect("downloads dir");
+        let (url, hits) = pdf_download_test_server(b"%PDF-1.4 test").await;
+        let session = test_session_for_pdf_downloads(Some(temp_dir.path().to_path_buf()), true);
+
+        let event = session
+            .auto_download_pdf(&url, temp_dir.path())
+            .await
+            .expect("download PDF")
+            .expect("first download event");
+        assert_eq!(event.kind, BrowserLifecycleEventKind::FileDownloaded);
+        assert_eq!(event.reason.as_deref(), Some("pdf_auto_download"));
+        assert_eq!(event.details["auto_download"], "true");
+        assert_eq!(event.details["file_name"], "report.pdf");
+        assert_eq!(hits.await.expect("PDF server hits"), 1);
+        let downloaded_path = temp_dir.path().join("report.pdf");
+        assert_eq!(
+            tokio::fs::read(&downloaded_path)
+                .await
+                .expect("downloaded PDF bytes"),
+            b"%PDF-1.4 test"
+        );
+
+        let duplicate = session
+            .auto_download_pdf(&url, temp_dir.path())
+            .await
+            .expect("duplicate cache lookup");
+        assert!(duplicate.is_none());
+    }
+
+    #[tokio::test]
+    async fn disabled_auto_pdf_download_does_not_touch_downloads_path() {
+        let temp_dir = TempDir::new().expect("downloads dir");
+        let session = test_session_for_pdf_downloads(Some(temp_dir.path().to_path_buf()), false);
+
+        session
+            .auto_download_pdf_if_needed("https://example.test/report.pdf")
+            .await;
+
+        assert!(
+            std::fs::read_dir(temp_dir.path())
+                .expect("downloads dir entries")
+                .next()
+                .is_none()
+        );
+        assert!(session.lifecycle_events().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unique_download_path_avoids_existing_files_inside_download_dir() {
+        let temp_dir = TempDir::new().expect("downloads dir");
+        let existing = temp_dir.path().join("report.pdf");
+        tokio::fs::write(&existing, b"existing")
+            .await
+            .expect("write existing PDF");
+
+        let next = unique_download_path(temp_dir.path(), "../../report.pdf")
+            .await
+            .expect("unique path");
+        tokio::fs::write(&next, b"new")
+            .await
+            .expect("write unique PDF");
+
+        assert_eq!(next, temp_dir.path().join("report-1.pdf"));
+        assert!(is_path_contained(&next, temp_dir.path()));
     }
 
     #[test]
