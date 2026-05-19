@@ -35,7 +35,7 @@ pub use browser_use_llm::{
 pub use browser_use_tools::{BrowserAction, SearchEngine};
 
 /// Version of the upstream browser-use source that this crate initially targets.
-pub const INITIAL_UPSTREAM_COMMIT: &str = "f09a86671591312bbc272403a7409d56f4cec668";
+pub const INITIAL_UPSTREAM_COMMIT: &str = "ac2ef545a9000f4ae0ce9409f92fb03287357244";
 
 const ACTION_TIMEOUT_ENV_VAR: &str = "BROWSER_USE_ACTION_TIMEOUT_S";
 const ACTION_TIMEOUT_FALLBACK_SECONDS: f64 = 180.0;
@@ -8212,7 +8212,10 @@ mod tests {
 
     #[test]
     fn target_commit_is_pinned() {
-        assert_eq!(INITIAL_UPSTREAM_COMMIT.len(), 40);
+        assert_eq!(
+            INITIAL_UPSTREAM_COMMIT,
+            "ac2ef545a9000f4ae0ce9409f92fb03287357244"
+        );
     }
 
     #[test]
@@ -12385,6 +12388,97 @@ mod tests {
             executor.session().events(),
             vec![format!("upload_file:3:{}", managed_path.display())]
         );
+    }
+
+    #[test]
+    fn managed_upload_file_path_contains_traversal_basename_inside_data_dir() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let write_result = file_system
+            .write_file(&WriteFileAction {
+                file_name: "note.md".to_owned(),
+                content: "safe managed content".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            })
+            .expect("write managed file");
+        assert_eq!(write_result.error, None);
+
+        let upload_path = file_system
+            .upload_file_path("../note.md")
+            .expect("managed traversal basename");
+        let data_dir = std::fs::canonicalize(file_system.data_dir()).expect("canonical data dir");
+        let upload_path = std::fs::canonicalize(upload_path).expect("canonical upload path");
+
+        assert!(upload_path.starts_with(&data_dir));
+        assert_eq!(upload_path, data_dir.join("note.md"));
+    }
+
+    #[test]
+    fn managed_upload_file_path_rejects_missing_traversal_basename() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+
+        assert_eq!(file_system.upload_file_path("../note.md"), None);
+    }
+
+    #[tokio::test]
+    async fn browser_executor_uploads_managed_traversal_by_owned_basename() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session = MockSession::new();
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+        executor.set_upload_file_availability(true, Vec::new());
+        let write_result = executor
+            .execute(&BrowserAction::WriteFile(WriteFileAction {
+                file_name: "note.md".to_owned(),
+                content: "upload me".to_owned(),
+                append: false,
+                trailing_newline: false,
+                leading_newline: false,
+            }))
+            .await;
+        assert_eq!(write_result.error, None);
+        let managed_path = executor.file_system().data_dir().join("note.md");
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "../note.md".to_owned(),
+            }))
+            .await;
+
+        assert_eq!(result.error, None);
+        assert_eq!(
+            executor.session().events(),
+            vec![format!("upload_file:3:{}", managed_path.display())]
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_executor_rejects_missing_managed_upload_traversal_basename() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session = MockSession::new();
+        let file_system = ManagedFileSystem::new(temp_dir.path()).expect("managed file system");
+        let mut executor = BrowserActionExecutor::with_file_system(session, file_system);
+        executor.set_upload_file_availability(true, Vec::new());
+
+        let result = executor
+            .execute(&BrowserAction::UploadFile(UploadFileAction {
+                index: 3,
+                path: "../note.md".to_owned(),
+            }))
+            .await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .expect("upload error")
+                .contains("AgentSettings.available_file_paths")
+        );
+        assert!(executor.session().events().is_empty());
     }
 
     #[tokio::test]
