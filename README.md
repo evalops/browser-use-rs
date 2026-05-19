@@ -259,7 +259,7 @@ includes:
 - `browser-use-dom`: DOM, accessibility, and selector-map types.
 - `browser-use-tools`: built-in action schemas and registry contracts.
 - `browser-use-llm`: provider trait and model request/response types.
-- `browser-use-cli`: command-line entrypoint and daemon surface.
+- `browser-use-cli`: command-line entrypoint and local TCP/HTTP daemon surface.
 - `browser-use-mcp`: MCP bridge.
 - `browser-use-conformance`: golden fixtures and parity test utilities.
 

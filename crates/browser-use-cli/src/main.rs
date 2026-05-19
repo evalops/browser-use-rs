@@ -2911,6 +2911,16 @@ mod tests {
     }
 
     #[test]
+    fn daemon_transport_boundary_excludes_unix_sockets() {
+        let error = Cli::try_parse_from(["browser-use-rs", "daemon", "--transport", "unix"])
+            .expect_err("unix socket transport should not parse");
+        let message = error.to_string();
+        assert!(message.contains("unix"), "{message}");
+        assert!(message.contains("tcp"), "{message}");
+        assert!(message.contains("http"), "{message}");
+    }
+
+    #[test]
     fn mcp_session_plan_persists_implicit_session_ids() {
         assert_eq!(
             mcp_session_plan(true, false, false, "existing").expect("in memory"),
