@@ -123,14 +123,19 @@ configured, the direct-CDP session records HTTPS request/response/loading data
 into a HAR 1.2 file on best-effort `close_browser()` flush. `minimal` mode
 keeps entries for the main page origin, `full` keeps captured HTTPS entries
 except favicon requests, and `omit`/`embed`/`attach` control response and
-request body representation. Video recording and Playwright trace surfaces
-remain separate future recording work.
+request body representation. Playwright trace surfaces remain separate future
+recording work.
 `BrowserProfile.record_video_dir` defaults to unset and accepts upstream
 `save_recording_path`; canonical JSON emits `record_video_dir`.
 `record_video_size` uses the same viewport-size shape, and
-`record_video_framerate` defaults to `30`. These fields are config-parity only
-in the current direct-CDP implementation and do not affect launch planning
-until the runtime video-recorder slice lands.
+`record_video_framerate` defaults to `30`. When configured, direct-CDP sessions
+start PNG screencast capture for the focused target, acknowledge captured
+frames, switch screencast sessions when the focused target changes, and write an
+animated GIF artifact under `record_video_dir` during best-effort
+`close_browser()` flush. The GIF path is dependency-light; MP4/WebM encoder
+parity remains tracked separately. Video start/stop/encode failures record
+browser diagnostics rather than failing normal startup/close, and video
+artifact paths stay out of normal browser state, action, and agent replies.
 `BrowserProfile.traces_dir` defaults to unset and accepts upstream
 `trace_path`; canonical JSON emits `traces_dir`. When configured, direct-CDP
 sessions write a best-effort JSON trace artifact during `close_browser()` in

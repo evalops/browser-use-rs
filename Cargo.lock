@@ -163,6 +163,7 @@ dependencies = [
  "base64",
  "browser-use-dom",
  "futures-util",
+ "image",
  "percent-encoding",
  "reqwest",
  "schemars",

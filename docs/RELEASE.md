@@ -74,12 +74,14 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `record_har_path`. Configured direct-CDP sessions record HTTPS
   request/response/loading events into a HAR 1.2 file on best-effort
   `close_browser()` flush, including `full` vs `minimal` filtering and
-  `omit`/`embed`/`attach` body representation. Video and trace recording remain
-  separate future recording surfaces.
-- Video recording configuration parity for `record_video_dir` with upstream
+  `omit`/`embed`/`attach` body representation.
+- Video recording runtime support for `record_video_dir` with upstream
   `save_recording_path` alias, optional `record_video_size`, and
-  `record_video_framerate=30`. These profile fields round-trip without changing
-  direct-CDP launch behavior until runtime video recording is implemented.
+  `record_video_framerate=30`. Configured direct-CDP sessions start PNG
+  screencast capture, acknowledge frames, switch capture on focused-target
+  changes, and write an animated GIF under the configured directory during
+  best-effort `close_browser()` flush. MP4/WebM encoder parity remains tracked
+  separately.
 - Trace path configuration parity for `traces_dir` with upstream `trace_path`
   alias. Configured direct-CDP sessions write a best-effort close-time JSON
   trace artifact with lifecycle events, security diagnostics, current target

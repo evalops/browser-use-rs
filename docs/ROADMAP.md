@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#136 Add BrowserProfile video recording runtime parity](https://github.com/evalops/browser-use-rs/issues/136)
+- [#137 Add upstream MP4/WebM video encoding parity](https://github.com/evalops/browser-use-rs/issues/137)
 
 ## Completed Tracks
 
+- [#136 Add BrowserProfile video recording runtime parity](https://github.com/evalops/browser-use-rs/issues/136)
 - [#134 Add BrowserProfile tracing recording parity](https://github.com/evalops/browser-use-rs/issues/134)
 - [#135 Add BrowserProfile trace path config parity](https://github.com/evalops/browser-use-rs/issues/135)
 - [#133 Add BrowserProfile video recording config parity](https://github.com/evalops/browser-use-rs/issues/133)
@@ -242,8 +243,9 @@ Implemented:
   CDP traffic with upstream `full`/`minimal` filtering and
   `omit`/`embed`/`attach` body representation,
   video recording config fields (`record_video_dir`/`save_recording_path`,
-  `record_video_size`, and `record_video_framerate`) as profile-only parity
-  pending runtime capture,
+  `record_video_size`, and `record_video_framerate`) as runtime direct-CDP
+  screencast capture flushed to animated GIF on close, with MP4/WebM encoder
+  parity tracked separately,
   trace path config (`traces_dir`/`trace_path`) plus best-effort close-time
   JSON trace artifacts that keep trace metadata out of normal browser state
   responses,

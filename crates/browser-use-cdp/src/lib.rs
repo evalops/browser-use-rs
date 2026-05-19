@@ -5290,6 +5290,220 @@ fn trace_security_event_json(event: &BrowserSecurityEvent) -> Value {
     })
 }
 
+fn video_recording_failed_event(phase: &str, error: &BrowserError) -> BrowserLifecycleEvent {
+    BrowserLifecycleEvent::browser_diagnostic(
+        "video_recording_failed",
+        BTreeMap::from([("phase".to_owned(), phase.to_owned())]),
+        Some(error.to_string()),
+        format!("Browser video recording {phase} failed: {error}"),
+    )
+}
+
+#[derive(Debug, Default)]
+struct CdpVideoState {
+    active_session_id: Option<String>,
+    frames: Vec<String>,
+}
+
+#[derive(Debug)]
+struct CdpVideoRecorder {
+    dir: PathBuf,
+    size: BrowserViewport,
+    framerate: u32,
+    state: Mutex<CdpVideoState>,
+}
+
+impl CdpVideoRecorder {
+    fn from_profile(profile: &BrowserProfile) -> Option<Arc<Self>> {
+        let dir = profile.record_video_dir.clone()?;
+        Some(Arc::new(Self {
+            dir,
+            size: profile.record_video_size.unwrap_or(profile.viewport),
+            framerate: profile.record_video_framerate.max(1),
+            state: Mutex::new(CdpVideoState::default()),
+        }))
+    }
+
+    async fn start_screencast_for_page(
+        &self,
+        connection: &CdpConnection,
+        page: &AttachedPage,
+    ) -> Result<(), BrowserError> {
+        let previous_session_id = {
+            let state = self.state.lock().await;
+            if state.active_session_id.as_deref() == Some(page.session_id.as_str()) {
+                return Ok(());
+            }
+            state.active_session_id.clone()
+        };
+
+        if let Some(previous_session_id) = previous_session_id {
+            let _ = connection
+                .command("Page.stopScreencast", json!({}), Some(&previous_session_id))
+                .await;
+        }
+
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        connection
+            .command(
+                "Page.startScreencast",
+                json!({
+                    "format": "png",
+                    "quality": 90,
+                    "maxWidth": self.size.width,
+                    "maxHeight": self.size.height,
+                    "everyNthFrame": 1,
+                }),
+                Some(&page.session_id),
+            )
+            .await?;
+
+        self.state.lock().await.active_session_id = Some(page.session_id.clone());
+        Ok(())
+    }
+
+    async fn observe_cdp_event(&self, connection: &CdpConnection, event: &CdpEvent) {
+        if event.method != "Page.screencastFrame" {
+            return;
+        }
+        let Some(data) = event.params.get("data").and_then(Value::as_str) else {
+            return;
+        };
+        let frame_session_id = event.params.get("sessionId").and_then(Value::as_u64);
+        let should_ack = {
+            let mut state = self.state.lock().await;
+            if state.active_session_id.as_deref() != event.session_id.as_deref() {
+                return;
+            }
+            state.frames.push(data.to_owned());
+            frame_session_id
+        };
+
+        if let Some(frame_session_id) = should_ack {
+            let _ = connection
+                .command(
+                    "Page.screencastFrameAck",
+                    json!({ "sessionId": frame_session_id }),
+                    event.session_id.as_deref(),
+                )
+                .await;
+        }
+    }
+
+    async fn stop_and_write(
+        &self,
+        connection: &CdpConnection,
+    ) -> Result<Option<PathBuf>, BrowserError> {
+        let (active_session_id, frames) = {
+            let mut state = self.state.lock().await;
+            (
+                state.active_session_id.take(),
+                std::mem::take(&mut state.frames),
+            )
+        };
+        let Some(active_session_id) = active_session_id else {
+            return Ok(None);
+        };
+
+        let stop_result = connection
+            .command("Page.stopScreencast", json!({}), Some(&active_session_id))
+            .await
+            .map(|_| ());
+        let path = self.unique_artifact_path(trace_epoch_millis()).await?;
+        self.write_gif(&path, &frames)?;
+        stop_result?;
+        Ok(Some(path))
+    }
+
+    async fn unique_artifact_path(&self, epoch_millis: u128) -> Result<PathBuf, BrowserError> {
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        for attempt in 0..1_000 {
+            let path = self.artifact_path(epoch_millis, attempt);
+            match tokio::fs::metadata(&path).await {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+                Err(error) => return Err(BrowserError::StateUnavailable(error.to_string())),
+            }
+        }
+        Ok(self.artifact_path(epoch_millis, 1_000))
+    }
+
+    fn artifact_path(&self, epoch_millis: u128, attempt: usize) -> PathBuf {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        self.dir.join(format!(
+            "browser-use-rs-video-{epoch_millis}-{}{suffix}.gif",
+            std::process::id()
+        ))
+    }
+
+    fn write_gif(&self, path: &Path, frames: &[String]) -> Result<(), BrowserError> {
+        let file = std::fs::File::create(path)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let mut encoder = image::codecs::gif::GifEncoder::new(file);
+        encoder
+            .set_repeat(image::codecs::gif::Repeat::Infinite)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+
+        if frames.is_empty() {
+            let frame = image::RgbaImage::from_pixel(
+                self.size.width.max(1),
+                self.size.height.max(1),
+                image::Rgba([0, 0, 0, 255]),
+            );
+            encoder
+                .encode_frame(image::Frame::from_parts(
+                    frame,
+                    0,
+                    0,
+                    video_frame_delay(self.framerate),
+                ))
+                .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+            return Ok(());
+        }
+
+        for frame in frames {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(frame)
+                .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+            let image = image::load_from_memory(&bytes)
+                .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+            let frame = if image.width() == self.size.width && image.height() == self.size.height {
+                image.to_rgba8()
+            } else {
+                image
+                    .resize_exact(
+                        self.size.width.max(1),
+                        self.size.height.max(1),
+                        image::imageops::FilterType::Triangle,
+                    )
+                    .to_rgba8()
+            };
+            encoder
+                .encode_frame(image::Frame::from_parts(
+                    frame,
+                    0,
+                    0,
+                    video_frame_delay(self.framerate),
+                ))
+                .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        }
+
+        Ok(())
+    }
+}
+
+fn video_frame_delay(framerate: u32) -> image::Delay {
+    image::Delay::from_numer_denom_ms(1_000, framerate.max(1))
+}
+
 fn format_har_timestamp(timestamp: Option<f64>) -> String {
     let Some(timestamp) = timestamp else {
         return String::new();
@@ -5608,6 +5822,7 @@ pub struct CdpBrowserSession {
     dom_highlight: DomHighlightConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
     har_recorder: Option<Arc<CdpHarRecorder>>,
+    video_recorder: Option<Arc<CdpVideoRecorder>>,
     trace_recorder: Option<CdpTraceRecorder>,
     downloads_path: Option<PathBuf>,
     auto_download_pdfs: bool,
@@ -5668,6 +5883,7 @@ impl CdpBrowserSession {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
+        let initial_page = page.clone();
         let viewport_emulation = ViewportEmulationConfig::from_profile(profile);
         apply_viewport_emulation_for_page(&connection, &page, viewport_emulation).await?;
         let page = Arc::new(Mutex::new(page));
@@ -5677,6 +5893,7 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let har_recorder = CdpHarRecorder::from_profile(profile);
+        let video_recorder = CdpVideoRecorder::from_profile(profile);
         let trace_recorder = CdpTraceRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
@@ -5702,12 +5919,15 @@ impl CdpBrowserSession {
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
             network_activity.clone(),
-            cdp_auto_pdf_download,
-            har_recorder.clone(),
+            BrowserLifecycleWatchdogRecorders {
+                cdp_auto_pdf_download,
+                har_recorder: har_recorder.clone(),
+                video_recorder: video_recorder.clone(),
+            },
         );
         let page_load_wait = PageLoadWaitConfig::from_profile(profile);
 
-        Ok(Self {
+        let session = Self {
             connection,
             page,
             last_dom_state,
@@ -5724,6 +5944,7 @@ impl CdpBrowserSession {
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             har_recorder,
+            video_recorder,
             trace_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -5734,7 +5955,9 @@ impl CdpBrowserSession {
             _security_watchdog: None,
             _launched_browser: None,
             _downloads_dir: downloads.temp_dir,
-        })
+        };
+        session.start_video_recording_for_page(&initial_page).await;
+        Ok(session)
     }
 
     pub async fn launch(profile: &BrowserProfile) -> Result<Self, BrowserError> {
@@ -5762,6 +5985,7 @@ impl CdpBrowserSession {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
+        let initial_page = page.clone();
         let viewport_emulation = ViewportEmulationConfig::from_profile(profile);
         apply_viewport_emulation_for_page(&connection, &page, viewport_emulation).await?;
         let storage_state_loaded_event = if let Some(storage_state_path) =
@@ -5785,6 +6009,7 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let har_recorder = CdpHarRecorder::from_profile(profile);
+        let video_recorder = CdpVideoRecorder::from_profile(profile);
         let trace_recorder = CdpTraceRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
@@ -5813,8 +6038,11 @@ impl CdpBrowserSession {
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
             network_activity.clone(),
-            cdp_auto_pdf_download,
-            har_recorder.clone(),
+            BrowserLifecycleWatchdogRecorders {
+                cdp_auto_pdf_download,
+                har_recorder: har_recorder.clone(),
+                video_recorder: video_recorder.clone(),
+            },
         );
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
@@ -5830,7 +6058,7 @@ impl CdpBrowserSession {
         )
         .await?;
 
-        Ok(Self {
+        let session = Self {
             connection,
             page,
             last_dom_state,
@@ -5847,6 +6075,7 @@ impl CdpBrowserSession {
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             har_recorder,
+            video_recorder,
             trace_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -5857,7 +6086,9 @@ impl CdpBrowserSession {
             _security_watchdog: security_watchdog,
             _launched_browser: launched_browser,
             _downloads_dir: downloads.temp_dir,
-        })
+        };
+        session.start_video_recording_for_page(&initial_page).await;
+        Ok(session)
     }
 
     pub async fn close_browser(&self) -> Result<(), BrowserError> {
@@ -5868,6 +6099,12 @@ impl CdpBrowserSession {
         }
         if let Some(har_recorder) = &self.har_recorder {
             let _ = har_recorder.write_har().await;
+        }
+        if let Some(video_recorder) = &self.video_recorder {
+            if let Err(error) = video_recorder.stop_and_write(&self.connection).await {
+                self.record_lifecycle_event(video_recording_failed_event("stop", &error))
+                    .await;
+            }
         }
         let _ = self.write_trace_artifact().await;
         self.connection.mark_intentional_stop();
@@ -5960,7 +6197,21 @@ impl CdpBrowserSession {
     }
 
     async fn set_current_page(&self, page: AttachedPage) {
-        *self.page.lock().await = page;
+        *self.page.lock().await = page.clone();
+        self.start_video_recording_for_page(&page).await;
+    }
+
+    async fn start_video_recording_for_page(&self, page: &AttachedPage) {
+        let Some(video_recorder) = &self.video_recorder else {
+            return;
+        };
+        if let Err(error) = video_recorder
+            .start_screencast_for_page(&self.connection, page)
+            .await
+        {
+            self.record_lifecycle_event(video_recording_failed_event("start", &error))
+                .await;
+        }
     }
 
     async fn apply_viewport_emulation(&self, page: &AttachedPage) -> Result<(), BrowserError> {
@@ -6724,6 +6975,12 @@ struct BrowserLifecycleWatchdog {
     handle: tokio::task::JoinHandle<()>,
 }
 
+struct BrowserLifecycleWatchdogRecorders {
+    cdp_auto_pdf_download: Option<Arc<CdpAutoPdfDownloadState>>,
+    har_recorder: Option<Arc<CdpHarRecorder>>,
+    video_recorder: Option<Arc<CdpVideoRecorder>>,
+}
+
 impl BrowserLifecycleWatchdog {
     fn start(
         connection: Arc<CdpConnection>,
@@ -6731,8 +6988,7 @@ impl BrowserLifecycleWatchdog {
         lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
         network_request_timeout_ms: u64,
         network_activity: Arc<Mutex<NetworkActivityState>>,
-        cdp_auto_pdf_download: Option<Arc<CdpAutoPdfDownloadState>>,
-        har_recorder: Option<Arc<CdpHarRecorder>>,
+        recorders: BrowserLifecycleWatchdogRecorders,
     ) -> Self {
         let mut events = connection.subscribe_events();
         let lifecycle_event_sink = LifecycleEventSink {
@@ -6755,8 +7011,7 @@ impl BrowserLifecycleWatchdog {
                                     &lifecycle_event_sink,
                                     &mut active_network_requests,
                                     &network_activity,
-                                    &cdp_auto_pdf_download,
-                                    &har_recorder,
+                                    &recorders,
                                     event,
                                 )
                                 .await;
@@ -6807,12 +7062,14 @@ async fn handle_lifecycle_cdp_event(
     lifecycle_event_sink: &LifecycleEventSink,
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     network_activity: &Arc<Mutex<NetworkActivityState>>,
-    cdp_auto_pdf_download: &Option<Arc<CdpAutoPdfDownloadState>>,
-    har_recorder: &Option<Arc<CdpHarRecorder>>,
+    recorders: &BrowserLifecycleWatchdogRecorders,
     event: CdpEvent,
 ) {
-    if let Some(har_recorder) = har_recorder {
+    if let Some(har_recorder) = &recorders.har_recorder {
         har_recorder.observe_cdp_event(connection, &event).await;
+    }
+    if let Some(video_recorder) = &recorders.video_recorder {
+        video_recorder.observe_cdp_event(connection, &event).await;
     }
 
     match event.method.as_str() {
@@ -6824,17 +7081,21 @@ async fn handle_lifecycle_cdp_event(
             forget_network_request(active_network_requests, &event);
             track_network_activity_finished(network_activity, &event).await;
             if event.method == "Network.loadingFinished" {
-                if let Some(event) =
-                    cdp_auto_pdf_lifecycle_event(connection, cdp_auto_pdf_download, &event).await
+                if let Some(event) = cdp_auto_pdf_lifecycle_event(
+                    connection,
+                    &recorders.cdp_auto_pdf_download,
+                    &event,
+                )
+                .await
                 {
                     lifecycle_event_sink.push(event).await;
                 }
-            } else if let Some(cdp_auto_pdf_download) = cdp_auto_pdf_download {
+            } else if let Some(cdp_auto_pdf_download) = &recorders.cdp_auto_pdf_download {
                 cdp_auto_pdf_download.forget_candidate(&event).await;
             }
         }
         "Network.responseReceived" => {
-            if let Some(cdp_auto_pdf_download) = cdp_auto_pdf_download {
+            if let Some(cdp_auto_pdf_download) = &recorders.cdp_auto_pdf_download {
                 cdp_auto_pdf_download.observe_response(&event).await;
             }
         }
@@ -10894,6 +11155,7 @@ mod tests {
             dom_highlight: DomHighlightConfig::from_profile(&BrowserProfile::default()),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
             har_recorder: None,
+            video_recorder: None,
             trace_recorder: None,
             downloads_path,
             auto_download_pdfs,
@@ -11228,6 +11490,9 @@ mod tests {
             "Browser.grantPermissions"
             | "Browser.close"
             | "Browser.setDownloadBehavior"
+            | "Page.screencastFrameAck"
+            | "Page.startScreencast"
+            | "Page.stopScreencast"
             | "Page.enable"
             | "Network.enable"
             | "Emulation.setDeviceMetricsOverride" => json!({}),
@@ -11241,6 +11506,15 @@ mod tests {
             "id": id,
             "result": result
         })
+    }
+
+    fn test_png_frame_base64(width: u32, height: u32) -> String {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 96, 255]));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut cursor, image::ImageFormat::Png)
+            .expect("encode png frame");
+        base64::engine::general_purpose::STANDARD.encode(cursor.into_inner())
     }
 
     fn arg_index(args: &[String], expected: &str) -> usize {
@@ -12282,6 +12556,90 @@ mod tests {
             configured.launch_plan().args,
             BrowserProfile::default().launch_plan().args
         );
+    }
+
+    #[tokio::test]
+    async fn video_recording_captures_screencast_frames_and_writes_gif() {
+        let temp_dir = TempDir::new().expect("video temp dir");
+        let video_dir = temp_dir.path().join("videos");
+        let profile = BrowserProfile {
+            record_video_dir: Some(video_dir.clone()),
+            record_video_size: Some(BrowserViewport {
+                width: 2,
+                height: 2,
+            }),
+            record_video_framerate: 12,
+            ..BrowserProfile::default()
+        };
+        let (endpoint, command_log) = cdp_command_test_server(None, 11).await;
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect video session");
+
+        session
+            .connection
+            .event_tx
+            .send(CdpEvent {
+                method: "Page.screencastFrame".to_owned(),
+                params: json!({
+                    "data": test_png_frame_base64(2, 2),
+                    "sessionId": 7
+                }),
+                session_id: Some("session-1".to_owned()),
+            })
+            .expect("send screencast frame");
+        sleep(Duration::from_millis(20)).await;
+
+        session.close_browser().await.expect("close video browser");
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command.method.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Browser.grantPermissions",
+                "Browser.setDownloadBehavior",
+                "Target.getTargets",
+                "Target.attachToTarget",
+                "Page.enable",
+                "Network.enable",
+                "Emulation.setDeviceMetricsOverride",
+                "Page.startScreencast",
+                "Page.screencastFrameAck",
+                "Page.stopScreencast",
+                "Browser.close"
+            ]
+        );
+        let start = commands
+            .iter()
+            .find(|command| command.method == "Page.startScreencast")
+            .expect("start screencast command");
+        assert_eq!(start.session_id.as_deref(), Some("session-1"));
+        assert_eq!(start.params["format"], json!("png"));
+        assert_eq!(start.params["maxWidth"], json!(2));
+        assert_eq!(start.params["maxHeight"], json!(2));
+        let ack = commands
+            .iter()
+            .find(|command| command.method == "Page.screencastFrameAck")
+            .expect("screencast frame ack");
+        assert_eq!(ack.session_id.as_deref(), Some("session-1"));
+        assert_eq!(ack.params["sessionId"], json!(7));
+
+        let video_path = std::fs::read_dir(&video_dir)
+            .expect("video dir entries")
+            .map(|entry| entry.expect("video dir entry").path())
+            .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("gif"))
+            .expect("gif video artifact");
+        let bytes = tokio::fs::read(&video_path)
+            .await
+            .expect("read video artifact");
+        assert!(bytes.starts_with(b"GIF"));
+
+        let lifecycle_json =
+            serde_json::to_string(&session.lifecycle_events().await).expect("lifecycle json");
+        assert!(!lifecycle_json.contains("browser-use-rs-video"));
+        assert!(!lifecycle_json.contains(video_dir.to_str().expect("video dir utf8")));
     }
 
     #[test]

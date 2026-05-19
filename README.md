@@ -77,9 +77,12 @@ includes:
   each wait. `record_har_path`/`save_har_path` enables best-effort HAR 1.2
   capture for HTTPS CDP traffic, with upstream `record_har_mode=full|minimal`
   filtering and `record_har_content=omit|embed|attach` body handling flushed
-  on `close_browser()`. Video recording config fields (`record_video_dir` with
-  `save_recording_path`, `record_video_size`, and `record_video_framerate`)
-  round-trip without changing launch behavior until runtime recording lands.
+  on `close_browser()`. `record_video_dir` with upstream
+  `save_recording_path` starts best-effort direct-CDP screencast capture and
+  writes an animated GIF under the configured directory on `close_browser()`,
+  honoring `record_video_size` and `record_video_framerate` while keeping video
+  artifact metadata out of normal browser state and action replies. MP4/WebM
+  encoder parity remains tracked separately.
   Trace config fields (`traces_dir` with `trace_path`) also round-trip and
   write best-effort close-time JSON trace artifacts containing lifecycle,
   security, current-page, and last-DOM snapshots without adding trace artifact
