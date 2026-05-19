@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #112 lands and CI is green.
+- [#113 Add BrowserProfile ignore_default_args and default Chrome arg parity](https://github.com/evalops/browser-use-rs/issues/113)
 
 ## Completed Tracks
 
