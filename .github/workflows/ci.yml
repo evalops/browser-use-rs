@@ -40,5 +40,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Rustdoc missing-docs gate
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D missing_docs
+
       - name: Test
         run: cargo test --workspace

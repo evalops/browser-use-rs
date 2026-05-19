@@ -1,3 +1,10 @@
+//! Prompt and schema construction for agent model calls.
+//!
+//! This module translates browser state, history, settings, managed-file state,
+//! and tool schemas into provider-neutral [`ChatRequest`] values. The functions
+//! here are deliberately deterministic because tests compare their output
+//! against browser-use compatibility expectations.
+
 use crate::{
     ActionResult, AgentHistory, AgentHistoryItem, AgentOutput, AgentRunError, AgentSettings,
     BrowserAction, BrowserStateSummary, JudgementResult, LlmScreenshotSize, ManagedFileSystem,
@@ -190,6 +197,7 @@ pub(crate) fn totp_code_at(
     Some(format!("{code:0width$}", width = digits as usize))
 }
 
+/// Builds the normal step request without managed file-system context.
 pub fn build_step_request(
     task: &str,
     state: &BrowserStateSummary,
@@ -199,6 +207,7 @@ pub fn build_step_request(
     build_step_request_with_file_system(task, state, history, settings, None)
 }
 
+/// Builds the normal step request with optional managed file-system context.
 pub fn build_step_request_with_file_system(
     task: &str,
     state: &BrowserStateSummary,
@@ -937,15 +946,140 @@ fn glob_match(value: &str, pattern: &str) -> bool {
 }
 
 pub(crate) fn schema_for_agent_output() -> Value {
-    serde_json::to_value(schemars::schema_for!(AgentOutput)).unwrap_or(Value::Null)
+    schema_to_compat_value(schemars::schema_for!(AgentOutput))
 }
 
 fn schema_for_judgement_result() -> Value {
-    serde_json::to_value(schemars::schema_for!(JudgementResult)).unwrap_or(Value::Null)
+    schema_to_compat_value(schemars::schema_for!(JudgementResult))
 }
 
 fn schema_for_message_compaction_output() -> Value {
-    serde_json::to_value(schemars::schema_for!(MessageCompactionOutput)).unwrap_or(Value::Null)
+    schema_to_compat_value(schemars::schema_for!(MessageCompactionOutput))
+}
+
+/// Converts a generated JSON Schema into the compact browser-use wire shape.
+///
+/// Rust doc comments are source documentation first, but `schemars` also copies
+/// them into JSON Schema `description` metadata. Browser-use-rs compares these
+/// schemas against upstream-compatible fixtures, so this helper preserves the
+/// small set of descriptions that were already part of that contract and
+/// removes newly introduced doc metadata before schemas reach LLM prompts or
+/// MCP manifests.
+pub fn schema_to_compat_value<T>(schema: T) -> Value
+where
+    T: serde::Serialize,
+{
+    let mut value = serde_json::to_value(schema).unwrap_or(Value::Null);
+    normalize_compat_schema(&mut value, false);
+    value
+}
+
+fn normalize_compat_schema(value: &mut Value, inside_properties_map: bool) {
+    match value {
+        Value::Object(entries) => {
+            let removed_metadata_only_description = if inside_properties_map {
+                false
+            } else {
+                remove_non_contract_description(entries)
+            };
+
+            for (key, entry) in entries.iter_mut() {
+                normalize_compat_schema(entry, key == "properties");
+            }
+
+            if let Some(ref_schema) = single_ref_all_of(entries) {
+                *value = ref_schema;
+                return;
+            }
+
+            fold_doc_only_unit_enum(entries);
+
+            if removed_metadata_only_description && entries.is_empty() {
+                *value = Value::Bool(true);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                normalize_compat_schema(item, false);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn remove_non_contract_description(entries: &mut serde_json::Map<String, Value>) -> bool {
+    let should_remove = matches!(
+        entries.get("description"),
+        Some(Value::String(description)) if !is_contract_schema_description(description)
+    );
+    if should_remove {
+        entries.remove("description");
+    }
+    should_remove
+}
+
+fn single_ref_all_of(entries: &serde_json::Map<String, Value>) -> Option<Value> {
+    if entries.len() != 1 {
+        return None;
+    }
+    let Some(Value::Array(items)) = entries.get("allOf") else {
+        return None;
+    };
+    let [Value::Object(item)] = items.as_slice() else {
+        return None;
+    };
+    if item.len() == 1 && item.contains_key("$ref") {
+        return Some(Value::Object(item.clone()));
+    }
+    None
+}
+
+fn is_contract_schema_description(description: &str) -> bool {
+    matches!(
+        description,
+        "Browser-use action model: each serialized action is a one-key object."
+            | "Free-text or schema-guided page extraction."
+            | "CSS selector lookup against the page."
+            | "Text or regex search against page content."
+            | "Browser state summary compatible with the browser-use agent step contract."
+            | "A compact node reference addressable by an action index."
+            | "Tree-shaped DOM node used for browser-use's evaluation/judge representation."
+            | "Node kind used by the evaluation-focused DOM tree serializer."
+            | "Compact page-shape statistics rendered into the agent prompt."
+            | "Viewport-relative integer bounds for an indexed element."
+            | "A network request that is still in flight when browser state is captured."
+            | "Viewport and scroll metrics used to help the agent reason about page shape."
+            | "Pagination affordance detected from the current page."
+            | "Serialized DOM state in the form the agent consumes."
+            | "Information about an open tab or page target."
+    )
+}
+
+fn fold_doc_only_unit_enum(entries: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(variants)) = entries.get("oneOf") else {
+        return;
+    };
+
+    let mut enum_values = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let Value::Object(variant) = variant else {
+            return;
+        };
+        if variant.len() != 2 || variant.get("type") != Some(&Value::String("string".to_owned())) {
+            return;
+        }
+        let Some(Value::Array(values)) = variant.get("enum") else {
+            return;
+        };
+        let [Value::String(value)] = values.as_slice() else {
+            return;
+        };
+        enum_values.push(Value::String(value.clone()));
+    }
+
+    entries.remove("oneOf");
+    entries.insert("enum".to_owned(), Value::Array(enum_values));
+    entries.insert("type".to_owned(), Value::String("string".to_owned()));
 }
 
 pub(crate) fn schema_for_agent_output_with_settings(settings: &AgentSettings) -> Value {

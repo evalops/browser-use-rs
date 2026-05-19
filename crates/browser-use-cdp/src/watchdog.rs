@@ -1,3 +1,10 @@
+//! Background CDP watchdog tasks.
+//!
+//! Watchdogs subscribe to raw CDP events and turn them into durable lifecycle,
+//! security, network, popup, download, and reconnect state. Keeping them in one
+//! module makes the session facade read like orchestration instead of event
+//! plumbing.
+
 use crate::{
     AttachedPage, BrowserError, BrowserLifecycleEvent, BrowserLifecycleEventKind, CdpConnection,
     CdpEvent, CdpHarRecorder, CdpVideoRecorder, NetworkActivityState, UrlAccessPolicy,

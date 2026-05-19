@@ -1,3 +1,10 @@
+//! Command-line and daemon entry point for browser-use-rs.
+//!
+//! The binary wires together the public crates: it parses CLI options, launches
+//! or connects to CDP browser sessions, configures LLM providers, runs bounded
+//! agents, manages persistent session records, and exposes the MCP JSON-RPC
+//! bridge over stdio, TCP, or HTTP.
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Command as StdCommand;

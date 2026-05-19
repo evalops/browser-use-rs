@@ -1,3 +1,10 @@
+//! Asynchronous Chrome DevTools Protocol websocket transport.
+//!
+//! [`CdpConnection`] is an actor-backed command multiplexer. Callers send
+//! request/response commands through a channel while the actor reads websocket
+//! events, routes responses to the waiting command, and republishes CDP events
+//! to lifecycle/watchdog code.
+
 use crate::{BrowserError, DevToolsEndpoint};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -18,6 +25,7 @@ const CDP_RECONNECT_DELAYS_MS: [u64; 3] = [1_000, 2_000, 4_000];
 const CDP_CONNECT_TIMEOUT_MS: u64 = 15_000;
 type CdpSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// Shared connection to a Chrome DevTools Protocol websocket.
 pub struct CdpConnection {
     pub(crate) request_tx: mpsc::Sender<CdpRequest>,
     pub(crate) event_tx: broadcast::Sender<CdpEvent>,
@@ -48,6 +56,7 @@ pub(crate) struct CdpEvent {
 }
 
 impl CdpConnection {
+    /// Opens a CDP websocket connection using endpoint defaults.
     pub async fn connect(endpoint: &DevToolsEndpoint) -> Result<Arc<Self>, BrowserError> {
         Self::connect_with_headers(endpoint, None).await
     }
@@ -134,6 +143,12 @@ impl CdpConnection {
         session_generation != self.current_generation()
     }
 
+    /// Sends a CDP command and waits for its matching response.
+    ///
+    /// `session_id` is supplied for target-scoped commands. The connection
+    /// checks that registered session ids still belong to the current websocket
+    /// generation so commands are not accidentally sent to stale sessions after
+    /// reconnect.
     pub async fn command(
         &self,
         method: &str,

@@ -1,3 +1,9 @@
+//! URL helpers used by prompts, search actions, and URL shortening.
+//!
+//! Public callers mostly use [`search_url`]. The private helpers preserve
+//! browser-use prompt behavior around start-URL extraction and long URL
+//! shortening.
+
 use crate::AgentOutput;
 use browser_use_llm::{ChatRequest, ContentPart, MessageRole};
 use browser_use_tools::SearchEngine;
@@ -9,6 +15,7 @@ use std::sync::OnceLock;
 use url::form_urlencoded;
 
 #[must_use]
+/// Builds the search-engine URL used by the `search` browser action.
 pub fn search_url(engine: &SearchEngine, query: &str) -> String {
     let encoded: String = form_urlencoded::byte_serialize(query.as_bytes()).collect();
     match engine {

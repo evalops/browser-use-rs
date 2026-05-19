@@ -1,3 +1,10 @@
+//! JavaScript runtime evaluation helpers.
+//!
+//! CDP `Runtime.evaluate` responses can contain primitives, remote object
+//! descriptions, exceptions, and JSON-serialized values. This module builds the
+//! command parameters and normalizes those response shapes into Rust strings or
+//! JSON values.
+
 use crate::BrowserError;
 use serde_json::{Value, json};
 

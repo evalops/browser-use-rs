@@ -1,3 +1,9 @@
+//! URL access policy for browser navigation.
+//!
+//! Profiles can allow or prohibit domains and optionally block literal IP
+//! addresses. This module centralizes that policy so navigation, redirects, and
+//! watchdog resets use the same decision rules.
+
 use crate::{BrowserError, BrowserProfile};
 use percent_encoding::percent_decode_str;
 use unicode_normalization::UnicodeNormalization;

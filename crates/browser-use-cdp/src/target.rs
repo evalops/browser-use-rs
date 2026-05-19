@@ -1,3 +1,9 @@
+//! Helpers for attaching to Chrome targets and resolving tab ids.
+//!
+//! Chrome exposes pages, frames, and workers as "targets". Browser-use actions
+//! operate on the currently attached page target, so this module owns the small
+//! data structure that pairs a target id with its flattened CDP session id.
+
 use crate::dom::is_missing_target_error;
 use crate::storage::page_tabs;
 use crate::{BrowserError, BrowserLifecycleEvent, BrowserProfile, BrowserViewport, CdpConnection};
@@ -5,9 +11,12 @@ use browser_use_dom::TabInfo;
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Page target attached through a flattened CDP session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachedPage {
+    /// Chrome target id for the page.
     pub target_id: String,
+    /// Flattened CDP session id used for page-scoped commands.
     pub session_id: String,
 }
 

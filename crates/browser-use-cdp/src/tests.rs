@@ -1,3 +1,10 @@
+//! CDP conformance and behavior tests.
+//!
+//! These tests cover launch/profile planning, URL policy, DOM extraction,
+//! lifecycle events, watchdog behavior, recording artifacts, storage state,
+//! target handling, and mocked CDP transports. Chrome-dependent tests stay
+//! ignored while pure contract tests run in normal CI.
+
 use super::*;
 
 fn cloud_browser_response_json(id: &str, status: &str) -> Value {

@@ -1,3 +1,9 @@
+//! Token usage and optional cost aggregation.
+//!
+//! The agent records provider-reported usage after each model call. This module
+//! merges those entries into [`UsageSummary`], optionally loading LiteLLM-style
+//! pricing data so callers can inspect approximate per-model cost.
+
 use crate::{AgentSettings, ModelUsageStats, UsageSummary};
 use browser_use_llm::{ChatCompletion, ChatUsage};
 use serde::Deserialize;

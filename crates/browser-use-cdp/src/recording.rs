@@ -1,3 +1,10 @@
+//! HAR, video, trace, and auto-PDF recording helpers.
+//!
+//! Recording is split out of the session facade so each artifact type can own
+//! its CDP subscriptions and serialization details. The public session calls
+//! into these helpers when a profile enables HAR, video, trace, or PDF
+//! auto-download behavior.
+
 use crate::{
     AttachedPage, BrowserError, BrowserLifecycleEvent, BrowserProfile, BrowserSecurityEvent,
     BrowserViewport, CdpConnection, CdpEvent, RecordHarContent, RecordHarMode,

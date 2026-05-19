@@ -1,3 +1,10 @@
+//! Keyboard input normalization for CDP.
+//!
+//! Browser-use accepts human-readable key strings such as `Enter`,
+//! `Control+A`, or text. This module normalizes those strings into the CDP
+//! `Input.dispatchKeyEvent` parameters and modifier bitmasks expected by
+//! Chrome.
+
 use serde_json::{Value, json};
 
 pub(crate) fn normalize_send_keys(keys: &str) -> String {

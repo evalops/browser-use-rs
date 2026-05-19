@@ -1,3 +1,10 @@
+//! Browser action execution and history replay execution.
+//!
+//! The agent produces [`BrowserAction`] values; this module turns those action
+//! structs into calls on a [`BrowserSession`]. It also owns action-batch stop
+//! rules, managed-file actions, per-action timeout handling, and replay
+//! execution against remapped history plans.
+
 use crate::{
     ActionResult, AgentHistory, AgentHistoryReplayExecution, AgentHistoryReplayExecutionItem,
     AgentHistoryReplayPlan, AgentHistoryReplayPlanError, AgentHistoryReplayPlanItem,
@@ -18,10 +25,13 @@ use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
 #[async_trait]
+/// Minimal async interface for something that can execute one browser action.
 pub trait ActionExecutor {
+    /// Executes one action and returns a browser-use action result.
     async fn execute(&mut self, action: &BrowserAction) -> ActionResult;
 }
 
+/// Default action executor backed by a [`BrowserSession`] and managed files.
 pub struct BrowserActionExecutor<S> {
     session: S,
     file_system: ManagedFileSystem,
@@ -32,6 +42,7 @@ pub struct BrowserActionExecutor<S> {
 }
 
 impl<S> BrowserActionExecutor<S> {
+    /// Creates an executor with a temporary managed file system.
     #[must_use]
     pub fn new(session: S) -> Self {
         Self::with_file_system(
@@ -40,6 +51,7 @@ impl<S> BrowserActionExecutor<S> {
         )
     }
 
+    /// Creates an executor with an explicit managed file system.
     #[must_use]
     pub fn with_file_system(session: S, file_system: ManagedFileSystem) -> Self {
         Self {
@@ -52,33 +64,40 @@ impl<S> BrowserActionExecutor<S> {
         }
     }
 
+    /// Returns the underlying browser session.
     #[must_use]
     pub fn session(&self) -> &S {
         &self.session
     }
 
+    /// Returns the managed file system.
     #[must_use]
     pub fn file_system(&self) -> &ManagedFileSystem {
         &self.file_system
     }
 
+    /// Returns mutable access to the managed file system.
     pub fn file_system_mut(&mut self) -> &mut ManagedFileSystem {
         &mut self.file_system
     }
 
+    /// Controls whether `done` includes requested managed file text.
     pub fn set_display_files_in_done_text(&mut self, display_files_in_done_text: bool) {
         self.display_files_in_done_text = display_files_in_done_text;
     }
 
+    /// Sets the per-action timeout, coercing invalid values to the default.
     pub fn set_action_timeout_seconds(&mut self, action_timeout_seconds: f64) {
         self.action_timeout_seconds = coerce_valid_action_timeout_seconds(action_timeout_seconds);
     }
 
+    /// Returns the effective per-action timeout.
     #[must_use]
     pub fn action_timeout_seconds(&self) -> f64 {
         coerce_valid_action_timeout_seconds(self.action_timeout_seconds)
     }
 
+    /// Sets upload-file allow-list enforcement.
     pub fn set_upload_file_availability(
         &mut self,
         enforce_upload_file_availability: bool,
@@ -115,6 +134,11 @@ where
         }
     }
 
+    /// Executes a model-provided action batch using browser-use stop rules.
+    ///
+    /// Batches stop after errors, terminal actions, navigation-like actions, a
+    /// `done` action after any prior action, or when a non-terminating action
+    /// unexpectedly changes the page URL.
     pub async fn execute_sequence(&mut self, actions: &[BrowserAction]) -> Vec<ActionResult> {
         let mut results = Vec::new();
 
@@ -163,6 +187,7 @@ where
         results
     }
 
+    /// Executes a precomputed history replay plan.
     pub async fn execute_replay_plan(
         &mut self,
         plan: &AgentHistoryReplayPlan,
@@ -258,6 +283,7 @@ where
         AgentHistoryReplayExecution { items, stop }
     }
 
+    /// Captures current browser state, builds a replay plan, and executes it.
     pub async fn replay_history(
         &mut self,
         history: &AgentHistory,

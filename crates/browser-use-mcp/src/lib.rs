@@ -1,28 +1,46 @@
 //! MCP bridge contracts for browser-use-rs.
+//!
+//! This crate contains only protocol-facing data contracts and JSON builders.
+//! The CLI owns the actual stdio/HTTP daemon, while these structs define the
+//! tool inputs, outputs, session records, and JSON-RPC envelopes both sides
+//! agree on.
 
 use std::path::PathBuf;
 
 use browser_use_cdp::DevToolsEndpoint;
-use browser_use_core::{ActionResult, AgentHistory, AgentHistoryReplayRun, AgentSettings};
+use browser_use_core::{
+    ActionResult, AgentHistory, AgentHistoryReplayRun, AgentSettings, schema_to_compat_value,
+};
 use browser_use_dom::BrowserStateSummary;
 use browser_use_tools::BrowserAction;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// MCP protocol version advertised by this server.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+/// Tool name for capturing browser state.
 pub const STATE_TOOL_NAME: &str = "browser_use_state";
+/// Tool name for executing browser actions.
 pub const ACTIONS_TOOL_NAME: &str = "browser_use_actions";
+/// Tool name for replaying saved agent history.
 pub const REPLAY_TOOL_NAME: &str = "browser_use_replay";
+/// Tool name for running a bounded agent task.
 pub const AGENT_TOOL_NAME: &str = "browser_use_agent";
+/// Tool name for persistent session lifecycle operations.
 pub const SESSION_TOOL_NAME: &str = "browser_use_session";
 
+/// MCP tool descriptor exposed from `tools/list`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpToolContract {
+    /// Tool name.
     pub name: String,
+    /// Human-readable tool description.
     pub description: String,
+    /// JSON Schema for tool input.
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    /// Optional JSON Schema for structured output.
     #[serde(
         rename = "outputSchema",
         default,
@@ -31,202 +49,291 @@ pub struct McpToolContract {
     pub output_schema: Option<Value>,
 }
 
+/// Minimal JSON-RPC request envelope used by MCP transports.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
+    /// JSON-RPC version, normally `2.0`.
     pub jsonrpc: String,
+    /// Request id, absent for notifications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<Value>,
+    /// JSON-RPC method name.
     pub method: String,
+    /// Optional method parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
 
+/// Parameters for an MCP `tools/call` request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallToolParams {
+    /// Tool name to call.
     pub name: String,
+    /// Tool-specific arguments.
     #[serde(default)]
     pub arguments: Value,
 }
 
+/// Input for `browser_use_state`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StateToolInput {
+    /// Existing persistent session id, if reusing one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Optional URL to navigate to before capturing state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Whether to include a screenshot in returned state.
     #[serde(default = "default_true")]
     pub screenshot: bool,
 }
 
+/// Input for `browser_use_actions`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActionsToolInput {
+    /// Existing persistent session id, if reusing one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Optional URL to navigate to before executing actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Browser actions to execute.
     #[serde(default)]
     pub actions: Vec<BrowserAction>,
+    /// Whether to include a screenshot in final returned state.
     #[serde(default = "default_true")]
     pub screenshot: bool,
 }
 
+/// Input for `browser_use_replay`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ReplayToolInput {
+    /// Existing persistent session id, if reusing one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Optional URL to navigate to before replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Saved agent history to replay.
     pub history: AgentHistory,
 }
 
+/// Input for `browser_use_agent`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentToolInput {
+    /// Existing persistent session id, if reusing one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Optional URL to navigate to before running the agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Natural-language task.
     pub task: String,
+    /// LLM provider selector.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<AgentProvider>,
+    /// Model id override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Provider base URL override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    /// Structured-output mode override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured_output_mode: Option<AgentStructuredOutputMode>,
+    /// Maximum agent steps.
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
+    /// Agent settings.
     #[serde(default, skip_serializing_if = "is_default_agent_settings")]
     pub settings: AgentSettings,
 }
 
+/// Structured-output mode exposed through MCP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum AgentStructuredOutputMode {
+    /// Use native JSON Schema response format.
     #[serde(rename = "json-schema", alias = "json_schema")]
     JsonSchema,
+    /// Use JSON object response format.
     #[serde(rename = "json-object", alias = "json_object")]
     JsonObject,
+    /// Prompt the model to emit JSON without API-level enforcement.
     #[serde(rename = "prompt-only", alias = "prompt_only")]
     PromptOnly,
+    /// Request JSON through a tool-call argument payload.
     #[serde(rename = "tool-call", alias = "tool_call")]
     ToolCall,
 }
 
+/// LLM provider selector exposed through MCP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum AgentProvider {
+    /// Generic OpenAI-compatible chat-completions provider.
     #[serde(rename = "openai-compatible", alias = "openai")]
     OpenAiCompatible,
+    /// DeepSeek OpenAI-compatible provider.
     #[serde(rename = "deepseek", alias = "deep-seek")]
     DeepSeek,
+    /// Groq OpenAI-compatible provider.
     #[serde(rename = "groq")]
     Groq,
+    /// Cerebras OpenAI-compatible provider.
     #[serde(rename = "cerebras")]
     Cerebras,
+    /// Mistral OpenAI-compatible provider.
     #[serde(rename = "mistral")]
     Mistral,
+    /// OpenRouter OpenAI-compatible provider.
     #[serde(rename = "openrouter", alias = "open-router")]
     OpenRouter,
+    /// Vercel AI Gateway OpenAI-compatible provider.
     #[serde(rename = "vercel", alias = "ai-gateway", alias = "vercel-ai-gateway")]
     Vercel,
+    /// Anthropic Messages provider.
     #[serde(rename = "anthropic")]
     Anthropic,
+    /// Google Gemini provider.
     #[serde(rename = "gemini", alias = "google")]
     Gemini,
+    /// Ollama local chat provider.
     #[serde(rename = "ollama", alias = "local")]
     Ollama,
 }
 
+/// Persistent session operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SessionOperation {
+    /// Start a persistent session.
     #[serde(rename = "start")]
     Start,
+    /// Stop a persistent session.
     #[serde(rename = "stop")]
     Stop,
+    /// List known persistent sessions.
     #[serde(rename = "list")]
     List,
+    /// Remove stale stopped session records.
     #[serde(rename = "cleanup")]
     Cleanup,
 }
 
+/// Input for `browser_use_session`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionToolInput {
+    /// Operation to perform.
     pub operation: SessionOperation,
+    /// Session id used by stop/state operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Optional start URL for session creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Whether session state should include a screenshot when returned.
     #[serde(default = "default_true")]
     pub screenshot: bool,
+    /// Forces cleanup/stop behavior when supported.
     #[serde(default)]
     pub force: bool,
 }
 
+/// Runtime status for a persistent session record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SessionStatus {
+    /// Process appears to still be running.
     #[serde(rename = "running")]
     Running,
+    /// Record exists but process/session appears stale.
     #[serde(rename = "stale")]
     Stale,
+    /// Session is stopped.
     #[serde(rename = "stopped")]
     Stopped,
+    /// Status has not been checked.
     #[serde(rename = "unknown")]
     Unknown,
 }
 
+/// Cleanup action applied to a persistent session record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SessionCleanupAction {
+    /// Record/directory was removed.
     #[serde(rename = "removed")]
     Removed,
+    /// Running session was stopped.
     #[serde(rename = "stopped")]
     Stopped,
 }
 
+/// One cleanup action result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionCleanupRecord {
+    /// Cleanup action performed.
     pub action: SessionCleanupAction,
+    /// Session affected by the action.
     pub session: SessionRecord,
 }
 
+/// Persistent session metadata stored by the CLI daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionRecord {
+    /// Stable session id.
     pub id: String,
+    /// DevTools endpoint for the session.
     pub endpoint: DevToolsEndpoint,
+    /// User data directory used by Chrome.
     pub user_data_dir: PathBuf,
+    /// Process id when the session was launched locally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_id: Option<u32>,
+    /// Last observed status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<SessionStatus>,
 }
 
+/// Output for `browser_use_state`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StateToolOutput {
+    /// Captured browser state.
     pub state: BrowserStateSummary,
 }
 
+/// Output for `browser_use_actions`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActionsToolOutput {
+    /// Action execution results.
     pub results: Vec<ActionResult>,
+    /// Browser state after actions.
     pub state: BrowserStateSummary,
 }
 
+/// Output for `browser_use_replay`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ReplayToolOutput {
+    /// Replay run result.
     pub replay: AgentHistoryReplayRun,
 }
 
+/// Output for `browser_use_agent`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentToolOutput {
+    /// Agent history.
     pub history: AgentHistory,
 }
 
+/// Output for `browser_use_session`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionToolOutput {
+    /// Session for start/stop operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionRecord>,
+    /// Sessions for list operations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<SessionRecord>,
+    /// Cleanup results.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cleaned_sessions: Vec<SessionCleanupRecord>,
+    /// Optional browser state for session operations that return state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<BrowserStateSummary>,
 }
@@ -244,6 +351,7 @@ fn is_default_agent_settings(settings: &AgentSettings) -> bool {
 }
 
 #[must_use]
+/// Returns all MCP tool contracts.
 pub fn tool_manifest() -> Vec<McpToolContract> {
     vec![
         tool_contract::<StateToolInput, StateToolOutput>(
@@ -270,11 +378,13 @@ pub fn tool_manifest() -> Vec<McpToolContract> {
 }
 
 #[must_use]
+/// Returns the tool manifest as JSON.
 pub fn tool_manifest_json() -> Value {
     serde_json::to_value(tool_manifest()).unwrap_or(Value::Null)
 }
 
 #[must_use]
+/// Builds the MCP `initialize` result payload.
 pub fn initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -293,11 +403,13 @@ pub fn initialize_result() -> Value {
 }
 
 #[must_use]
+/// Builds the MCP `tools/list` result payload.
 pub fn tools_list_result() -> Value {
     json!({ "tools": tool_manifest() })
 }
 
 #[must_use]
+/// Wraps structured tool output in an MCP successful tool result.
 pub fn tool_success_result(structured_content: Value) -> Value {
     let text = serde_json::to_string_pretty(&structured_content)
         .unwrap_or_else(|_| structured_content.to_string());
@@ -314,6 +426,7 @@ pub fn tool_success_result(structured_content: Value) -> Value {
 }
 
 #[must_use]
+/// Builds an MCP tool error result.
 pub fn tool_error_result(message: impl Into<String>) -> Value {
     json!({
         "content": [
@@ -327,6 +440,7 @@ pub fn tool_error_result(message: impl Into<String>) -> Value {
 }
 
 #[must_use]
+/// Builds a JSON-RPC success response.
 pub fn json_rpc_success(id: Value, result: Value) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -336,6 +450,7 @@ pub fn json_rpc_success(id: Value, result: Value) -> Value {
 }
 
 #[must_use]
+/// Builds a JSON-RPC error response.
 pub fn json_rpc_error(id: Option<Value>, code: i64, message: impl Into<String>) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -355,8 +470,8 @@ where
     McpToolContract {
         name: name.to_owned(),
         description: description.to_owned(),
-        input_schema: serde_json::to_value(schema_for!(Input)).unwrap_or(Value::Null),
-        output_schema: Some(serde_json::to_value(schema_for!(Output)).unwrap_or(Value::Null)),
+        input_schema: schema_to_compat_value(schema_for!(Input)),
+        output_schema: Some(schema_to_compat_value(schema_for!(Output))),
     }
 }
 

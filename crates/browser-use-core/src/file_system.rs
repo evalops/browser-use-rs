@@ -1,3 +1,9 @@
+//! Managed file sandbox and file-action helpers.
+//!
+//! Browser-use lets the model create, read, replace, upload, and attach files.
+//! This module keeps relative file actions inside a managed sandbox while still
+//! allowing explicit absolute paths for trusted caller-provided files.
+
 use crate::ActionResult;
 use base64::Engine;
 use browser_use_cdp::BrowserError;
@@ -900,28 +906,40 @@ pub(crate) fn replace_file_action(
     )))
 }
 
+/// Default directory name created inside each managed file-system base dir.
 pub const DEFAULT_FILE_SYSTEM_PATH: &str = "browseruse_agent_data";
 
+/// Serializable snapshot of the managed file system.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileSystemState {
+    /// Stored files keyed by managed file name.
     pub files: BTreeMap<String, FileSystemStoredFile>,
+    /// Base directory containing the managed data directory.
     pub base_dir: String,
+    /// Counter used to name extracted-content files.
     pub extracted_content_count: usize,
 }
 
+/// One file stored in the managed file system.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileSystemStoredFile {
+    /// Browser-use file type label, for example `MarkdownFile`.
     #[serde(rename = "type")]
     pub file_type: String,
+    /// File payload.
     pub data: FileSystemFileData,
 }
 
+/// Data payload for a managed file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileSystemFileData {
+    /// File stem without extension.
     pub name: String,
+    /// Text representation of the file contents.
     pub content: String,
 }
 
+/// In-memory and on-disk managed file sandbox.
 #[derive(Debug, Clone)]
 pub struct ManagedFileSystem {
     base_dir: std::path::PathBuf,
@@ -931,11 +949,13 @@ pub struct ManagedFileSystem {
 }
 
 impl ManagedFileSystem {
+    /// Creates a managed file system in a fresh temporary base directory.
     pub fn new_in_temp() -> Result<Self, BrowserError> {
         let base_dir = std::env::temp_dir().join(format!("browser_use_agent_{}", Uuid::now_v7()));
         Self::new(base_dir)
     }
 
+    /// Creates a managed file system under `base_dir`.
     pub fn new(base_dir: impl Into<std::path::PathBuf>) -> Result<Self, BrowserError> {
         let base_dir = base_dir.into();
         std::fs::create_dir_all(&base_dir)
@@ -958,6 +978,7 @@ impl ManagedFileSystem {
         Ok(file_system)
     }
 
+    /// Restores a managed file system from a serialized state snapshot.
     pub fn from_state(state: FileSystemState) -> Result<Self, BrowserError> {
         let base_dir = std::path::PathBuf::from(&state.base_dir);
         std::fs::create_dir_all(&base_dir)
@@ -986,18 +1007,22 @@ impl ManagedFileSystem {
         Ok(file_system)
     }
 
+    /// Returns the base directory.
     pub fn base_dir(&self) -> &std::path::Path {
         &self.base_dir
     }
 
+    /// Returns the managed data directory.
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
     }
 
+    /// Lists managed file names.
     pub fn list_files(&self) -> Vec<String> {
         self.files.keys().cloned().collect()
     }
 
+    /// Returns current `todo.md` contents.
     pub fn get_todo_contents(&self) -> String {
         self.files
             .get("todo.md")
@@ -1005,6 +1030,7 @@ impl ManagedFileSystem {
             .unwrap_or_default()
     }
 
+    /// Returns a serializable state snapshot.
     pub fn get_state(&self) -> FileSystemState {
         FileSystemState {
             files: self.files.clone(),
@@ -1013,6 +1039,7 @@ impl ManagedFileSystem {
         }
     }
 
+    /// Deletes managed files from disk and clears in-memory state.
     pub fn nuke(&mut self) -> Result<(), BrowserError> {
         if self.data_dir.exists() {
             std::fs::remove_dir_all(&self.data_dir)
@@ -1022,6 +1049,7 @@ impl ManagedFileSystem {
         Ok(())
     }
 
+    /// Saves extracted content into a numbered managed markdown file.
     pub fn save_extracted_content(&mut self, content: &str) -> Result<String, BrowserError> {
         let stem = format!("extracted_content_{}", self.extracted_content_count);
         let file_name = format!("{stem}.md");
@@ -1030,6 +1058,7 @@ impl ManagedFileSystem {
         Ok(file_name)
     }
 
+    /// Renders a compact XML-like description of managed files for prompts.
     pub fn describe(&self) -> String {
         const DISPLAY_CHARS: usize = 400;
         let mut description = String::new();
@@ -1079,6 +1108,7 @@ impl ManagedFileSystem {
         description.trim_end_matches('\n').to_owned()
     }
 
+    /// Returns text for a managed file if it can be displayed inline.
     pub fn display_file(&self, file_name: &str) -> Option<String> {
         let resolved_file = resolve_file_action_path_at(
             file_name,
@@ -1093,6 +1123,7 @@ impl ManagedFileSystem {
             .map(|file| file.data.content.clone())
     }
 
+    /// Returns final-answer display text and attachment path for a file.
     pub fn display_done_file(&self, file_name: &str) -> Option<(String, String)> {
         if std::path::Path::new(file_name).is_absolute() {
             return display_done_file(file_name);
@@ -1121,6 +1152,7 @@ impl ManagedFileSystem {
         ))
     }
 
+    /// Resolves a managed file path for upload actions.
     pub fn upload_file_path(&self, file_name: &str) -> Option<std::path::PathBuf> {
         if std::path::Path::new(file_name).is_absolute() {
             return None;
@@ -1140,6 +1172,7 @@ impl ManagedFileSystem {
         Some(resolved_file.path)
     }
 
+    /// Executes a write-file action against the managed sandbox or absolute path.
     pub fn write_file(
         &mut self,
         params: &browser_use_tools::WriteFileAction,
@@ -1197,6 +1230,7 @@ impl ManagedFileSystem {
         )))
     }
 
+    /// Executes a read-file action against the managed sandbox or absolute path.
     pub fn read_file(&self, file_name: &str) -> Result<ActionResult, BrowserError> {
         if std::path::Path::new(file_name).is_absolute() {
             return read_file_action(file_name);
@@ -1243,6 +1277,7 @@ impl ManagedFileSystem {
         })
     }
 
+    /// Executes a replace-file action against the managed sandbox or absolute path.
     pub fn replace_file(
         &mut self,
         file_name: &str,

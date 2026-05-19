@@ -1,3 +1,9 @@
+//! Agent run loop, checkpoints, callbacks, and model/browser orchestration.
+//!
+//! [`Agent`] is generic over a chat model and a browser session. That generic
+//! shape keeps the run loop independent from any specific LLM provider or
+//! browser backend while still allowing strongly typed tests and adapters.
+
 use crate::{
     ActionResult, AgentCurrentState, AgentHistory, AgentHistoryItem, AgentOutput, AgentSettings,
     BrowserAction, BrowserActionExecutor, FileSystemState, GenerateGif, JudgementResult,
@@ -29,15 +35,20 @@ use thiserror::Error;
 use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
+/// Serializable task envelope with settings and generated id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentTask {
+    /// Task/run id.
     pub id: Uuid,
+    /// Natural-language task instructions.
     pub task: String,
+    /// Settings used for this task.
     #[serde(default)]
     pub settings: AgentSettings,
 }
 
 impl AgentTask {
+    /// Creates a task with default settings and a fresh id.
     #[must_use]
     pub fn new(task: impl Into<String>) -> Self {
         Self {
@@ -48,61 +59,120 @@ impl AgentTask {
     }
 }
 
+/// Error returned by agent construction, stepping, and running.
 #[derive(Debug, Error)]
 pub enum AgentRunError {
+    /// Browser/session error.
     #[error(transparent)]
     Browser(#[from] BrowserError),
+    /// LLM/provider error.
     #[error(transparent)]
     Llm(#[from] LlmError),
+    /// Model output did not match the expected schema.
     #[error("invalid agent output: {0}")]
     InvalidOutput(String),
+    /// LLM call exceeded its timeout.
     #[error("LLM call timed out after {seconds} seconds")]
-    LlmTimedOut { seconds: u64 },
+    LlmTimedOut {
+        /// Timeout seconds.
+        seconds: u64,
+    },
+    /// Complete agent step exceeded its timeout.
     #[error("agent step timed out after {seconds} seconds")]
-    StepTimedOut { seconds: u64 },
+    StepTimedOut {
+        /// Timeout seconds.
+        seconds: u64,
+    },
+    /// Run exhausted the configured step budget.
     #[error("agent reached max steps ({max_steps}) without completing")]
-    StepLimitReached { max_steps: usize },
+    StepLimitReached {
+        /// Maximum steps requested by the caller.
+        max_steps: usize,
+    },
+    /// Too many consecutive step/action failures occurred.
     #[error("agent stopped after {failures} consecutive failures")]
-    MaxFailuresExceeded { failures: u32 },
+    MaxFailuresExceeded {
+        /// Consecutive failure count.
+        failures: u32,
+    },
+    /// Repeated-action loop detection fired.
     #[error("agent repeated the same action sequence for {window} steps")]
-    LoopDetected { window: usize },
+    LoopDetected {
+        /// Detection window size.
+        window: usize,
+    },
+    /// Stop was requested before a step.
     #[error("agent stopped before the next step: {reason}")]
-    Stopped { reason: String },
+    Stopped {
+        /// Stop reason.
+        reason: String,
+    },
+    /// Agent is paused.
     #[error("agent paused before the next step")]
     Paused,
+    /// External status callback interrupted the run.
     #[error("agent interrupted by external status callback")]
     ExternalStatusInterrupted,
+    /// User-provided callback failed.
     #[error("agent callback {callback} failed: {message}")]
     Callback {
+        /// Callback name.
         callback: &'static str,
+        /// Callback error message.
         message: String,
     },
+    /// Conversation transcript could not be saved.
     #[error("failed to save conversation to {path}: {source}")]
     ConversationSave {
+        /// Output path.
         path: String,
+        /// I/O source error.
         #[source]
         source: std::io::Error,
     },
+    /// Requested transcript encoding is unknown.
     #[error("unsupported conversation transcript encoding {encoding:?}")]
-    ConversationEncoding { encoding: String },
+    ConversationEncoding {
+        /// Requested encoding.
+        encoding: String,
+    },
+    /// Transcript text cannot be represented in the requested encoding.
     #[error("conversation transcript encoding {encoding:?} cannot represent the transcript text")]
-    ConversationEncodingLossy { encoding: String },
+    ConversationEncodingLossy {
+        /// Requested encoding.
+        encoding: String,
+    },
+    /// GIF history artifact could not be written.
     #[error("failed to save agent GIF at {path}: {message}")]
-    GifSave { path: String, message: String },
+    GifSave {
+        /// Output path.
+        path: String,
+        /// Error message.
+        message: String,
+    },
 }
 
+/// Serializable snapshot for pausing and resuming an agent run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCheckpoint {
+    /// Agent id.
     #[serde(default = "new_agent_id")]
     pub id: Uuid,
+    /// Current task text, including follow-up requests.
     pub task: String,
+    /// Runtime settings.
     pub settings: AgentSettings,
+    /// Durable history so far.
     pub history: AgentHistory,
+    /// Whether initial actions have already run.
     pub initial_actions_executed: bool,
+    /// Whether stop has been requested.
     #[serde(default, skip_serializing_if = "is_false")]
     pub stopped: bool,
+    /// Whether the agent is paused.
     #[serde(default, skip_serializing_if = "is_false")]
     pub paused: bool,
+    /// Managed file-system snapshot.
     pub file_system_state: FileSystemState,
 }
 
@@ -114,7 +184,9 @@ fn new_agent_id() -> Uuid {
     Uuid::now_v7()
 }
 
+/// Boxed future returned by async agent callbacks.
 pub type AgentCallbackFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+/// Callback invoked after a new step model output is accepted.
 pub type AgentStepCallback = Box<
     dyn for<'a> FnMut(
             &'a BrowserStateSummary,
@@ -124,13 +196,17 @@ pub type AgentStepCallback = Box<
         + Send
         + 'static,
 >;
+/// Callback invoked after the agent completes successfully.
 pub type AgentDoneCallback =
     Box<dyn for<'a> FnMut(&'a AgentHistory) -> AgentCallbackFuture<'a, ()> + Send + 'static>;
+/// Callback polled before steps to request a graceful stop.
 pub type AgentShouldStopCallback =
     Box<dyn FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static>;
+/// Callback polled before steps to report external interruption status.
 pub type AgentExternalStatusCallback =
     Box<dyn FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static>;
 
+/// Browser-use agent run loop.
 pub struct Agent<M, S> {
     pub(crate) id: Uuid,
     pub(crate) task: String,
@@ -181,11 +257,13 @@ where
     M: ChatModel,
     S: BrowserSession + Send + Sync,
 {
+    /// Creates an agent with default settings.
     #[must_use]
     pub fn new(task: impl Into<String>, llm: M, session: S) -> Self {
         Self::with_settings(task, AgentSettings::default(), llm, session)
     }
 
+    /// Creates an agent with explicit settings.
     #[must_use]
     pub fn with_settings(
         task: impl Into<String>,
@@ -198,6 +276,7 @@ where
         Self::with_settings_and_file_system(task, settings, llm, session, file_system)
     }
 
+    /// Creates an agent with explicit settings and managed file system.
     #[must_use]
     pub fn with_settings_and_file_system(
         task: impl Into<String>,
@@ -236,6 +315,7 @@ where
         }
     }
 
+    /// Restores an agent from a checkpoint with new live model/session handles.
     pub fn from_checkpoint(
         checkpoint: AgentCheckpoint,
         llm: M,
@@ -271,72 +351,88 @@ where
         })
     }
 
+    /// Returns immutable access to the run history.
     pub fn history(&self) -> &AgentHistory {
         &self.history
     }
 
+    /// Returns the agent id.
     pub fn id(&self) -> Uuid {
         self.id
     }
 
+    /// Backward-compatible alias for [`Agent::id`].
     pub fn task_id(&self) -> Uuid {
         self.id
     }
 
     #[must_use]
+    /// Returns this agent with a replacement id.
     pub fn with_task_id(mut self, task_id: Uuid) -> Self {
         self.set_task_id(task_id);
         self
     }
 
+    /// Replaces the agent id.
     pub fn set_task_id(&mut self, task_id: Uuid) {
         self.id = task_id;
     }
 
+    /// Returns this agent with a dedicated page-extraction model.
     pub fn with_page_extraction_llm(mut self, page_extraction_llm: M) -> Self {
         self.set_page_extraction_llm(page_extraction_llm);
         self
     }
 
+    /// Sets a dedicated model for extract actions.
     pub fn set_page_extraction_llm(&mut self, page_extraction_llm: M) {
         self.page_extraction_llm = Some(page_extraction_llm);
     }
 
+    /// Clears the dedicated extraction model.
     pub fn clear_page_extraction_llm(&mut self) {
         self.page_extraction_llm = None;
     }
 
+    /// Returns this agent with a dedicated judge model.
     pub fn with_judge_llm(mut self, judge_llm: M) -> Self {
         self.set_judge_llm(judge_llm);
         self
     }
 
+    /// Sets a dedicated judge model.
     pub fn set_judge_llm(&mut self, judge_llm: M) {
         self.judge_llm = Some(judge_llm);
     }
 
+    /// Clears the dedicated judge model.
     pub fn clear_judge_llm(&mut self) {
         self.judge_llm = None;
     }
 
+    /// Returns this agent with a fallback model for provider/rate-limit errors.
     pub fn with_fallback_llm(mut self, fallback_llm: M) -> Self {
         self.set_fallback_llm(fallback_llm);
         self
     }
 
+    /// Sets a fallback model for provider/rate-limit errors.
     pub fn set_fallback_llm(&mut self, fallback_llm: M) {
         self.fallback_llm = Some(fallback_llm);
     }
 
+    /// Clears the fallback model.
     pub fn clear_fallback_llm(&mut self) {
         self.fallback_llm = None;
     }
 
     #[must_use]
+    /// Returns true after the agent has switched to its fallback model.
     pub fn is_using_fallback_llm(&self) -> bool {
         self.using_fallback_llm
     }
 
+    /// Serializes current resumable state.
     pub fn checkpoint(&self) -> AgentCheckpoint {
         AgentCheckpoint {
             id: self.id,
@@ -350,18 +446,22 @@ where
         }
     }
 
+    /// Returns the managed file system used by file actions.
     pub fn file_system(&self) -> &ManagedFileSystem {
         self.executor.file_system()
     }
 
+    /// Returns mutable access to the managed file system.
     pub fn file_system_mut(&mut self) -> &mut ManagedFileSystem {
         self.executor.file_system_mut()
     }
 
+    /// Returns a serializable managed file-system snapshot.
     pub fn file_system_state(&self) -> FileSystemState {
         self.executor.file_system().get_state()
     }
 
+    /// Registers a synchronous callback invoked after each accepted model output.
     pub fn register_new_step_callback<F, E>(&mut self, mut callback: F)
     where
         F: FnMut(&BrowserStateSummary, &AgentOutput, usize) -> Result<(), E> + Send + 'static,
@@ -373,6 +473,7 @@ where
         });
     }
 
+    /// Registers an async callback invoked after each accepted model output.
     pub fn register_new_step_callback_async<F>(&mut self, callback: F)
     where
         F: for<'a> FnMut(
@@ -386,10 +487,12 @@ where
         self.step_callbacks.push(Box::new(callback));
     }
 
+    /// Removes all step callbacks.
     pub fn clear_new_step_callbacks(&mut self) {
         self.step_callbacks.clear();
     }
 
+    /// Registers a synchronous callback invoked after successful completion.
     pub fn register_done_callback<F, E>(&mut self, mut callback: F)
     where
         F: FnMut(&AgentHistory) -> Result<(), E> + Send + 'static,
@@ -401,6 +504,7 @@ where
         });
     }
 
+    /// Registers an async callback invoked after successful completion.
     pub fn register_done_callback_async<F>(&mut self, callback: F)
     where
         F: for<'a> FnMut(&'a AgentHistory) -> AgentCallbackFuture<'a, ()> + Send + 'static,
@@ -408,10 +512,12 @@ where
         self.done_callbacks.push(Box::new(callback));
     }
 
+    /// Removes all done callbacks.
     pub fn clear_done_callbacks(&mut self) {
         self.done_callbacks.clear();
     }
 
+    /// Registers a synchronous callback that can request a graceful stop.
     pub fn register_should_stop_callback<F, E>(&mut self, mut callback: F)
     where
         F: FnMut() -> Result<bool, E> + Send + 'static,
@@ -423,6 +529,7 @@ where
         });
     }
 
+    /// Registers an async callback that can request a graceful stop.
     pub fn register_should_stop_callback_async<F>(&mut self, callback: F)
     where
         F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
@@ -430,10 +537,12 @@ where
         self.should_stop_callback = Some(Box::new(callback));
     }
 
+    /// Clears the stop callback.
     pub fn clear_should_stop_callback(&mut self) {
         self.should_stop_callback = None;
     }
 
+    /// Registers a synchronous callback that reports external interruption.
     pub fn register_external_agent_status_callback<F, E>(&mut self, mut callback: F)
     where
         F: FnMut() -> Result<bool, E> + Send + 'static,
@@ -445,6 +554,7 @@ where
         });
     }
 
+    /// Registers an async callback that reports external interruption.
     pub fn register_external_agent_status_callback_async<F>(&mut self, callback: F)
     where
         F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
@@ -452,6 +562,7 @@ where
         self.external_status_callback = Some(Box::new(callback));
     }
 
+    /// Compatibility alias for registering an external status callback.
     pub fn register_external_agent_status_raise_error_callback<F, E>(&mut self, callback: F)
     where
         F: FnMut() -> Result<bool, E> + Send + 'static,
@@ -460,6 +571,7 @@ where
         self.register_external_agent_status_callback(callback);
     }
 
+    /// Async compatibility alias for registering an external status callback.
     pub fn register_external_agent_status_raise_error_callback_async<F>(&mut self, callback: F)
     where
         F: FnMut() -> AgentCallbackFuture<'static, bool> + Send + 'static,
@@ -467,18 +579,22 @@ where
         self.register_external_agent_status_callback_async(callback);
     }
 
+    /// Clears the external status callback.
     pub fn clear_external_agent_status_callback(&mut self) {
         self.external_status_callback = None;
     }
 
+    /// Requests that the agent stop before its next step.
     pub fn stop(&mut self) {
         self.stopped = true;
     }
 
+    /// Returns true when stop has been requested.
     pub fn is_stopped(&self) -> bool {
         self.stopped
     }
 
+    /// Appends a follow-up user request and clears stopped/paused state.
     pub fn add_new_task(&mut self, new_task: impl AsRef<str>) {
         if !self.task.contains("<initial_user_request>") {
             self.task = format!("<initial_user_request>{}</initial_user_request>", self.task);
@@ -492,14 +608,17 @@ where
         self.paused = false;
     }
 
+    /// Pauses the agent before the next step.
     pub fn pause(&mut self) {
         self.paused = true;
     }
 
+    /// Clears paused state.
     pub fn resume(&mut self) {
         self.paused = false;
     }
 
+    /// Returns true when the agent is paused.
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -625,6 +744,7 @@ where
         self.history.usage = Some(self.token_usage.summary().await);
     }
 
+    /// Runs the agent until completion, failure, stop, pause, or step budget exhaustion.
     pub async fn run(&mut self, max_steps: usize) -> Result<&AgentHistory, AgentRunError> {
         let mut consecutive_failures = 0;
 
@@ -705,6 +825,7 @@ where
         Err(AgentRunError::StepLimitReached { max_steps })
     }
 
+    /// Executes exactly one model-observe/action step.
     pub async fn step(&mut self) -> Result<&AgentHistoryItem, AgentRunError> {
         self.check_stop_requested().await?;
         let seconds = self.settings.step_timeout_seconds;

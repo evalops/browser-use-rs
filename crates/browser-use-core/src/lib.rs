@@ -85,7 +85,7 @@ pub(crate) use prompt::{
     repeated_action_loop, retain_first_and_recent_history_items,
     scale_coordinate_click_actions_for_prompt, should_inject_step_budget_warning,
 };
-pub use prompt::{build_step_request, build_step_request_with_file_system};
+pub use prompt::{build_step_request, build_step_request_with_file_system, schema_to_compat_value};
 pub use settings::{
     AgentSettings, GenerateGif, LlmScreenshotSize, MessageCompaction, MessageCompactionSettings,
     SensitiveDataValue, VisionMode,

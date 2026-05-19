@@ -1,3 +1,11 @@
+//! DOM, accessibility, and page-state extraction over CDP.
+//!
+//! This module is the bridge from raw Chrome JSON to prompt-ready
+//! [`browser_use_dom`] structures. It evaluates browser scripts, gathers
+//! accessibility metadata, merges iframe/shadow states, highlights elements,
+//! detects pagination, and keeps selector-map indexes stable enough for action
+//! execution and replay.
+
 use crate::{
     AttachedPage, BrowserError, CachedDomElementRef, FrameElementInfo, FrameOffset,
     IframeTargetInfo, IframeTraversalConfig,
