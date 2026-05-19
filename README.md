@@ -27,8 +27,9 @@ includes:
   `deterministic_rendering` screenshot-stability flags, typed `user_agent`
   launch flags, typed `profile_directory` flags for persistent profiles, and
   `chromium_sandbox=false` no-sandbox/container flags, plus explicit
-  `window_size` and `window_position` launch geometry flags, typed Browser Use
-  Cloud creation/stop parameters, current-session
+  `window_size` and `window_position` launch geometry flags, and a typed
+  `devtools` launch flag with the upstream headless conflict guard, typed
+  Browser Use Cloud creation/stop parameters, current-session
   tracking and cleanup, `cloud_auth.json` API-token fallback, 30-second
   request timeout, extra request headers, and response-to-CDP endpoint
   conversion that preserve upstream's omitted/null/proxy-country distinction,
