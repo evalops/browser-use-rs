@@ -140,6 +140,9 @@ management and live CDP session behavior.
 | `lib.rs` | Public browser primitives, CDP session state, action methods, root re-exports, `BrowserSession` trait, and compatibility tests. |
 | `cloud.rs` | Browser Use Cloud request/response/client types, API-key discovery, auth-config lookup, cloud HTTP error rendering. |
 | `profile.rs` | Browser profile serde defaults and aliases, Chrome launch plans, executable discovery, local process launch, `DevToolsActivePort` parsing. |
+| `policy.rs` | Browser profile URL-access policy, allow/prohibit pattern matching, IP-address blocking, and navigation block reasons. |
+| `input.rs` | Keyboard alias normalization and CDP `Input.dispatchKeyEvent` parameter construction. |
+| `runtime.rs` | `Runtime.evaluate` parameter construction, value extraction, and exception/result rendering. |
 | `lifecycle.rs` | Lifecycle event DTOs, upstream adapter event mapping, lifecycle subscriptions, lag/closed stream errors. |
 | `transport.rs` | Websocket connection, CDP command actor, response routing, event broadcast, reconnect attempts, stale session generation checks, websocket header validation. |
 | `dom.rs` | Injected DOM/action JavaScript, element highlight scripts, DOMSnapshot and accessibility joins, iframe target merging, compact DOM parsing, pagination detection, cached-index target mapping. |
@@ -212,6 +215,15 @@ surface.
 Watchdogs are owned by `CdpBrowserSession`; dropping the session aborts their
 tasks. Watchdog diagnostics are available through lifecycle subscriptions and
 selected state fields, but they are not added to normal agent answers.
+
+`policy.rs` owns the pure URL decision logic used by both the session boundary
+and the security watchdog. Session code may record and surface policy failures,
+but allowlist/prohibit matching and IP canonicalization should stay in
+`policy.rs`.
+
+`runtime.rs` and `input.rs` own protocol value shaping for JavaScript
+evaluation and keyboard events. Session methods choose when to evaluate or
+dispatch; these modules decide how CDP payloads and responses are represented.
 
 ### Profile, Recording, And Storage Boundaries
 
@@ -300,6 +312,9 @@ Compatibility-sensitive public exports include:
   `browser-use-cdp/src/dom.rs` and prompt use in `browser-use-core/src/prompt.rs`.
 - New CDP command transport behavior: `browser-use-cdp/src/transport.rs`.
 - New browser safety/lifecycle behavior: `browser-use-cdp/src/watchdog.rs`.
+- New URL policy behavior: `browser-use-cdp/src/policy.rs`.
+- New Runtime.evaluate or keyboard payload behavior:
+  `browser-use-cdp/src/runtime.rs` or `browser-use-cdp/src/input.rs`.
 - New profile/cloud launch behavior: `browser-use-cdp/src/profile.rs` or
   `browser-use-cdp/src/cloud.rs`.
 - New artifact or storage behavior: `browser-use-cdp/src/recording.rs` or

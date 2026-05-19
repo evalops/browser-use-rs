@@ -178,6 +178,51 @@ Review risks:
 - `BrowserSession` methods are consumed by `browser-use-core`; errors and
   side effects should stay action-shaped.
 
+### `policy.rs`
+
+Responsibilities:
+
+- URL allowlist/prohibit matching;
+- IP-address canonicalization and blocking;
+- pre-navigation validation;
+- block reason strings shared by session and watchdog code.
+
+Review risks:
+
+- Auth-bypass and non-standard IP forms are security surface. Keep tests close
+  to any matcher change.
+- Watchdog and synchronous session enforcement should use the same policy
+  decisions.
+
+### `input.rs`
+
+Responsibilities:
+
+- keyboard alias normalization;
+- modifier bitmask construction;
+- CDP `Input.dispatchKeyEvent` payload construction.
+
+Review risks:
+
+- Preserve browser-use aliases such as `ctrl`, `cmd`, `pagedown`, and `esc`.
+- Shortcut keydown/keyup ordering lives in the session method, but payload
+  shape belongs here.
+
+### `runtime.rs`
+
+Responsibilities:
+
+- `Runtime.evaluate` parameter construction;
+- CDP runtime value extraction;
+- exception and thrown-value rendering for user-visible errors.
+
+Review risks:
+
+- Missing response data should stay explicit; do not silently stringify absent
+  CDP fields.
+- Preserve `undefined`, unserializable values, and thrown objects exactly as
+  tested.
+
 ### `cloud.rs`
 
 Responsibilities:
@@ -436,8 +481,9 @@ Review risks:
 4. Add a `BrowserSession` trait method if the action needs browser side
    effects.
 5. Implement the CDP behavior in the narrowest supporting module, usually
-   `dom.rs`, `profile.rs`, `recording.rs`, `storage.rs`, `watchdog.rs`, or the
-   session methods in `lib.rs`.
+   `dom.rs`, `input.rs`, `policy.rs`, `profile.rs`, `recording.rs`,
+   `runtime.rs`, `storage.rs`, `watchdog.rs`, or the session methods in
+   `lib.rs`.
 6. Add unit tests for schema, prompt rendering, execution, and CDP behavior.
 7. Add CLI/MCP surfaces only if the action is user-facing there.
 
