@@ -1114,7 +1114,7 @@ pub struct FoundElement {
     pub attributes: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserViewport {
     pub width: u32,
     pub height: u32,
@@ -1230,6 +1230,20 @@ where
         other => Err(E::custom(format!(
             "browser env values must be strings, numbers, or booleans; got {other}"
         ))),
+    }
+}
+
+fn deserialize_non_negative_f64_option<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    match value {
+        Some(value) if value.is_finite() && value >= 0.0 => Ok(Some(value)),
+        Some(value) => Err(serde::de::Error::custom(format!(
+            "device_scale_factor must be a finite non-negative number; got {value}"
+        ))),
+        None => Ok(None),
     }
 }
 
@@ -1657,7 +1671,7 @@ impl Default for IgnoreDefaultArgs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cdp_url: Option<String>,
@@ -1713,8 +1727,18 @@ pub struct BrowserProfile {
     pub max_iframes: usize,
     #[serde(default = "default_max_iframe_depth")]
     pub max_iframe_depth: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<BrowserViewport>,
     #[serde(default)]
     pub viewport: BrowserViewport,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_viewport: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_non_negative_f64_option"
+    )]
+    pub device_scale_factor: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<BrowserViewport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1759,7 +1783,10 @@ impl Default for BrowserProfile {
             cross_origin_iframes: default_cross_origin_iframes(),
             max_iframes: default_max_iframes(),
             max_iframe_depth: default_max_iframe_depth(),
+            screen: None,
             viewport: BrowserViewport::default(),
+            no_viewport: false,
+            device_scale_factor: None,
             window_size: None,
             window_position: None,
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
@@ -1960,12 +1987,21 @@ impl BrowserProfile {
                 "headless=True and devtools=True cannot both be set at the same time".to_owned(),
             ));
         }
+        if self.headless && self.no_viewport {
+            return Err(BrowserError::LaunchFailed(
+                "headless=True and no_viewport=True cannot both be set at the same time".to_owned(),
+            ));
+        }
         Ok(self.build_launch_plan())
     }
 
     fn build_launch_plan(&self) -> BrowserLaunchPlan {
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
-        let window_size = self.window_size.as_ref().unwrap_or(&self.viewport);
+        let window_size = self
+            .window_size
+            .as_ref()
+            .or(self.screen.as_ref())
+            .unwrap_or(&self.viewport);
         let mut args = self.default_chrome_args();
         args.push(format!("--remote-debugging-port={remote_debugging_port}"));
         args.push(format!(
@@ -3498,6 +3534,22 @@ impl IframeTraversalConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ViewportEmulationConfig {
+    viewport: Option<BrowserViewport>,
+    device_scale_factor: f64,
+}
+
+impl ViewportEmulationConfig {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        let viewport = (!profile.no_viewport).then_some(profile.viewport);
+        Self {
+            viewport,
+            device_scale_factor: profile.device_scale_factor.unwrap_or(1.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FrameOffset {
     x: i32,
@@ -3772,6 +3824,7 @@ pub struct CdpBrowserSession {
     lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
     url_policy: UrlAccessPolicy,
     iframe_traversal: IframeTraversalConfig,
+    viewport_emulation: ViewportEmulationConfig,
     storage_state_path: Option<PathBuf>,
     navigation_timeout_ms: u64,
     _lifecycle_watchdog: BrowserLifecycleWatchdog,
@@ -3792,6 +3845,8 @@ impl CdpBrowserSession {
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
         let page = attach_or_create_page(&connection).await?;
+        let viewport_emulation = ViewportEmulationConfig::from_profile(profile);
+        apply_viewport_emulation_for_page(&connection, &page, viewport_emulation).await?;
         let page = Arc::new(Mutex::new(page));
         let last_dom_state = Arc::new(Mutex::new(None));
         let pending_url_policy_error = Arc::new(Mutex::new(None));
@@ -3826,6 +3881,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx,
             url_policy: UrlAccessPolicy::from_profile(profile),
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
+            viewport_emulation,
             storage_state_path: None,
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -3849,6 +3905,8 @@ impl CdpBrowserSession {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
         let page = attach_or_create_page(&connection).await?;
+        let viewport_emulation = ViewportEmulationConfig::from_profile(profile);
+        apply_viewport_emulation_for_page(&connection, &page, viewport_emulation).await?;
         let storage_state_loaded_event = if let Some(storage_state_path) =
             &profile.storage_state_path
         {
@@ -3913,6 +3971,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx,
             url_policy,
             iframe_traversal: IframeTraversalConfig::from_profile(profile),
+            viewport_emulation,
             storage_state_path: profile.storage_state_path.clone(),
             navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
@@ -3981,6 +4040,10 @@ impl CdpBrowserSession {
         *self.page.lock().await = page;
     }
 
+    async fn apply_viewport_emulation(&self, page: &AttachedPage) -> Result<(), BrowserError> {
+        apply_viewport_emulation_for_page(&self.connection, page, self.viewport_emulation).await
+    }
+
     async fn reattach_current_page(
         &self,
         stale_page: AttachedPage,
@@ -3992,6 +4055,7 @@ impl CdpBrowserSession {
             }
             Err(error) => return Err(error),
         };
+        self.apply_viewport_emulation(&page).await?;
         let target_id = page.target_id.clone();
         self.set_current_page(page.clone()).await;
         self.clear_cached_dom_state().await;
@@ -6747,6 +6811,35 @@ async fn attach_to_target(
     })
 }
 
+fn viewport_emulation_params(config: ViewportEmulationConfig) -> Option<Value> {
+    config.viewport.map(|viewport| {
+        json!({
+            "width": viewport.width,
+            "height": viewport.height,
+            "deviceScaleFactor": config.device_scale_factor,
+            "mobile": false,
+        })
+    })
+}
+
+async fn apply_viewport_emulation_for_page(
+    connection: &CdpConnection,
+    page: &AttachedPage,
+    config: ViewportEmulationConfig,
+) -> Result<(), BrowserError> {
+    let Some(params) = viewport_emulation_params(config) else {
+        return Ok(());
+    };
+    connection
+        .command(
+            "Emulation.setDeviceMetricsOverride",
+            params,
+            Some(&page.session_id),
+        )
+        .await
+        .map(|_| ())
+}
+
 fn browser_permission_grant_params(permissions: &[String]) -> Option<Value> {
     (!permissions.is_empty()).then(|| json!({ "permissions": permissions }))
 }
@@ -7348,6 +7441,7 @@ impl BrowserSession for CdpBrowserSession {
                     return Err(error);
                 }
             };
+            self.apply_viewport_emulation(&page).await?;
             let target_id = page.target_id.clone();
             self.set_current_page(page).await;
             self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id.clone()))
@@ -7466,6 +7560,7 @@ impl BrowserSession for CdpBrowserSession {
     async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
         let target_id = resolve_page_target_id(&self.connection, target_id).await?;
         let page = attach_to_target(&self.connection, target_id).await?;
+        self.apply_viewport_emulation(&page).await?;
         let target_id = page.target_id.clone();
         self.set_current_page(page).await;
         self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id))
@@ -7488,6 +7583,7 @@ impl BrowserSession for CdpBrowserSession {
 
         if self.current_page().await.target_id == target_id {
             let page = attach_or_create_page(&self.connection).await?;
+            self.apply_viewport_emulation(&page).await?;
             let target_id = page.target_id.clone();
             self.set_current_page(page).await;
             self.record_lifecycle_event(BrowserLifecycleEvent::target_switched(target_id))
@@ -8436,7 +8532,10 @@ mod tests {
             "Target.attachToTarget" => json!({
                 "sessionId": "session-1"
             }),
-            "Browser.grantPermissions" | "Page.enable" | "Network.enable" => json!({}),
+            "Browser.grantPermissions"
+            | "Page.enable"
+            | "Network.enable"
+            | "Emulation.setDeviceMetricsOverride" => json!({}),
             other => panic!("unexpected CDP method {other}"),
         };
         json!({
@@ -8684,7 +8783,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_connect_grants_default_permissions_before_target_attach() {
-        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
+        let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
         let session = CdpBrowserSession::connect(endpoint)
             .await
             .expect("connect session");
@@ -8701,6 +8800,7 @@ mod tests {
                 "Target.attachToTarget",
                 "Page.enable",
                 "Network.enable",
+                "Emulation.setDeviceMetricsOverride",
             ]
         );
         assert_eq!(
@@ -8711,6 +8811,16 @@ mod tests {
         );
         assert_eq!(commands[3].session_id.as_deref(), Some("session-1"));
         assert_eq!(commands[4].session_id.as_deref(), Some("session-1"));
+        assert_eq!(commands[5].session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            commands[5].params,
+            json!({
+                "width": 1280,
+                "height": 720,
+                "deviceScaleFactor": 1.0,
+                "mobile": false
+            })
+        );
 
         let lifecycle_events = session.lifecycle_events().await;
         assert_eq!(
@@ -8724,7 +8834,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_connect_skips_empty_permissions_before_target_attach() {
-        let (endpoint, command_log) = cdp_command_test_server(None, 4).await;
+        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
         let profile = BrowserProfile {
             permissions: Vec::new(),
             ..BrowserProfile::default()
@@ -8744,14 +8854,67 @@ mod tests {
                 "Target.attachToTarget",
                 "Page.enable",
                 "Network.enable",
+                "Emulation.setDeviceMetricsOverride",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_applies_configured_viewport_emulation() {
+        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
+        let profile = BrowserProfile {
+            permissions: Vec::new(),
+            viewport: BrowserViewport {
+                width: 1024,
+                height: 768,
+            },
+            device_scale_factor: Some(2.5),
+            ..BrowserProfile::default()
+        };
+        let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        let command = commands
+            .iter()
+            .find(|command| command.method == "Emulation.setDeviceMetricsOverride")
+            .expect("viewport emulation command");
+        assert_eq!(command.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            command.params,
+            json!({
+                "width": 1024,
+                "height": 768,
+                "deviceScaleFactor": 2.5,
+                "mobile": false
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_skips_viewport_emulation_when_no_viewport() {
+        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
+        let profile = BrowserProfile {
+            no_viewport: true,
+            ..BrowserProfile::default()
+        };
+        let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert!(
+            !commands
+                .iter()
+                .any(|command| command.method == "Emulation.setDeviceMetricsOverride")
         );
     }
 
     #[tokio::test]
     async fn direct_connect_records_permission_grant_failures_without_failing() {
         let (endpoint, command_log) =
-            cdp_command_test_server(Some("permission grant denied"), 5).await;
+            cdp_command_test_server(Some("permission grant denied"), 6).await;
         let session = CdpBrowserSession::connect(endpoint)
             .await
             .expect("connect session despite grant failure");
@@ -8829,6 +8992,51 @@ mod tests {
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert!(encoded.get("window_size").is_none());
         assert!(encoded.get("window_position").is_none());
+    }
+
+    #[test]
+    fn browser_profile_viewport_emulation_defaults_and_validation() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.screen, None);
+        assert_eq!(decoded.viewport, BrowserViewport::default());
+        assert!(!decoded.no_viewport);
+        assert_eq!(decoded.device_scale_factor, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("screen").is_none());
+        assert_eq!(encoded["viewport"], json!({ "width": 1280, "height": 720 }));
+        assert!(encoded.get("no_viewport").is_none());
+        assert!(encoded.get("device_scale_factor").is_none());
+
+        let configured: BrowserProfile = serde_json::from_value(json!({
+            "screen": { "width": 1920, "height": 1080 },
+            "viewport": { "width": 1024, "height": 768 },
+            "no_viewport": true,
+            "device_scale_factor": 2.5
+        }))
+        .expect("configured viewport profile");
+        assert_eq!(
+            configured.screen,
+            Some(BrowserViewport {
+                width: 1920,
+                height: 1080
+            })
+        );
+        assert_eq!(
+            configured.viewport,
+            BrowserViewport {
+                width: 1024,
+                height: 768
+            }
+        );
+        assert!(configured.no_viewport);
+        assert_eq!(configured.device_scale_factor, Some(2.5));
+
+        let negative = serde_json::from_value::<BrowserProfile>(json!({
+            "device_scale_factor": -1.0
+        }))
+        .expect_err("negative device_scale_factor should be rejected");
+        assert!(negative.to_string().contains("device_scale_factor"));
     }
 
     #[test]
@@ -9555,6 +9763,25 @@ mod tests {
     }
 
     #[test]
+    fn launch_plan_rejects_no_viewport_with_headless() {
+        let profile = BrowserProfile {
+            headless: true,
+            no_viewport: true,
+            ..BrowserProfile::default()
+        };
+
+        let error = profile
+            .try_launch_plan()
+            .expect_err("headless no_viewport should fail launch planning");
+
+        assert!(
+            error
+                .to_string()
+                .contains("headless=True and no_viewport=True cannot both be set")
+        );
+    }
+
+    #[test]
     fn launch_plan_keeps_devtools_arg_before_custom_args() {
         let profile = BrowserProfile {
             headless: false,
@@ -9594,6 +9821,52 @@ mod tests {
         assert_eq!(profile.viewport, BrowserViewport::default());
         assert!(plan.args.contains(&"--window-size=1920,1400".to_owned()));
         assert!(!plan.args.contains(&"--window-size=1280,720".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_can_use_screen_as_window_size_fallback() {
+        let profile = BrowserProfile {
+            screen: Some(BrowserViewport {
+                width: 1440,
+                height: 900,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert!(plan.args.contains(&"--window-size=1440,900".to_owned()));
+        assert!(!plan.args.contains(&"--window-size=1280,720".to_owned()));
+    }
+
+    #[test]
+    fn viewport_emulation_params_match_cdp_shape() {
+        let params = viewport_emulation_params(ViewportEmulationConfig {
+            viewport: Some(BrowserViewport {
+                width: 1024,
+                height: 768,
+            }),
+            device_scale_factor: 2.0,
+        })
+        .expect("viewport params");
+
+        assert_eq!(
+            params,
+            json!({
+                "width": 1024,
+                "height": 768,
+                "deviceScaleFactor": 2.0,
+                "mobile": false
+            })
+        );
+
+        assert_eq!(
+            viewport_emulation_params(ViewportEmulationConfig {
+                viewport: None,
+                device_scale_factor: 2.0,
+            }),
+            None
+        );
     }
 
     #[test]
