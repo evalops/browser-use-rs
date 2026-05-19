@@ -3,6 +3,17 @@
 //! Browser-use lets the model create, read, replace, upload, and attach files.
 //! This module keeps relative file actions inside a managed sandbox while still
 //! allowing explicit absolute paths for trusted caller-provided files.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     Action["write/read/replace/upload action"] --> Resolve["resolve_file_action_path"]
+//!     Resolve --> Sandbox["managed sandbox path"]
+//!     Resolve --> Absolute["trusted absolute path"]
+//!     Sandbox --> Result["ActionResult + attachments"]
+//!     Absolute --> Result
+//!     Result --> Prompt["future prompt/read state"]
+//!     Result --> Done["done files_to_display"]
+//! ```
 
 use crate::ActionResult;
 use base64::Engine;
@@ -56,10 +67,15 @@ pub(crate) fn write_file_action(
     }
 
     if is_csv_file(&resolved_file.display_name) {
+        // CSV is normalized before writing so appends and replacements behave
+        // consistently whether the model provided raw rows or pretty text.
         content = normalize_csv_content(&content);
     }
 
     if params.append {
+        // PDF and DOCX are binary containers, so appending means read existing
+        // text, merge in memory, and write a fresh container rather than using
+        // byte-level append.
         if is_pdf_file(&resolved_file.display_name) {
             let existing = pdf_extract::extract_text(path)
                 .map_err(|error| BrowserError::ActionFailed(error.to_string()))?;

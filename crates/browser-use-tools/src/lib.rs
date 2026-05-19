@@ -5,6 +5,16 @@
 //! the browser executor to perform. The `serde` derives define the JSON shape
 //! on the wire, while the `schemars` derives produce the JSON Schema that is
 //! sent to schema-capable model providers.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     Model["model JSON"] --> Enum["BrowserAction one-key enum"]
+//!     Enum --> Params["typed action params"]
+//!     Params --> Executor["BrowserActionExecutor"]
+//!     Executor --> Session["BrowserSession"]
+//!     Enum --> Schema["schemars JSON Schema"]
+//!     Schema --> Prompt["LLM structured output contract"]
+//! ```
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

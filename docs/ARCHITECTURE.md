@@ -41,6 +41,25 @@ into typed Rust crates and modules so the compatibility surface is explicit.
 
 ## Runtime Flow
 
+At the crate boundary, the system is a typed pipeline: browser state becomes a
+prompt, model output becomes typed actions, actions mutate the browser, and the
+result is appended to durable history.
+
+```mermaid
+flowchart LR
+    CDP["browser-use-cdp"] --> DOM["browser-use-dom"]
+    DOM --> Core["browser-use-core prompt"]
+    Core --> LLM["browser-use-llm"]
+    LLM --> Output["AgentOutput"]
+    Output --> Tools["browser-use-tools BrowserAction"]
+    Tools --> Exec["browser-use-core executor"]
+    Exec --> CDP
+    Exec --> History["AgentHistory"]
+    History --> Core
+    MCP["browser-use-mcp"] --> Core
+    CLI["browser-use-cli"] --> Core
+```
+
 The main agent path is:
 
 ```text
@@ -56,6 +75,20 @@ Agent::run
 ```
 
 The CDP browser-state path is:
+
+```mermaid
+flowchart TD
+    State["CdpBrowserSession::state"] --> Policy["enforce URL policy"]
+    Policy --> Settle["wait for page-load settle"]
+    Settle --> Location["read URL/title/page metrics"]
+    Location --> DOMIndex["run DOM indexing JS"]
+    DOMIndex --> AX["join accessibility metadata"]
+    AX --> Iframes["merge iframe target DOM states"]
+    Iframes --> Cache["cache selector map for indexed actions"]
+    Cache --> Summary["BrowserStateSummary"]
+```
+
+In text form:
 
 ```text
 CdpBrowserSession::state

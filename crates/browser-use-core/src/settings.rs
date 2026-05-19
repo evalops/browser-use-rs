@@ -4,6 +4,15 @@
 //! directly by the agent run loop. Several enums intentionally preserve Python
 //! browser-use wire shapes, such as booleans-or-strings, while exposing clearer
 //! Rust variants to the rest of the code.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     CLI["CLI flags / MCP input / Rust API"] --> Settings["AgentSettings"]
+//!     Settings --> Prompt["prompt and schema shaping"]
+//!     Settings --> RunLoop["timeouts, loop detection, failure policy"]
+//!     Settings --> Executor["action limits, uploads, files"]
+//!     Settings --> Browser["vision and screenshot behavior"]
+//! ```
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -58,6 +67,8 @@ impl<'de> Deserialize<'de> for LlmScreenshotSize {
     where
         D: Deserializer<'de>,
     {
+        // Accept all shapes observed around Python/browser-use callers while
+        // normalizing them into a small Rust value object for internal code.
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum Wire {
@@ -319,6 +330,9 @@ impl JsonSchema for VisionMode {
     }
 
     fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        // The wire schema stays intentionally loose: existing users send either
+        // booleans or the string "auto", even though Rust code works with the
+        // clearer `VisionMode` enum.
         serde_json::from_value(serde_json::json!({
             "oneOf": [
                 { "type": "boolean" },

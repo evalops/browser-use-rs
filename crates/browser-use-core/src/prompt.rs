@@ -4,6 +4,25 @@
 //! and tool schemas into provider-neutral [`ChatRequest`] values. The functions
 //! here are deliberately deterministic because tests compare their output
 //! against browser-use compatibility expectations.
+//!
+//! Prompt building is intentionally a pure data transformation: the browser has
+//! already been observed, history has already been recorded, and this module
+//! only decides what the model is allowed to see and return.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     State["BrowserStateSummary"] --> Text["browser state JSON/text"]
+//!     History["AgentHistory"] --> Prior["previous results"]
+//!     Files["ManagedFileSystem"] --> FileCtx["available/read files"]
+//!     Settings["AgentSettings"] --> Policy["vision, actions, secrets, schema"]
+//!     Text --> Request["ChatRequest"]
+//!     Prior --> Request
+//!     FileCtx --> Request
+//!     Policy --> Request
+//!     Policy --> Schema["AgentOutput JSON Schema"]
+//!     Schema --> Compat["schema_to_compat_value"]
+//!     Compat --> Request
+//! ```
 
 use crate::{
     ActionResult, AgentHistory, AgentHistoryItem, AgentOutput, AgentRunError, AgentSettings,
@@ -32,6 +51,10 @@ pub(crate) fn actions_for_execution(
     actions
         .iter()
         .map(|action| {
+            // Execution receives a copy of the model action, not a mutation of
+            // history. That separation is why redacted prompt/history records
+            // can coexist with real secrets and default extraction schemas at
+            // the browser side-effect boundary.
             let action =
                 action_with_default_extraction_schema(action, settings.extraction_schema.as_ref());
             if sensitive_data.is_empty() {
@@ -85,6 +108,9 @@ pub(crate) fn scale_coordinate_click_actions_for_prompt(
                     && params.coordinate_x.is_some()
                     && params.coordinate_y.is_some() =>
             {
+                // Vision models may see a downscaled screenshot, so coordinate
+                // clicks are first interpreted in screenshot space and then
+                // mapped back to the live viewport before CDP receives them.
                 let mut scaled = params.clone();
                 scaled.coordinate_x = scaled
                     .coordinate_x
@@ -133,6 +159,9 @@ fn replace_sensitive_placeholders_in_string(
     text: &str,
     sensitive_data: &BTreeMap<String, String>,
 ) -> String {
+    // Both whole-value placeholders and tagged placeholders are supported:
+    // `<secret>key</secret>` is convenient in natural-language params, while a
+    // bare key is useful when a model returns exactly the placeholder value.
     let secret_pattern =
         regex::Regex::new(r"<secret>(.*?)</secret>").expect("valid secret tag regex");
     let replaced = secret_pattern
@@ -978,6 +1007,9 @@ fn normalize_compat_schema(value: &mut Value, inside_properties_map: bool) {
     match value {
         Value::Object(entries) => {
             let removed_metadata_only_description = if inside_properties_map {
+                // A key named `description` inside `properties` is a modeled
+                // JSON field, not schema metadata. Removing it would break the
+                // `NoParamsAction.description` compatibility fixture.
                 false
             } else {
                 remove_non_contract_description(entries)
@@ -988,6 +1020,9 @@ fn normalize_compat_schema(value: &mut Value, inside_properties_map: bool) {
             }
 
             if let Some(ref_schema) = single_ref_all_of(entries) {
+                // `schemars` wraps `$ref` in `allOf` when a field has doc
+                // metadata. After metadata stripping, the wrapper is just noise
+                // and would drift the upstream-compatible schema.
                 *value = ref_schema;
                 return;
             }
@@ -995,6 +1030,9 @@ fn normalize_compat_schema(value: &mut Value, inside_properties_map: bool) {
             fold_doc_only_unit_enum(entries);
 
             if removed_metadata_only_description && entries.is_empty() {
+                // `serde_json::Value` intentionally has an unconstrained schema.
+                // If its only generated content was doc metadata, the compact
+                // JSON Schema representation is boolean `true`.
                 *value = Value::Bool(true);
             }
         }
@@ -1060,6 +1098,9 @@ fn fold_doc_only_unit_enum(entries: &mut serde_json::Map<String, Value>) {
         return;
     };
 
+    // Documented unit enum variants serialize as `oneOf` with one single-value
+    // enum per variant. The pre-doc contract used one flat enum list, so fold
+    // only that exact doc-only pattern.
     let mut enum_values = Vec::with_capacity(variants.len());
     for variant in variants {
         let Value::Object(variant) = variant else {

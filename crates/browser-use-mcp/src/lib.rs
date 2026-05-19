@@ -4,6 +4,22 @@
 //! The CLI owns the actual stdio/HTTP daemon, while these structs define the
 //! tool inputs, outputs, session records, and JSON-RPC envelopes both sides
 //! agree on.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant Client as MCP client
+//!     participant CLI as browser-use-rs daemon
+//!     participant Contracts as browser-use-mcp
+//!     participant Core as browser-use-core
+//!     Client->>CLI: tools/list
+//!     CLI->>Contracts: tool_manifest_json()
+//!     Contracts-->>Client: names + input/output schemas
+//!     Client->>CLI: tools/call(arguments)
+//!     CLI->>Core: run state/actions/replay/agent work
+//!     Core-->>CLI: typed result
+//!     CLI->>Contracts: tool_success_result()
+//!     Contracts-->>Client: text + structuredContent
+//! ```
 
 use std::path::PathBuf;
 
@@ -467,6 +483,9 @@ where
     Input: JsonSchema,
     Output: JsonSchema,
 {
+    // MCP clients treat schemas as part of the protocol contract. Reuse the
+    // same compatibility normalizer as agent prompts so adding Rust docs cannot
+    // silently change tool input/output shapes.
     McpToolContract {
         name: name.to_owned(),
         description: description.to_owned(),

@@ -4,6 +4,22 @@
 //! state. This module defines that durable shape, helpers that mirror upstream
 //! browser-use accessors, and replay planning that remaps historical DOM
 //! indexes to a current page.
+//!
+//! Replay planning is deliberately separated from replay execution. Planning is
+//! a pure comparison between historical element identity and the current DOM;
+//! execution is the later browser-side phase that can fail because the page
+//! changes again.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     History["AgentHistory"] --> Actions["historical_replay_actions"]
+//!     Actions --> Stored["stored DomInteractedElement"]
+//!     Current["current SerializedDomState"] --> Rematch["rematch_action_for_replay"]
+//!     Stored --> Rematch
+//!     Rematch --> Plan["AgentHistoryReplayPlan"]
+//!     Plan --> Executor["execute_history_replay_plan"]
+//!     Executor --> Run["AgentHistoryReplayRun"]
+//! ```
 
 use std::collections::BTreeMap;
 
@@ -574,6 +590,9 @@ pub(crate) fn historical_replay_actions(history: &AgentHistory) -> Vec<Historica
             continue;
         };
         for (action_index, action) in output.action.iter().enumerate() {
+            // The numeric element index is not durable across page reloads.
+            // Capture the richer DOM identity from the state observed when the
+            // model chose the action so replay can search the current page.
             let interacted_element = action
                 .interacted_element_index()
                 .and_then(|index| item.state.dom_state.selector_map.get(&index))
@@ -596,6 +615,9 @@ pub fn build_history_replay_plan(
 ) -> Result<AgentHistoryReplayPlan, AgentHistoryReplayPlanError> {
     let mut actions = Vec::new();
     for historical in historical_replay_actions(history) {
+        // Surface planning failures with their original step/action coordinate
+        // so callers can tell whether replay failed because an element moved,
+        // disappeared, or became ambiguous.
         let rematch = rematch_action_for_replay(
             &historical.action,
             historical.interacted_element.as_ref(),
@@ -627,6 +649,8 @@ pub fn rematch_action_for_replay(
     current_dom: &SerializedDomState,
 ) -> Result<ActionReplayRematch, DomInteractedElementMatchFailure> {
     let Some(original_index) = action.interacted_element_index() else {
+        // Non-indexed actions such as navigation, wait, or done have no DOM
+        // dependency, so replay can preserve them exactly.
         return Ok(ActionReplayRematch {
             action: action.clone(),
             original_index: None,
@@ -636,6 +660,8 @@ pub fn rematch_action_for_replay(
         });
     };
     let Some(interacted_element) = interacted_element else {
+        // Older or synthetic history may contain an indexed action but no saved
+        // element fingerprint. Preserve the action instead of guessing.
         return Ok(ActionReplayRematch {
             action: action.clone(),
             original_index: Some(original_index),
