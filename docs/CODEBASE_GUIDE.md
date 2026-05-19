@@ -150,6 +150,25 @@ Review risks:
 crate-level compatibility shims for tests and sibling modules. New behavior
 should almost always live in one of the focused modules above.
 
+### `tests.rs`
+
+Responsibilities:
+
+- agent-loop compatibility tests that need private core helpers;
+- prompt/schema, history/replay, executor, settings, URL, usage, checkpoint,
+  managed-file, and callback regression coverage;
+- cross-module behavior tests that should not force private helpers into the
+  public API.
+
+Review risks:
+
+- Keep public API assertions pointed at root re-exports, even though the test
+  module can see private helpers.
+- Move narrow helper tests beside their owning module when a future split makes
+  that cleaner; keep cross-module agent behavior here.
+- This is the main guardrail for upstream behavioral parity in core, so do not
+  delete fixture coverage just because the implementation moved.
+
 ## CDP Crate
 
 Path: `crates/browser-use-cdp/src`.

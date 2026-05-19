@@ -97,6 +97,7 @@ that downstream callers use, while private modules hold the implementation.
 | `urls.rs` | Task URL extraction, search URL building, prompt URL shortening, model-output URL restoration. |
 | `usage.rs` | Token and cost aggregation from provider usage metadata. |
 | `lib.rs` | Public re-exports and crate-level compatibility shims for tests and sibling modules. |
+| `tests.rs` | Core compatibility tests for agent loop, prompt/schema shape, history/replay, executor behavior, managed files, settings, URLs, usage, and checkpoints. |
 
 ### Agent Loop Ownership
 
@@ -113,6 +114,11 @@ that downstream callers use, while private modules hold the implementation.
 Prompt wording and schemas stay in `prompt.rs`. Browser action side effects
 stay in `executor.rs` through `BrowserActionExecutor` and the `BrowserSession`
 trait.
+
+`tests.rs` is a private child module of `lib.rs` so it can exercise
+crate-private core seams without making those seams public. Keep cross-module
+agent behavior and compatibility fixtures there; narrow module-local tests can
+live beside the module they cover.
 
 ### Prompt Ownership
 
