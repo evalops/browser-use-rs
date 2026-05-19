@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #117 lands and CI is green.
+- [#118 Add BrowserProfile viewport emulation controls](https://github.com/evalops/browser-use-rs/issues/118)
 
 ## Completed Tracks
 
