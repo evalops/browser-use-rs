@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #119 lands and CI is green.
+- [#121 Align BrowserProfile default window_position parity](https://github.com/evalops/browser-use-rs/issues/121)
 
 ## Completed Tracks
 
