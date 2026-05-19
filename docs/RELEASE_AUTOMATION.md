@@ -11,6 +11,11 @@ packaged install assets, Cargo resolution, or release artifact docs. CI still
 validates release-helper and workflow changes, but those automation-only edits
 do not wake the release workflow on `main`.
 
+The release job also ignores its own branch-push bookkeeping commits, such as
+`Cut browser-use-rs vX.Y.Z`. Tag pushes for the same release still publish the
+assets. This avoids the misleading pattern where every meaningful update is
+followed by a second no-op release workflow run for the version bump commit.
+
 Release-worthy changes are public artifact changes: workspace manifests and
 lockfiles, Rust crates, packaged Homebrew/systemd/launchd assets, license/notice
 files, the Rust toolchain pin, README, and public docs that ship in the package
@@ -29,14 +34,15 @@ Auto mode chooses:
 - `major` when an unreleased commit contains a breaking-change marker such as
   `BREAKING CHANGE` or a Conventional Commit `!`.
 - `minor` when unreleased work has a substantial public-behavior signal:
-  `Release-Impact: minor`, a Conventional Commit `feat:` subject, source/test
-  changes paired with README/conformance/CLI/MCP/install/release docs for the
-  new capability, or broad cross-crate public-surface work.
+  `Release-Impact: minor`, a Conventional Commit `feat:` subject, a large
+  public source change paired with README/conformance/CLI/MCP/install/release
+  docs, or broad cross-crate public-surface work.
 - `patch` for smaller release-worthy changes: fixes, dependency or toolchain
   refreshes, packaged install asset changes, README/support-matrix updates, and
   public docs that should ship with the next artifact. Small compatibility
-  aliases and narrowly scoped fixes should use `Release-Impact: patch` when
-  their commit message could otherwise look like new feature work.
+  aliases, config/default/serde parity, and narrowly scoped fixes are treated as
+  patch releases unless a maintainer explicitly marks them `Release-Impact:
+  minor`.
 
 For ambiguous commits, add a trailer to the commit body:
 
@@ -50,8 +56,8 @@ Release-Impact: none
 new user-visible behavior, `patch` for small but releasable changes, and `none`
 for maintenance that should never publish by itself. If multiple unreleased
 commits request a release, the highest requested impact wins. This makes the
-workflow release by the meaning of the work, not by how many rollback commits
-have landed since the last tag.
+workflow release by the meaning and size of the work, not by how many rollback
+commits have landed since the last tag.
 
 If a manual auto run finds nothing release-worthy after the latest stable tag,
 the run exits successfully without committing, tagging, building, or publishing.

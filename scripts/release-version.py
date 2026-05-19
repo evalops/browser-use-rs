@@ -49,6 +49,16 @@ SUBSTANTIAL_SUBJECT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+PATCH_SCOPE_SUBJECT_RE = re.compile(
+    r"\b("
+    r"alias(?:es)?|ci|clippy|config(?:uration)?|default(?:s)?|dependenc(?:y|ies)|docs?|"
+    r"documentation|format|homebrew|launchd|lint|lockfile|metadata|readme|release|roadmap|"
+    r"serde|seriali[sz]e|systemd|toolchain|typo|workflow"
+    r")\b",
+    re.IGNORECASE,
+)
+SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD = 120
+CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD = 80
 RELEASE_VERSION_PATTERN = r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?"
 RELEASE_COMMIT_RE = re.compile(rf"^Cut browser-use-rs {RELEASE_VERSION_PATTERN}$")
 RELEASE_MAINTENANCE_COMMIT_RE = re.compile(
@@ -160,6 +170,16 @@ class Commit:
     @property
     def full_message(self) -> str:
         return f"{self.subject}\n{self.body}"
+
+
+@dataclasses.dataclass(frozen=True)
+class ChangeStats:
+    additions: int
+    deletions: int
+
+    @property
+    def changed_lines(self) -> int:
+        return self.additions + self.deletions
 
 
 @dataclasses.dataclass(frozen=True)
@@ -355,6 +375,25 @@ def changed_files_for_commits(root: Path, commits: list[Commit]) -> tuple[str, .
     return tuple(sorted(changed_files))
 
 
+def changed_file_stats_for_commits(root: Path, commits: list[Commit]) -> dict[str, ChangeStats]:
+    stats: dict[str, ChangeStats] = {}
+    for commit in commits:
+        raw = git(root, "diff-tree", "--no-commit-id", "--numstat", "-r", commit.sha)
+        for line in raw.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            additions, deletions, path = parts
+            if additions == "-" or deletions == "-":
+                continue
+            current = stats.get(path, ChangeStats(additions=0, deletions=0))
+            stats[path] = ChangeStats(
+                additions=current.additions + int(additions),
+                deletions=current.deletions + int(deletions),
+            )
+    return stats
+
+
 def is_release_worthy_path(path: str) -> bool:
     if path in RELEASE_WORTHY_EXACT_PATHS:
         return True
@@ -416,6 +455,10 @@ def highest_release_type(release_types: tuple[str, ...]) -> str:
     return sorted(release_types, key=lambda release_type: RELEASE_TYPE_ORDER[release_type])[-1]
 
 
+def commit_subject_is_patch_scoped(commit: Commit) -> bool:
+    return bool(PATCH_SCOPE_SUBJECT_RE.search(commit.subject))
+
+
 def commit_requests_no_release(commit: Commit) -> bool:
     return "none" in release_impact_trailers(commit)
 
@@ -423,22 +466,35 @@ def commit_requests_no_release(commit: Commit) -> bool:
 def commit_requests_substantial_release(commit: Commit) -> bool:
     if CONVENTIONAL_FEATURE_RE.match(commit.subject):
         return True
+    if commit_subject_is_patch_scoped(commit):
+        return False
     return bool(
         ADDITIVE_SUBJECT_RE.match(commit.subject)
         and SUBSTANTIAL_SUBJECT_RE.search(commit.full_message)
     )
 
 
+def changed_line_count(
+    files: tuple[str, ...],
+    change_stats: dict[str, ChangeStats] | None,
+) -> int:
+    if change_stats is None:
+        return 0
+    return sum(change_stats.get(path, ChangeStats(additions=0, deletions=0)).changed_lines for path in files)
+
+
 def substantial_release_signal(
     commits: list[Commit],
     changed_files: tuple[str, ...],
+    change_stats: dict[str, ChangeStats] | None = None,
 ) -> str | None:
     """Return a reason when the unreleased batch looks like new public behavior.
 
-    Auto mode should not infer a minor bump from cadence or from a source file
-    existing in the diff. A minor release needs either explicit maintainer
-    intent, Conventional Commit feature intent, or code movement paired with a
-    public artifact that documents the new capability.
+    Auto mode should not infer a minor bump from cadence, commit count, or a
+    source file existing in the diff. A minor release needs either explicit
+    maintainer intent, Conventional Commit feature intent, or enough public
+    source movement to look like a substantial capability rather than a narrow
+    config/doc/alias update.
     """
 
     feature_commit = next(
@@ -452,17 +508,26 @@ def substantial_release_signal(
     if not public_sources:
         return None
 
+    public_source_lines = changed_line_count(public_sources, change_stats)
     capability_docs = public_capability_doc_files(changed_files)
     substantial_subject = next(
         (commit.subject for commit in commits if commit_requests_substantial_release(commit)),
         None,
     )
-    if capability_docs and substantial_subject:
-        return f"public capability update: {substantial_subject}"
+
+    if capability_docs and public_source_lines >= SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD:
+        return f"substantial public source/doc change ({public_source_lines} changed public source lines)"
 
     crates = changed_workspace_crates(public_sources)
-    if len(public_sources) >= 4 and len(crates) >= 2 and substantial_subject:
+    if (
+        len(crates) >= 2
+        and public_source_lines >= CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD
+        and substantial_subject
+    ):
         return f"cross-crate public capability update: {substantial_subject}"
+
+    if capability_docs and substantial_subject:
+        return f"public capability update: {substantial_subject}"
 
     return None
 
@@ -470,6 +535,7 @@ def substantial_release_signal(
 def classify_auto_release(
     commits: list[Commit],
     changed_files: tuple[str, ...],
+    change_stats: dict[str, ChangeStats] | None = None,
 ) -> tuple[str | None, str]:
     explicit_release_types = tuple(
         impact
@@ -487,7 +553,7 @@ def classify_auto_release(
     if any(commit_has_breaking_marker(commit) for commit in commits):
         return "major", "breaking-change marker found in unreleased commits"
 
-    substantial_reason = substantial_release_signal(commits, changed_files)
+    substantial_reason = substantial_release_signal(commits, changed_files, change_stats)
     if substantial_reason:
         return "minor", substantial_reason
 
@@ -500,6 +566,7 @@ def plan_auto_release(root: Path) -> ReleasePlan:
     base_ref = latest_stable_tag(root)
     commits = commits_since(root, base_ref)
     changed_files = changed_files_for_commits(root, commits)
+    change_stats = changed_file_stats_for_commits(root, commits)
     worthy_files = release_worthy_files(changed_files)
 
     if not commits:
@@ -521,7 +588,7 @@ def plan_auto_release(root: Path) -> ReleasePlan:
             changed_files=worthy_files,
         )
 
-    release_type, reason = classify_auto_release(commits, worthy_files)
+    release_type, reason = classify_auto_release(commits, worthy_files, change_stats)
     if release_type is None:
         return ReleasePlan(
             should_release=False,
@@ -610,6 +677,41 @@ def run_self_tests() -> int:
             )
             self.assertEqual(release_type, "minor")
             self.assertIn("public capability", reason)
+
+        def test_large_public_source_change_is_minor_without_trailer(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add BrowserProfile tracing recording parity")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "docs/CONFORMANCE.md",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=140,
+                        deletions=12,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("substantial public source/doc", reason)
+
+        def test_small_config_parity_change_is_patch_without_trailer(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add BrowserProfile trace path config parity")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "docs/CONFORMANCE.md",
+                    "README.md",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=34,
+                        deletions=3,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Rust crate", reason)
 
         def test_feature_commit_is_minor_even_without_docs(self) -> None:
             release_type, reason = classify_auto_release(

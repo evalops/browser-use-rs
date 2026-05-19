@@ -52,6 +52,13 @@ jobs:
   prepare-release:
     name: Prepare release ref
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref_type == 'tag' ||
+      (
+        !startsWith(github.event.head_commit.message, 'Cut browser-use-rs v') &&
+        !startsWith(github.event.head_commit.message, 'Refresh lockfile for v')
+      )
     outputs:
       ref: ${{ steps.prepare.outputs.ref }}
       tag: ${{ steps.prepare.outputs.tag }}
