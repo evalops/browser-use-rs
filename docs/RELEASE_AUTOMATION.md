@@ -1,14 +1,14 @@
 # Release Automation
 
 The `Release` workflow owns both version cutting and release publication. It
-can run manually, on release tags, or on the weekday scheduled auto-release
-pass.
+can run automatically on `main` pushes, manually from Actions, or on release
+tags.
 
 ## Automatic Update Releases
 
-The weekday scheduled run uses `release_type=auto`. Auto mode compares `HEAD`
-with the latest stable `vX.Y.Z` tag, skips roadmap, documentation-only, CI-only,
-and release-bookkeeping churn, and cuts a release only when release-worthy files
+Every push to `main` runs `release_type=auto`. Auto mode compares `HEAD` with
+the latest stable `vX.Y.Z` tag, skips roadmap, documentation-only, CI-only, and
+release-bookkeeping churn, and cuts a release only when release-worthy files
 changed.
 
 Auto mode chooses:
@@ -20,7 +20,7 @@ Auto mode chooses:
 - `patch` for release-worthy fixes, packaging changes, and release automation
   changes.
 
-If there is nothing release-worthy after the latest stable tag, the scheduled
+If there is nothing release-worthy after the latest stable tag, the push-driven
 run exits successfully without committing, tagging, building, or publishing.
 When it does publish, the GitHub release body starts with the commits since the
 previous stable tag and then appends the release support matrix.

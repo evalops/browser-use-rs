@@ -2,10 +2,10 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
-  schedule:
-    - cron: "17 17 * * 1-5"
   workflow_dispatch:
     inputs:
       release_type:
@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || "${GITHUB_REF_TYPE}" == "branch" ]]; then
             plan_output="$(mktemp)"
             python3 scripts/release-version.py \
               --release-type "${RELEASE_TYPE}" \
