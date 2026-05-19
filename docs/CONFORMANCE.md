@@ -165,9 +165,13 @@ de-duped with last-wins switch behavior.
 non-fatal temporary highlight when the cached DOM element has viewport bounds,
 and coordinate clicks attempt a non-fatal temporary marker at the clicked
 viewport coordinate. `highlight_elements=false` disables those injected
-markers without changing the underlying action behavior. The upstream
-`dom_highlight_elements` debug overlay remains outside the current Rust CDP
-surface.
+markers without changing the underlying action behavior.
+`BrowserProfile.dom_highlight_elements` defaults to `false`; when enabled,
+state capture attempts to remove the prior debug-highlight container and draw a
+fresh overlay for the current selector map. `filter_highlight_ids=true`
+preserves upstream-style quiet labels by suppressing ids for verbose element
+representations, while `false` labels every highlighted element. Overlay
+failures never fail state capture.
 
 ## Page-Load Wait Boundary
 

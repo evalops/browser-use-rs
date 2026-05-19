@@ -1066,6 +1066,108 @@ fn interaction_coordinate_highlight_script(
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct DomHighlightOverlayElement {
+    index: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+fn dom_highlight_overlay_elements(
+    selector_map: &BTreeMap<u32, DomElementRef>,
+    filter_highlight_ids: bool,
+) -> Vec<DomHighlightOverlayElement> {
+    selector_map
+        .iter()
+        .filter_map(|(index, element)| {
+            let bounds = element.bounds?;
+            if bounds.width == 0 || bounds.height == 0 {
+                return None;
+            }
+            let representation = render_element_text(element);
+            let label = (!filter_highlight_ids || representation.chars().count() < 10)
+                .then(|| index.to_string());
+            Some(DomHighlightOverlayElement {
+                index: *index,
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+                label,
+            })
+        })
+        .collect()
+}
+
+fn dom_highlight_overlay_script(elements: &[DomHighlightOverlayElement]) -> String {
+    let elements = serde_json::to_string(elements).unwrap_or_else(|_| "[]".to_owned());
+    format!(
+        r#"(function() {{
+  const elements = {elements};
+  document.querySelectorAll('[data-browser-use-highlight]').forEach((element) => element.remove());
+  const oldContainer = document.getElementById('browser-use-debug-highlights');
+  if (oldContainer) oldContainer.remove();
+  const container = document.createElement('div');
+  container.id = 'browser-use-debug-highlights';
+  container.setAttribute('data-browser-use-highlight', 'container');
+  container.style.cssText = `
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 2147483646;
+  `;
+  const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+  const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+  for (const element of elements) {{
+    const box = document.createElement('div');
+    box.setAttribute('data-browser-use-highlight', 'box');
+    box.setAttribute('data-browser-use-index', String(element.index));
+    box.style.cssText = `
+      position: absolute;
+      left: ${{element.x + scrollX}}px;
+      top: ${{element.y + scrollY}}px;
+      width: ${{element.width}}px;
+      height: ${{element.height}}px;
+      border: 2px solid rgba(255, 127, 39, 0.92);
+      background: rgba(255, 127, 39, 0.10);
+      box-sizing: border-box;
+      pointer-events: none;
+    `;
+    if (element.label) {{
+      const label = document.createElement('div');
+      label.setAttribute('data-browser-use-highlight', 'tooltip');
+      label.textContent = element.label;
+      label.style.cssText = `
+        position: absolute;
+        left: ${{element.x + scrollX}}px;
+        top: ${{Math.max(0, element.y + scrollY - 18)}}px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 2px;
+        background: rgb(255, 127, 39);
+        color: #111;
+        font: 12px/16px monospace;
+        text-align: center;
+        pointer-events: none;
+      `;
+      container.appendChild(label);
+    }}
+    container.appendChild(box);
+  }}
+  document.body.appendChild(container);
+  return true;
+}})()"#
+    )
+}
+
 const CLICK_ELEMENT_ACTION_JS: &str = r#"const tag = el.tagName ? el.tagName.toLowerCase() : '';
   if (tag === 'select') {
     throw new Error('Cannot click on <select> elements. Use get_dropdown_options and select_dropdown_option instead.');
@@ -1955,6 +2057,10 @@ pub struct BrowserProfile {
     pub wait_for_network_idle_page_load_time: f64,
     #[serde(default = "default_highlight_elements")]
     pub highlight_elements: bool,
+    #[serde(default)]
+    pub dom_highlight_elements: bool,
+    #[serde(default = "default_filter_highlight_ids")]
+    pub filter_highlight_ids: bool,
     #[serde(default = "default_interaction_highlight_color")]
     pub interaction_highlight_color: String,
     #[serde(default = "default_interaction_highlight_duration")]
@@ -2019,6 +2125,8 @@ impl Default for BrowserProfile {
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             highlight_elements: default_highlight_elements(),
+            dom_highlight_elements: false,
+            filter_highlight_ids: default_filter_highlight_ids(),
             interaction_highlight_color: default_interaction_highlight_color(),
             interaction_highlight_duration: default_interaction_highlight_duration(),
             window_size: None,
@@ -2063,6 +2171,10 @@ fn default_accept_downloads() -> bool {
 }
 
 fn default_highlight_elements() -> bool {
+    true
+}
+
+fn default_filter_highlight_ids() -> bool {
     true
 }
 
@@ -4143,6 +4255,29 @@ impl InteractionHighlightConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DomHighlightConfig {
+    enabled: bool,
+    filter_highlight_ids: bool,
+}
+
+impl DomHighlightConfig {
+    fn from_profile(profile: &BrowserProfile) -> Self {
+        Self {
+            enabled: profile.dom_highlight_elements,
+            filter_highlight_ids: profile.filter_highlight_ids,
+        }
+    }
+
+    fn overlay_script(&self, selector_map: &BTreeMap<u32, DomElementRef>) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        let elements = dom_highlight_overlay_elements(selector_map, self.filter_highlight_ids);
+        Some(dom_highlight_overlay_script(&elements))
+    }
+}
+
 #[derive(Debug)]
 struct NetworkActivityState {
     active_request_ids: BTreeSet<String>,
@@ -4458,6 +4593,7 @@ pub struct CdpBrowserSession {
     viewport_emulation: ViewportEmulationConfig,
     page_load_wait: PageLoadWaitConfig,
     interaction_highlight: InteractionHighlightConfig,
+    dom_highlight: DomHighlightConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
     downloads_path: Option<PathBuf>,
     auto_download_pdfs: bool,
@@ -4568,6 +4704,7 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait,
             interaction_highlight: InteractionHighlightConfig::from_profile(profile),
+            dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -4685,6 +4822,7 @@ impl CdpBrowserSession {
             viewport_emulation,
             page_load_wait: PageLoadWaitConfig::from_profile(profile),
             interaction_highlight: InteractionHighlightConfig::from_profile(profile),
+            dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
@@ -5037,6 +5175,14 @@ impl CdpBrowserSession {
 
     async fn highlight_coordinates_if_enabled(&self, x: i32, y: i32) {
         let Some(script) = self.interaction_highlight.coordinate_script(x, y) else {
+            return;
+        };
+        let page = self.current_page().await;
+        let _ = self.evaluate_effect_for_page(&page, script).await;
+    }
+
+    async fn apply_dom_highlights_if_enabled(&self, dom_state: &SerializedDomState) {
+        let Some(script) = self.dom_highlight.overlay_script(&dom_state.selector_map) else {
             return;
         };
         let page = self.current_page().await;
@@ -8577,6 +8723,7 @@ impl BrowserSession for CdpBrowserSession {
         let page_info = self.page_info().await?;
         let dom_state = self.dom_state().await?;
         self.set_cached_dom_state(dom_state.clone()).await;
+        self.apply_dom_highlights_if_enabled(&dom_state).await;
         let pagination_buttons = detect_pagination_buttons(&dom_state);
         let current_page = self.current_page().await;
         let tabs = page_tabs(&self.connection).await?;
@@ -9679,6 +9826,7 @@ mod tests {
             interaction_highlight: InteractionHighlightConfig::from_profile(
                 &BrowserProfile::default(),
             ),
+            dom_highlight: DomHighlightConfig::from_profile(&BrowserProfile::default()),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
             downloads_path,
             auto_download_pdfs,
@@ -10073,11 +10221,15 @@ mod tests {
     fn browser_profile_interaction_highlight_defaults_match_upstream() {
         let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
         assert!(decoded.highlight_elements);
+        assert!(!decoded.dom_highlight_elements);
+        assert!(decoded.filter_highlight_ids);
         assert_eq!(decoded.interaction_highlight_color, "rgb(255, 127, 39)");
         assert_eq!(decoded.interaction_highlight_duration, 1.0);
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert_eq!(encoded["highlight_elements"], json!(true));
+        assert_eq!(encoded["dom_highlight_elements"], json!(false));
+        assert_eq!(encoded["filter_highlight_ids"], json!(true));
         assert_eq!(
             encoded["interaction_highlight_color"],
             json!("rgb(255, 127, 39)")
@@ -10086,11 +10238,15 @@ mod tests {
 
         let disabled: BrowserProfile = serde_json::from_value(json!({
             "highlight_elements": false,
+            "dom_highlight_elements": true,
+            "filter_highlight_ids": false,
             "interaction_highlight_color": "lime",
             "interaction_highlight_duration": 0.25
         }))
         .expect("highlight profile");
         assert!(!disabled.highlight_elements);
+        assert!(disabled.dom_highlight_elements);
+        assert!(!disabled.filter_highlight_ids);
         assert_eq!(disabled.interaction_highlight_color, "lime");
         assert_eq!(disabled.interaction_highlight_duration, 0.25);
     }
@@ -14143,6 +14299,86 @@ mod tests {
         assert!(coordinate_script.contains("const x = 12;"));
         assert!(coordinate_script.contains("const y = 34;"));
         assert!(coordinate_script.contains("const duration = 0;"));
+    }
+
+    #[test]
+    fn dom_highlight_overlay_elements_filter_verbose_labels() {
+        let mut selector_map = BTreeMap::new();
+        selector_map.insert(
+            1,
+            test_dom_bound_element(
+                1,
+                "target",
+                "Go",
+                Some(ElementBounds {
+                    x: 10,
+                    y: 20,
+                    width: 30,
+                    height: 40,
+                }),
+            ),
+        );
+        selector_map.insert(
+            2,
+            test_dom_bound_element(
+                2,
+                "target",
+                "Very long button label",
+                Some(ElementBounds {
+                    x: 50,
+                    y: 60,
+                    width: 70,
+                    height: 80,
+                }),
+            ),
+        );
+        selector_map.insert(3, test_dom_bound_element(3, "target", "Hidden", None));
+
+        let filtered = dom_highlight_overlay_elements(&selector_map, true);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].label.as_deref(), Some("1"));
+        assert_eq!(filtered[1].label, None);
+
+        let unfiltered = dom_highlight_overlay_elements(&selector_map, false);
+        assert_eq!(unfiltered[0].label.as_deref(), Some("1"));
+        assert_eq!(unfiltered[1].label.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn dom_highlight_config_and_script_match_overlay_contract() {
+        let disabled = DomHighlightConfig::from_profile(&BrowserProfile::default());
+        assert!(disabled.overlay_script(&BTreeMap::new()).is_none());
+
+        let enabled = DomHighlightConfig::from_profile(&BrowserProfile {
+            dom_highlight_elements: true,
+            filter_highlight_ids: false,
+            ..BrowserProfile::default()
+        });
+        let mut selector_map = BTreeMap::new();
+        selector_map.insert(
+            7,
+            test_dom_bound_element(
+                7,
+                "target",
+                "Submit",
+                Some(ElementBounds {
+                    x: 1,
+                    y: 2,
+                    width: 3,
+                    height: 4,
+                }),
+            ),
+        );
+        let script = enabled
+            .overlay_script(&selector_map)
+            .expect("overlay script");
+
+        assert!(script.contains("browser-use-debug-highlights"));
+        assert!(script.contains("[data-browser-use-highlight]"));
+        assert!(script.contains("\"index\":7"));
+        assert!(script.contains("\"label\":\"7\""));
+        assert!(script.contains("data-browser-use-index"));
+        assert!(script.contains("document.body.appendChild(container);"));
     }
 
     #[test]

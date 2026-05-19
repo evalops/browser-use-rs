@@ -36,6 +36,8 @@ includes:
   upstream-style string/number/bool JSON coercion,
   upstream-default interaction highlights for indexed click/input actions and
   coordinate clicks with configurable highlight color and duration,
+  upstream-style `dom_highlight_elements` debug overlays with optional label
+  filtering during state capture,
   upstream-style default Chrome launch args, `ignore_default_args` list/true
   suppression, merged `--disable-features`, and last-wins switch de-dupe, typed
   `permissions` grants for upstream's default `clipboardReadWrite` and

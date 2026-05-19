@@ -33,7 +33,9 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   actions and coordinate clicks inject non-fatal temporary browser-side
   interaction highlights using upstream-default color and duration settings.
   Setting `highlight_elements=false` disables those markers while preserving
-  the underlying action behavior.
+  the underlying action behavior. `BrowserProfile.dom_highlight_elements`
+  defaults to `false`; when enabled, state capture refreshes a non-fatal debug
+  overlay for the current selector map and honors `filter_highlight_ids`.
   `BrowserProfile.keep_alive=true` detaches the locally launched child process
   from Rust session ownership so dropping a one-shot `CdpBrowserSession` leaves
   Chrome running for reuse, while explicit `close_browser()` still sends

@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#130 Add BrowserProfile DOM highlight overlay parity](https://github.com/evalops/browser-use-rs/issues/130)
+- Next upstream parity slice after #130 lands and CI is green.
 
 ## Completed Tracks
 
+- [#130 Add BrowserProfile DOM highlight overlay parity](https://github.com/evalops/browser-use-rs/issues/130)
 - [#129 Add BrowserProfile interaction highlight parity](https://github.com/evalops/browser-use-rs/issues/129)
 - [#128 Add BrowserProfile downloads_path alias parity](https://github.com/evalops/browser-use-rs/issues/128)
 - [#127 Add BrowserProfile accept_downloads parity](https://github.com/evalops/browser-use-rs/issues/127)
@@ -192,7 +193,9 @@ Implemented:
   `interaction_highlight_duration` preserve upstream defaults; indexed
   click/input actions and coordinate clicks attempt non-fatal temporary
   browser-side interaction highlights, while `highlight_elements=false`
-  disables those markers.
+  disables those markers. `BrowserProfile.dom_highlight_elements` and
+  `filter_highlight_ids` preserve upstream defaults and drive a non-fatal
+  debug overlay refresh during state capture.
   `BrowserProfile.accept_downloads` defaults to true; accepted sessions use an
   explicit `downloads_path` or a session-owned `browser-use-downloads-*`
   temporary directory for Chrome download behavior. Upstream aliases
