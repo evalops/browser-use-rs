@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #110 lands and CI is green.
+- [#111 Refresh upstream target to ac2ef54 and pin upload_file containment parity](https://github.com/evalops/browser-use-rs/issues/111)
 
 ## Completed Tracks
 
