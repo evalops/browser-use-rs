@@ -1767,7 +1767,10 @@ pub struct BrowserProfile {
     pub wait_for_network_idle_page_load_time: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<BrowserViewport>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default = "default_window_position",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub window_position: Option<BrowserViewport>,
     #[serde(default = "default_browser_start_timeout_ms")]
     pub browser_start_timeout_ms: u64,
@@ -1817,7 +1820,7 @@ impl Default for BrowserProfile {
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             window_size: None,
-            window_position: None,
+            window_position: default_window_position(),
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
             navigation_timeout_ms: default_navigation_timeout_ms(),
             network_request_timeout_ms: default_network_request_timeout_ms(),
@@ -1847,6 +1850,13 @@ fn default_browser_permissions() -> Vec<String> {
         .into_iter()
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn default_window_position() -> Option<BrowserViewport> {
+    Some(BrowserViewport {
+        width: 0,
+        height: 0,
+    })
 }
 
 fn default_cross_origin_iframes() -> bool {
@@ -8752,6 +8762,7 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert!(plan.args.contains(&"--window-position=0,0".to_owned()));
         assert!(!profile.devtools);
         assert!(
             !plan
@@ -8760,12 +8771,12 @@ mod tests {
                 .any(|arg| arg == "--auto-open-devtools-for-tabs")
         );
         assert_eq!(profile.window_size, None);
-        assert_eq!(profile.window_position, None);
-        assert!(
-            !plan
-                .args
-                .iter()
-                .any(|arg| arg.starts_with("--window-position="))
+        assert_eq!(
+            profile.window_position,
+            Some(BrowserViewport {
+                width: 0,
+                height: 0
+            })
         );
         assert!(profile.chromium_sandbox);
         assert!(!profile.devtools);
@@ -9178,14 +9189,20 @@ mod tests {
     }
 
     #[test]
-    fn browser_profile_window_geometry_defaults_to_omitted_json() {
+    fn browser_profile_window_geometry_matches_upstream_defaults_in_json() {
         let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
         assert_eq!(decoded.window_size, None);
-        assert_eq!(decoded.window_position, None);
+        assert_eq!(
+            decoded.window_position,
+            Some(BrowserViewport {
+                width: 0,
+                height: 0
+            })
+        );
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert!(encoded.get("window_size").is_none());
-        assert!(encoded.get("window_position").is_none());
+        assert_eq!(encoded["window_position"], json!({"width": 0, "height": 0}));
     }
 
     #[test]
