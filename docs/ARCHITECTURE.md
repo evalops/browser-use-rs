@@ -306,6 +306,10 @@ session process state. `browser-use-mcp` exposes the same operations as MCP
 tools. These front doors should avoid duplicating core agent or CDP session
 logic; they adapt IO, persistence, and error presentation.
 
+`browser-use-cli/src/tests.rs` is a private child module of the CLI entrypoint.
+It keeps CLI parser, daemon, HTTP, session-store, and MCP bridge regressions out
+of `main.rs` while still testing private adapter helpers directly.
+
 `browser-use-conformance` and the tests embedded in each crate hold parity
 fixtures. When in doubt, add a fixture or regression test before changing a
 contract.

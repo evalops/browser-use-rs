@@ -499,7 +499,7 @@ Review risks:
 
 ## CLI Crate
 
-Path: `crates/browser-use-cli/src/main.rs`.
+Path: `crates/browser-use-cli/src`.
 
 Responsibilities:
 
@@ -515,6 +515,19 @@ Review risks:
 - CLI JSON is a user contract. Avoid casual field churn.
 - Persistent session state must be cleaned up explicitly.
 - CLI code should compose core/CDP APIs rather than duplicating browser logic.
+
+### `main.rs`
+
+Owns the executable entrypoint, command dispatch, CLI argument DTOs, local
+session store, daemon adapters, HTTP/TCP JSON-RPC handling, and MCP bridge
+runtime.
+
+### `tests.rs`
+
+Owns private CLI regressions for parser flags, agent-settings translation,
+session cleanup, daemon authorization, HTTP request handling, and MCP tool
+dispatch. Keep tests here when they need private adapter helpers; move public
+contract fixtures outward only when they no longer need entrypoint internals.
 
 ## MCP Crate
 
