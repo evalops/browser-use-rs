@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream parity slice after #116 lands and CI is green.
+- [#117 Add BrowserProfile iframe traversal limits](https://github.com/evalops/browser-use-rs/issues/117)
 
 ## Completed Tracks
 
