@@ -149,6 +149,7 @@ management and live CDP session behavior.
 | `dom.rs` | Injected DOM/action JavaScript, element highlight scripts, DOMSnapshot and accessibility joins, iframe target merging, compact DOM parsing, pagination detection, cached-index target mapping. |
 | `recording.rs` | HAR capture, trace artifacts, screencast video/GIF writing, artifact path generation, recorder diagnostics. |
 | `storage.rs` | Cookie/origin storage save/load, frame-origin discovery, DOMStorage conversion, storage-state counts and file writes. |
+| `target.rs` | Page target selection, target attach/create, viewport emulation commands, browser permission grants, download-event enablement, and tab-id resolution. |
 | `watchdog.rs` | Lifecycle watchdog, security watchdog, URL-policy actions, bounded event buffers, websocket lifecycle event mapping, network timeouts, download event mapping, auto-PDF download handling. |
 
 ### CDP Session Shape
@@ -229,6 +230,13 @@ dispatch; these modules decide how CDP payloads and responses are represented.
 `types.rs` owns DTOs that are shared across CDP submodules or exported publicly.
 Keep serde compatibility helpers next to the DTOs they shape, then re-export the
 public API from `lib.rs`.
+
+`target.rs` owns operations that address browser/page targets before a concrete
+agent action runs: choosing a usable page, attaching target sessions, creating
+new tabs, applying viewport emulation, granting browser permissions, enabling
+download events, and resolving full/short tab ids. Session methods decide when
+those operations are needed; target helpers decide the CDP payloads and target
+selection rules.
 
 ### Profile, Recording, And Storage Boundaries
 
@@ -320,6 +328,8 @@ Compatibility-sensitive public exports include:
 - New URL policy behavior: `browser-use-cdp/src/policy.rs`.
 - New Runtime.evaluate or keyboard payload behavior:
   `browser-use-cdp/src/runtime.rs` or `browser-use-cdp/src/input.rs`.
+- New page target, viewport emulation, browser permission, or download-event
+  setup behavior: `browser-use-cdp/src/target.rs`.
 - New profile/cloud launch behavior: `browser-use-cdp/src/profile.rs` or
   `browser-use-cdp/src/cloud.rs`.
 - New artifact or storage behavior: `browser-use-cdp/src/recording.rs` or
