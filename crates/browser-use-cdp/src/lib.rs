@@ -1807,13 +1807,22 @@ impl BrowserProfile {
         )
     }
 
+    #[must_use]
+    pub fn launch_plan(&self) -> BrowserLaunchPlan {
+        self.try_launch_plan()
+            .expect("invalid BrowserProfile launch plan")
+    }
+
     pub fn try_launch_plan(&self) -> Result<BrowserLaunchPlan, BrowserError> {
         if self.headless && self.devtools {
             return Err(BrowserError::LaunchFailed(
-                "headless=true and devtools=true cannot both be set".to_owned(),
+                "headless=True and devtools=True cannot both be set at the same time".to_owned(),
             ));
         }
+        Ok(self.build_launch_plan())
+    }
 
+    fn build_launch_plan(&self) -> BrowserLaunchPlan {
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
         let window_size = self.window_size.as_ref().unwrap_or(&self.viewport);
         let mut args = vec![
@@ -1883,15 +1892,10 @@ impl BrowserProfile {
 
         args.extend(self.args.iter().cloned());
 
-        Ok(BrowserLaunchPlan {
+        BrowserLaunchPlan {
             executable_path: self.executable_path.clone(),
             args,
-        })
-    }
-
-    #[must_use]
-    pub fn launch_plan(&self) -> BrowserLaunchPlan {
-        self.try_launch_plan().expect("valid browser launch plan")
+        }
     }
 
     pub async fn launch_local(&self) -> Result<LaunchedBrowser, BrowserError> {
@@ -7897,6 +7901,12 @@ mod tests {
                 .any(|arg| arg.starts_with("--window-position="))
         );
         assert!(profile.chromium_sandbox);
+        assert!(!profile.devtools);
+        assert!(
+            !plan
+                .args
+                .contains(&"--auto-open-devtools-for-tabs".to_owned())
+        );
         assert!(
             !CHROME_DOCKER_ARGS
                 .iter()
@@ -7967,6 +7977,15 @@ mod tests {
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert_eq!(encoded["chromium_sandbox"], json!(true));
+    }
+
+    #[test]
+    fn browser_profile_devtools_defaults_false_in_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert!(!decoded.devtools);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert_eq!(encoded["devtools"], json!(false));
     }
 
     #[test]
@@ -8511,14 +8530,14 @@ mod tests {
     }
 
     #[test]
-    fn launch_plan_emits_devtools_flag_when_headful() {
+    fn launch_plan_emits_devtools_arg_when_headful() {
         let profile = BrowserProfile {
             headless: false,
             devtools: true,
             ..BrowserProfile::default()
         };
 
-        let plan = profile.launch_plan();
+        let plan = profile.try_launch_plan().expect("devtools launch plan");
 
         assert!(
             plan.args
@@ -8530,23 +8549,24 @@ mod tests {
     #[test]
     fn launch_plan_rejects_devtools_with_headless() {
         let profile = BrowserProfile {
+            headless: true,
             devtools: true,
             ..BrowserProfile::default()
         };
 
         let error = profile
             .try_launch_plan()
-            .expect_err("headless devtools should fail");
+            .expect_err("headless devtools should fail launch planning");
 
         assert!(
             error
                 .to_string()
-                .contains("headless=true and devtools=true cannot both be set")
+                .contains("headless=True and devtools=True cannot both be set")
         );
     }
 
     #[test]
-    fn launch_plan_keeps_devtools_flag_before_custom_args() {
+    fn launch_plan_keeps_devtools_arg_before_custom_args() {
         let profile = BrowserProfile {
             headless: false,
             devtools: true,
@@ -8557,11 +8577,11 @@ mod tests {
             ..BrowserProfile::default()
         };
 
-        let plan = profile.launch_plan();
-        let generated_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs");
-        let custom_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs=false");
+        let plan = profile.try_launch_plan().expect("devtools launch plan");
+        let generated_devtools_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs");
+        let custom_devtools_index = arg_index(&plan.args, "--auto-open-devtools-for-tabs=false");
 
-        assert!(generated_index < custom_index);
+        assert!(generated_devtools_index < custom_devtools_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
