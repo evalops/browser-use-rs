@@ -84,6 +84,9 @@ rm -rf "$tmp"
 The CLI surface is documented in [docs/CLI.md](docs/CLI.md), MCP in
 [docs/MCP.md](docs/MCP.md), and daemon supervision in
 [docs/DAEMON_SUPERVISION.md](docs/DAEMON_SUPERVISION.md).
+The implementation map lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+and the file-level maintainer guide in
+[docs/CODEBASE_GUIDE.md](docs/CODEBASE_GUIDE.md).
 
 ## Workspace
 
