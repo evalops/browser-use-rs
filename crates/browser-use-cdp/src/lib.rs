@@ -1628,6 +1628,8 @@ pub struct BrowserProfile {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    #[serde(default = "default_browser_permissions")]
+    pub permissions: Vec<String>,
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
@@ -1673,6 +1675,7 @@ impl Default for BrowserProfile {
             storage_state_path: None,
             args: Vec::new(),
             user_agent: None,
+            permissions: default_browser_permissions(),
             allowed_domains: Vec::new(),
             prohibited_domains: Vec::new(),
             block_ip_addresses: false,
@@ -1703,6 +1706,13 @@ fn default_chromium_sandbox() -> bool {
 
 fn default_profile_directory() -> String {
     "Default".to_owned()
+}
+
+fn default_browser_permissions() -> Vec<String> {
+    ["clipboardReadWrite", "notifications"]
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn default_browser_start_timeout_ms() -> u64 {
@@ -1949,6 +1959,7 @@ pub enum BrowserLifecycleEventKind {
     BrowserStopped,
     BrowserReconnecting,
     BrowserReconnected,
+    BrowserDiagnostic,
     TargetCreated,
     TargetClosed,
     TargetSwitched,
@@ -2079,6 +2090,40 @@ impl BrowserLifecycleEvent {
                 ("downtime_seconds".to_owned(), downtime_seconds.clone()),
             ]),
             format!("Browser reconnected to {url} on attempt {attempt} after {downtime_seconds}s"),
+        )
+    }
+
+    pub fn browser_diagnostic(
+        reason: impl Into<String>,
+        details: BTreeMap<String, String>,
+        error: Option<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let reason = reason.into();
+        Self::new(
+            BrowserLifecycleEventKind::BrowserDiagnostic,
+            None,
+            None,
+            Some(reason),
+            error,
+            details,
+            message.into(),
+        )
+    }
+
+    pub fn permissions_grant_failed(permissions: &[String], error: impl Into<String>) -> Self {
+        let error = error.into();
+        Self::browser_diagnostic(
+            "permissions_grant_failed",
+            BTreeMap::from([
+                ("permissions".to_owned(), permissions.join(",")),
+                (
+                    "permissions_count".to_owned(),
+                    permissions.len().to_string(),
+                ),
+            ]),
+            Some(error.clone()),
+            format!("Browser permission grant failed: {error}"),
         )
     }
 
@@ -2405,6 +2450,9 @@ impl BrowserLifecycleAdapterEvent {
             }
             BrowserLifecycleEventKind::BrowserReconnected => {
                 BrowserLifecycleAdapterEventKind::BrowserReconnected
+            }
+            BrowserLifecycleEventKind::BrowserDiagnostic => {
+                BrowserLifecycleAdapterEventKind::BrowserDiagnostic
             }
             BrowserLifecycleEventKind::TargetCreated => {
                 BrowserLifecycleAdapterEventKind::TabCreated
@@ -3428,7 +3476,16 @@ pub struct CdpBrowserSession {
 
 impl CdpBrowserSession {
     pub async fn connect(endpoint: DevToolsEndpoint) -> Result<Self, BrowserError> {
+        Self::connect_with_profile(endpoint, &BrowserProfile::default()).await
+    }
+
+    pub async fn connect_with_profile(
+        endpoint: DevToolsEndpoint,
+        profile: &BrowserProfile,
+    ) -> Result<Self, BrowserError> {
         let connection = CdpConnection::connect(&endpoint).await?;
+        let permission_grant_event =
+            grant_browser_permissions(&connection, &profile.permissions).await;
         let page = attach_or_create_page(&connection).await?;
         let page = Arc::new(Mutex::new(page));
         let last_dom_state = Arc::new(Mutex::new(None));
@@ -3443,12 +3500,15 @@ impl CdpBrowserSession {
                 &lifecycle_event_tx,
                 BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
+            if let Some(event) = permission_grant_event {
+                push_lifecycle_event_and_publish(&mut events, &lifecycle_event_tx, event);
+            }
         }
         let lifecycle_watchdog = BrowserLifecycleWatchdog::start(
             connection.clone(),
             lifecycle_events.clone(),
             lifecycle_event_tx.clone(),
-            default_network_request_timeout_ms(),
+            profile.network_request_timeout_ms,
         );
 
         Ok(Self {
@@ -3459,9 +3519,9 @@ impl CdpBrowserSession {
             security_events,
             lifecycle_events,
             lifecycle_event_tx,
-            url_policy: UrlAccessPolicy::default(),
+            url_policy: UrlAccessPolicy::from_profile(profile),
             storage_state_path: None,
-            navigation_timeout_ms: default_navigation_timeout_ms(),
+            navigation_timeout_ms: profile.navigation_timeout_ms,
             _lifecycle_watchdog: lifecycle_watchdog,
             _security_watchdog: None,
             _launched_browser: None,
@@ -3477,6 +3537,8 @@ impl CdpBrowserSession {
             (launched_browser.endpoint().clone(), Some(launched_browser))
         };
         let connection = CdpConnection::connect(&endpoint).await?;
+        let permission_grant_event =
+            grant_browser_permissions(&connection, &profile.permissions).await;
         if let Some(downloads_path) = &profile.downloads_path {
             enable_browser_download_events(&connection, downloads_path).await?;
         }
@@ -3508,6 +3570,9 @@ impl CdpBrowserSession {
                 &lifecycle_event_tx,
                 BrowserLifecycleEvent::browser_connected(endpoint.http_url.clone()),
             );
+            if let Some(event) = permission_grant_event {
+                push_lifecycle_event_and_publish(&mut events, &lifecycle_event_tx, event);
+            }
             if let Some(event) = storage_state_loaded_event {
                 push_lifecycle_event_and_publish(&mut events, &lifecycle_event_tx, event);
             }
@@ -6297,6 +6362,27 @@ async fn attach_to_target(
     })
 }
 
+fn browser_permission_grant_params(permissions: &[String]) -> Option<Value> {
+    (!permissions.is_empty()).then(|| json!({ "permissions": permissions }))
+}
+
+async fn grant_browser_permissions(
+    connection: &CdpConnection,
+    permissions: &[String],
+) -> Option<BrowserLifecycleEvent> {
+    let params = browser_permission_grant_params(permissions)?;
+    match connection
+        .command("Browser.grantPermissions", params, None)
+        .await
+    {
+        Ok(_) => None,
+        Err(error) => Some(BrowserLifecycleEvent::permissions_grant_failed(
+            permissions,
+            error.to_string(),
+        )),
+    }
+}
+
 async fn enable_browser_download_events(
     connection: &CdpConnection,
     downloads_path: &Path,
@@ -7871,6 +7957,109 @@ mod tests {
         })
     }
 
+    #[derive(Debug, Clone)]
+    struct RecordedCdpCommand {
+        method: String,
+        params: Value,
+        session_id: Option<String>,
+    }
+
+    async fn cdp_command_test_server(
+        grant_error: Option<&'static str>,
+        expected_requests: usize,
+    ) -> (
+        DevToolsEndpoint,
+        tokio::task::JoinHandle<Vec<RecordedCdpCommand>>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind cdp test server");
+        let addr = listener.local_addr().expect("cdp test server addr");
+        let endpoint = DevToolsEndpoint {
+            http_url: format!("http://{addr}"),
+            websocket_url: format!("ws://{addr}/devtools/browser/test"),
+        };
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept cdp websocket");
+            let mut websocket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("accept websocket handshake");
+            let mut commands = Vec::new();
+
+            for _ in 0..expected_requests {
+                let Some(message) = websocket.next().await else {
+                    break;
+                };
+                let message = message.expect("cdp websocket message");
+                let text = match message {
+                    Message::Text(text) => text.to_string(),
+                    Message::Binary(bytes) => String::from_utf8(bytes.to_vec()).expect("utf8 cdp"),
+                    _ => continue,
+                };
+                let payload: Value = serde_json::from_str(&text).expect("cdp request json");
+                let id = payload.get("id").and_then(Value::as_u64).expect("cdp id");
+                let method = payload
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .expect("cdp method");
+                let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
+                commands.push(RecordedCdpCommand {
+                    method: method.to_owned(),
+                    params,
+                    session_id: payload
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                });
+
+                let response = cdp_command_test_response(id, method, grant_error);
+                websocket
+                    .send(Message::Text(response.to_string().into()))
+                    .await
+                    .expect("send cdp response");
+            }
+
+            commands
+        });
+        (endpoint, handle)
+    }
+
+    fn cdp_command_test_response(
+        id: u64,
+        method: &str,
+        grant_error: Option<&'static str>,
+    ) -> Value {
+        if method == "Browser.grantPermissions" {
+            if let Some(message) = grant_error {
+                return json!({
+                    "id": id,
+                    "error": {
+                        "message": message
+                    }
+                });
+            }
+        }
+
+        let result = match method {
+            "Target.getTargets" => json!({
+                "targetInfos": [{
+                    "targetId": "target-1",
+                    "type": "page",
+                    "url": "about:blank"
+                }]
+            }),
+            "Target.attachToTarget" => json!({
+                "sessionId": "session-1"
+            }),
+            "Browser.grantPermissions" | "Page.enable" | "Network.enable" => json!({}),
+            other => panic!("unexpected CDP method {other}"),
+        };
+        json!({
+            "id": id,
+            "result": result
+        })
+    }
+
     fn arg_index(args: &[String], expected: &str) -> usize {
         args.iter()
             .position(|arg| arg == expected)
@@ -7937,6 +8126,159 @@ mod tests {
         assert_eq!(profile.navigation_timeout_ms, 20_000);
         assert!(!profile.uses_cloud());
         assert_eq!(profile.cloud_create_request(), None);
+    }
+
+    #[test]
+    fn default_profile_uses_upstream_browser_permissions() {
+        let profile = BrowserProfile::default();
+        assert_eq!(
+            profile.permissions,
+            vec!["clipboardReadWrite".to_owned(), "notifications".to_owned()]
+        );
+
+        let deserialized: BrowserProfile =
+            serde_json::from_value(json!({})).expect("deserialize default profile");
+        assert_eq!(deserialized.permissions, profile.permissions);
+
+        let serialized = serde_json::to_value(&profile).expect("serialize profile");
+        assert_eq!(
+            serialized["permissions"],
+            json!(["clipboardReadWrite", "notifications"])
+        );
+
+        let explicit_empty: BrowserProfile =
+            serde_json::from_value(json!({ "permissions": [] })).expect("empty permissions");
+        assert!(explicit_empty.permissions.is_empty());
+    }
+
+    #[test]
+    fn browser_permission_grant_params_skip_empty_lists() {
+        assert_eq!(browser_permission_grant_params(&[]), None);
+
+        let permissions = vec!["clipboardReadWrite".to_owned(), "notifications".to_owned()];
+        assert_eq!(
+            browser_permission_grant_params(&permissions),
+            Some(json!({
+                "permissions": ["clipboardReadWrite", "notifications"]
+            }))
+        );
+    }
+
+    #[test]
+    fn permission_grant_failure_lifecycle_event_is_inspectable() {
+        let permissions = vec!["clipboardReadWrite".to_owned(), "notifications".to_owned()];
+        let event = BrowserLifecycleEvent::permissions_grant_failed(
+            &permissions,
+            "Browser denied permission grant",
+        );
+
+        assert_eq!(event.kind, BrowserLifecycleEventKind::BrowserDiagnostic);
+        assert_eq!(event.reason.as_deref(), Some("permissions_grant_failed"));
+        assert_eq!(
+            event.details.get("permissions").map(String::as_str),
+            Some("clipboardReadWrite,notifications")
+        );
+        assert_eq!(
+            event.details.get("permissions_count").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            event.error.as_deref(),
+            Some("Browser denied permission grant")
+        );
+        assert_eq!(
+            BrowserLifecycleAdapterEvent::from_lifecycle_event(&event).kind,
+            BrowserLifecycleAdapterEventKind::BrowserDiagnostic
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_grants_default_permissions_before_target_attach() {
+        let (endpoint, command_log) = cdp_command_test_server(None, 5).await;
+        let session = CdpBrowserSession::connect(endpoint)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command.method.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Browser.grantPermissions",
+                "Target.getTargets",
+                "Target.attachToTarget",
+                "Page.enable",
+                "Network.enable",
+            ]
+        );
+        assert_eq!(
+            commands[0].params,
+            json!({
+                "permissions": ["clipboardReadWrite", "notifications"]
+            })
+        );
+        assert_eq!(commands[3].session_id.as_deref(), Some("session-1"));
+        assert_eq!(commands[4].session_id.as_deref(), Some("session-1"));
+
+        let lifecycle_events = session.lifecycle_events().await;
+        assert_eq!(
+            lifecycle_events
+                .iter()
+                .filter(|event| event.reason.as_deref() == Some("permissions_grant_failed"))
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_skips_empty_permissions_before_target_attach() {
+        let (endpoint, command_log) = cdp_command_test_server(None, 4).await;
+        let profile = BrowserProfile {
+            permissions: Vec::new(),
+            ..BrowserProfile::default()
+        };
+        let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command.method.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Target.getTargets",
+                "Target.attachToTarget",
+                "Page.enable",
+                "Network.enable",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_records_permission_grant_failures_without_failing() {
+        let (endpoint, command_log) =
+            cdp_command_test_server(Some("permission grant denied"), 5).await;
+        let session = CdpBrowserSession::connect(endpoint)
+            .await
+            .expect("connect session despite grant failure");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(commands[0].method, "Browser.grantPermissions");
+        assert_eq!(commands[1].method, "Target.getTargets");
+
+        let lifecycle_events = session.lifecycle_events().await;
+        let event = lifecycle_events
+            .iter()
+            .find(|event| event.reason.as_deref() == Some("permissions_grant_failed"))
+            .expect("permission grant diagnostic");
+        assert_eq!(event.kind, BrowserLifecycleEventKind::BrowserDiagnostic);
+        assert!(event.error.as_deref().is_some_and(|error| {
+            error.contains("Browser.grantPermissions") && error.contains("permission grant denied")
+        }));
     }
 
     #[test]
