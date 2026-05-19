@@ -20,7 +20,6 @@ use browser_use_dom::{
 use browser_use_dom::{DomEvalNode, DomPageStats, PaginationButtonType};
 #[cfg(test)]
 use futures_util::{SinkExt, StreamExt};
-use percent_encoding::percent_decode_str;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -34,13 +33,15 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::time::sleep;
 #[cfg(test)]
 use tokio_tungstenite::tungstenite::Message;
-use unicode_normalization::UnicodeNormalization;
 
 mod cloud;
 mod dom;
+mod input;
 mod lifecycle;
+mod policy;
 mod profile;
 mod recording;
+mod runtime;
 mod storage;
 mod transport;
 mod watchdog;
@@ -66,12 +67,16 @@ pub(crate) use dom::{
     select_dropdown_option_body_js, select_dropdown_option_js, should_fallback_to_index_traversal,
     snapshot_backend_ids_by_ax_ref, target_local_index_for_global_index, u32_field,
 };
+pub(crate) use input::{is_special_key, key_event_params, modifier_mask, normalize_send_keys};
 pub use lifecycle::{
     BrowserLifecycleAdapterEvent, BrowserLifecycleAdapterEventKind,
     BrowserLifecycleAdapterEventSubscription, BrowserLifecycleEvent, BrowserLifecycleEventKind,
     BrowserLifecycleEventStreamError, BrowserLifecycleEventSubscription,
     browser_lifecycle_adapter_events,
 };
+pub(crate) use policy::UrlAccessPolicy;
+#[cfg(test)]
+pub(crate) use policy::is_ip_address;
 #[cfg(test)]
 pub(crate) use profile::default_ignore_default_args;
 pub use profile::{
@@ -93,6 +98,10 @@ pub(crate) use recording::{
     CdpHarRecorder, CdpTraceRecorder, CdpVideoRecorder, TRACE_ARTIFACT_KIND,
     TRACE_ARTIFACT_SCHEMA_VERSION, trace_epoch_millis, trace_recording_failed_event,
     trace_security_event_json, trace_timestamp, video_recording_failed_event,
+};
+pub(crate) use runtime::{
+    render_runtime_evaluate_result, runtime_command_value, runtime_evaluate_params,
+    runtime_evaluate_value,
 };
 pub(crate) use storage::{
     apply_origin_storage_state, browser_storage_state, load_browser_storage_state, page_tabs,
@@ -536,238 +545,6 @@ struct AttachedFramePage {
 struct CachedDomElementRef {
     element: DomElementRef,
     target_local_index: u32,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct UrlAccessPolicy {
-    allowed_domains: Vec<String>,
-    prohibited_domains: Vec<String>,
-    block_ip_addresses: bool,
-}
-
-impl UrlAccessPolicy {
-    fn from_profile(profile: &BrowserProfile) -> Self {
-        Self {
-            allowed_domains: profile.allowed_domains.clone(),
-            prohibited_domains: profile.prohibited_domains.clone(),
-            block_ip_addresses: profile.block_ip_addresses,
-        }
-    }
-
-    fn validate(&self, url: &str) -> Result<(), BrowserError> {
-        if self.is_allowed(url) {
-            return Ok(());
-        }
-
-        Err(BrowserError::NavigationBlocked {
-            url: url.to_owned(),
-            reason: self.block_reason(url).to_owned(),
-        })
-    }
-
-    fn is_unrestricted(&self) -> bool {
-        self.allowed_domains.is_empty()
-            && self.prohibited_domains.is_empty()
-            && !self.block_ip_addresses
-    }
-
-    fn is_allowed(&self, url: &str) -> bool {
-        if is_internal_browser_url(url) {
-            return true;
-        }
-
-        let Ok(parsed) = url::Url::parse(url) else {
-            return false;
-        };
-
-        if matches!(parsed.scheme(), "data" | "blob") {
-            return true;
-        }
-
-        let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
-            return false;
-        };
-
-        if self.block_ip_addresses && is_ip_address(&host) {
-            return false;
-        }
-
-        if self.allowed_domains.is_empty() && self.prohibited_domains.is_empty() {
-            return true;
-        }
-
-        if !self.allowed_domains.is_empty() {
-            return self
-                .allowed_domains
-                .iter()
-                .any(|pattern| is_url_pattern_match(url, &host, parsed.scheme(), pattern));
-        }
-
-        !self
-            .prohibited_domains
-            .iter()
-            .any(|pattern| is_url_pattern_match(url, &host, parsed.scheme(), pattern))
-    }
-
-    fn block_reason(&self, url: &str) -> &'static str {
-        let Ok(parsed) = url::Url::parse(url) else {
-            return "invalid_url";
-        };
-        if self.block_ip_addresses
-            && parsed
-                .host_str()
-                .map(str::to_ascii_lowercase)
-                .is_some_and(|host| is_ip_address(&host))
-        {
-            return "ip_address_blocked";
-        }
-        if !self.allowed_domains.is_empty() {
-            return "not_in_allowed_domains";
-        }
-        "in_prohibited_domains"
-    }
-}
-
-fn is_internal_browser_url(url: &str) -> bool {
-    matches!(
-        url,
-        "about:blank"
-            | "chrome://new-tab-page/"
-            | "chrome://new-tab-page"
-            | "chrome://newtab/"
-            | "chrome://newtab"
-    )
-}
-
-fn is_ip_address(host: &str) -> bool {
-    let canonical_host = canonical_ip_host(host);
-    canonical_host.parse::<std::net::IpAddr>().is_ok()
-        || parse_non_standard_ipv4(&canonical_host).is_some()
-}
-
-fn canonical_ip_host(host: &str) -> String {
-    percent_decode_str(host.trim_matches(['[', ']']))
-        .decode_utf8_lossy()
-        .nfkc()
-        .collect::<String>()
-        .replace(['\u{3002}', '\u{ff61}'], ".")
-}
-
-fn parse_non_standard_ipv4(host: &str) -> Option<u32> {
-    if host.is_empty()
-        || host.contains(':')
-        || host.contains('/')
-        || host.chars().any(char::is_whitespace)
-    {
-        return None;
-    }
-    let parts = host
-        .split('.')
-        .map(parse_non_standard_ipv4_part)
-        .collect::<Option<Vec<_>>>()?;
-    match parts.as_slice() {
-        [a] if *a <= u32::MAX as u64 => Some(*a as u32),
-        [a, b] if *a <= 0xff && *b <= 0x00ff_ffff => Some(((*a as u32) << 24) | (*b as u32)),
-        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => {
-            Some(((*a as u32) << 24) | ((*b as u32) << 16) | (*c as u32))
-        }
-        [a, b, c, d] if *a <= 0xff && *b <= 0xff && *c <= 0xff && *d <= 0xff => {
-            Some(((*a as u32) << 24) | ((*b as u32) << 16) | ((*c as u32) << 8) | (*d as u32))
-        }
-        _ => None,
-    }
-}
-
-fn parse_non_standard_ipv4_part(part: &str) -> Option<u64> {
-    if part.is_empty() {
-        return None;
-    }
-    let (radix, digits) =
-        if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
-            (16, hex)
-        } else if part.len() > 1 && part.starts_with('0') {
-            (8, &part[1..])
-        } else {
-            (10, part)
-        };
-    if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
-        return None;
-    }
-    u64::from_str_radix(digits, radix).ok()
-}
-
-fn is_url_pattern_match(url: &str, host: &str, scheme: &str, pattern: &str) -> bool {
-    let pattern = pattern.trim().to_ascii_lowercase();
-    if pattern.is_empty() {
-        return false;
-    }
-
-    let url = url.to_ascii_lowercase();
-    let full_url_pattern = format!("{scheme}://{host}");
-
-    if pattern.contains('*') {
-        if let Some(domain) = pattern.strip_prefix("*.") {
-            return matches!(scheme, "http" | "https")
-                && (host == domain || host.ends_with(&format!(".{domain}")));
-        }
-
-        if pattern.ends_with("/*") && glob_match(&url, &pattern) {
-            return true;
-        }
-
-        let value = if pattern.contains("://") {
-            full_url_pattern.as_str()
-        } else {
-            host
-        };
-        return glob_match(value, &pattern);
-    }
-
-    if pattern.contains("://") {
-        return url.starts_with(&pattern);
-    }
-
-    host == pattern || (is_root_domain(&pattern) && host == format!("www.{pattern}"))
-}
-
-fn is_root_domain(domain: &str) -> bool {
-    !domain.contains('*') && !domain.contains("://") && domain.matches('.').count() == 1
-}
-
-fn glob_match(value: &str, pattern: &str) -> bool {
-    let mut remaining = value;
-    let mut parts = pattern.split('*').peekable();
-    let anchored_start = !pattern.starts_with('*');
-    let anchored_end = !pattern.ends_with('*');
-
-    if let Some(first) = parts.next() {
-        if anchored_start {
-            let Some(rest) = remaining.strip_prefix(first) else {
-                return false;
-            };
-            remaining = rest;
-        } else if !first.is_empty() {
-            let Some(index) = remaining.find(first) else {
-                return false;
-            };
-            remaining = &remaining[index + first.len()..];
-        }
-    }
-
-    while let Some(part) = parts.next() {
-        if part.is_empty() {
-            continue;
-        }
-        let Some(index) = remaining.find(part) else {
-            return false;
-        };
-        remaining = &remaining[index + part.len()..];
-        if parts.peek().is_none() && anchored_end {
-            return remaining.is_empty();
-        }
-    }
-
-    !anchored_end || remaining.is_empty()
 }
 
 pub struct CdpBrowserSession {
@@ -1980,252 +1757,6 @@ JSON.stringify((() => {{
     }
 }
 
-fn normalize_send_keys(keys: &str) -> String {
-    if keys.contains('+') {
-        return keys
-            .split('+')
-            .map(normalize_key_alias)
-            .collect::<Vec<_>>()
-            .join("+");
-    }
-
-    normalize_key_or_text(keys)
-}
-
-fn normalize_key_alias(key: &str) -> String {
-    key_alias(key).unwrap_or_else(|| key.trim().to_owned())
-}
-
-fn normalize_key_or_text(key: &str) -> String {
-    key_alias(key).unwrap_or_else(|| key.to_owned())
-}
-
-fn key_alias(key: &str) -> Option<String> {
-    Some(match key.trim().to_ascii_lowercase().as_str() {
-        "ctrl" | "control" => "Control".to_owned(),
-        "alt" | "option" => "Alt".to_owned(),
-        "meta" | "cmd" | "command" => "Meta".to_owned(),
-        "shift" => "Shift".to_owned(),
-        "enter" | "return" => "Enter".to_owned(),
-        "tab" => "Tab".to_owned(),
-        "delete" => "Delete".to_owned(),
-        "backspace" => "Backspace".to_owned(),
-        "escape" | "esc" => "Escape".to_owned(),
-        "space" => " ".to_owned(),
-        "up" => "ArrowUp".to_owned(),
-        "down" => "ArrowDown".to_owned(),
-        "left" => "ArrowLeft".to_owned(),
-        "right" => "ArrowRight".to_owned(),
-        "pageup" => "PageUp".to_owned(),
-        "pagedown" => "PageDown".to_owned(),
-        "home" => "Home".to_owned(),
-        "end" => "End".to_owned(),
-        _ => return None,
-    })
-}
-
-fn is_special_key(key: &str) -> bool {
-    matches!(
-        key,
-        "Enter"
-            | "Tab"
-            | "Delete"
-            | "Backspace"
-            | "Escape"
-            | "ArrowUp"
-            | "ArrowDown"
-            | "ArrowLeft"
-            | "ArrowRight"
-            | "PageUp"
-            | "PageDown"
-            | "Home"
-            | "End"
-            | "Control"
-            | "Alt"
-            | "Meta"
-            | "Shift"
-            | "F1"
-            | "F2"
-            | "F3"
-            | "F4"
-            | "F5"
-            | "F6"
-            | "F7"
-            | "F8"
-            | "F9"
-            | "F10"
-            | "F11"
-            | "F12"
-    )
-}
-
-fn modifier_mask(modifiers: &[String]) -> i64 {
-    modifiers.iter().fold(0, |mask, modifier| {
-        mask | match modifier.as_str() {
-            "Alt" => 1,
-            "Control" => 2,
-            "Meta" => 4,
-            "Shift" => 8,
-            _ => 0,
-        }
-    })
-}
-
-fn key_info(key: &str) -> (String, Option<i64>) {
-    match key {
-        "Enter" => ("Enter".to_owned(), Some(13)),
-        "Tab" => ("Tab".to_owned(), Some(9)),
-        "Delete" => ("Delete".to_owned(), Some(46)),
-        "Backspace" => ("Backspace".to_owned(), Some(8)),
-        "Escape" => ("Escape".to_owned(), Some(27)),
-        "ArrowUp" => ("ArrowUp".to_owned(), Some(38)),
-        "ArrowDown" => ("ArrowDown".to_owned(), Some(40)),
-        "ArrowLeft" => ("ArrowLeft".to_owned(), Some(37)),
-        "ArrowRight" => ("ArrowRight".to_owned(), Some(39)),
-        "PageUp" => ("PageUp".to_owned(), Some(33)),
-        "PageDown" => ("PageDown".to_owned(), Some(34)),
-        "Home" => ("Home".to_owned(), Some(36)),
-        "End" => ("End".to_owned(), Some(35)),
-        "Control" => ("ControlLeft".to_owned(), Some(17)),
-        "Alt" => ("AltLeft".to_owned(), Some(18)),
-        "Meta" => ("MetaLeft".to_owned(), Some(91)),
-        "Shift" => ("ShiftLeft".to_owned(), Some(16)),
-        " " => ("Space".to_owned(), Some(32)),
-        function_key if function_key.starts_with('F') => {
-            let number = function_key[1..].parse::<i64>().ok();
-            if let Some(number @ 1..=12) = number {
-                (function_key.to_owned(), Some(111 + number))
-            } else {
-                (function_key.to_owned(), None)
-            }
-        }
-        single if single.chars().count() == 1 => {
-            let lower = single.to_ascii_lowercase();
-            let upper = lower.to_ascii_uppercase();
-            let vk = upper.as_bytes().first().copied().map(i64::from);
-            (format!("Key{upper}"), vk)
-        }
-        other => (other.to_owned(), None),
-    }
-}
-
-fn key_event_params(event_type: &str, key: &str, modifiers: i64) -> Value {
-    let key = if key.chars().count() == 1 {
-        key.to_ascii_lowercase()
-    } else {
-        key.to_owned()
-    };
-    let (code, vk_code) = key_info(&key);
-    let mut params = serde_json::Map::new();
-    params.insert("type".to_owned(), json!(event_type));
-    params.insert("key".to_owned(), json!(key));
-    params.insert("code".to_owned(), json!(code));
-    if modifiers != 0 {
-        params.insert("modifiers".to_owned(), json!(modifiers));
-    }
-    if let Some(vk_code) = vk_code {
-        params.insert("windowsVirtualKeyCode".to_owned(), json!(vk_code));
-    }
-    Value::Object(params)
-}
-
-fn runtime_evaluate_params(expression: &str, include_command_line_api: bool) -> Value {
-    let mut params = serde_json::Map::new();
-    params.insert("expression".to_owned(), json!(expression));
-    params.insert("returnByValue".to_owned(), json!(true));
-    params.insert("awaitPromise".to_owned(), json!(true));
-    if include_command_line_api {
-        params.insert("includeCommandLineAPI".to_owned(), json!(true));
-    }
-    Value::Object(params)
-}
-
-fn runtime_evaluate_value(result: Value) -> Result<Value, BrowserError> {
-    runtime_command_value(result, "Runtime.evaluate")
-}
-
-fn runtime_command_value(result: Value, method: &str) -> Result<Value, BrowserError> {
-    if let Some(exception) = result.get("exceptionDetails") {
-        return Err(BrowserError::CommandFailed {
-            method: method.to_owned(),
-            message: runtime_exception_message(exception, "runtime command exception"),
-        });
-    }
-
-    result
-        .get("result")
-        .and_then(|result| result.get("value"))
-        .cloned()
-        .ok_or_else(|| BrowserError::MissingResponseData(format!("{method} value")))
-}
-
-fn runtime_exception_message(exception: &Value, fallback: &str) -> String {
-    exception
-        .get("exception")
-        .and_then(|exception| exception.get("description"))
-        .and_then(Value::as_str)
-        .or_else(|| exception.get("text").and_then(Value::as_str))
-        .or_else(|| {
-            exception
-                .get("exception")
-                .and_then(|exception| exception.get("value"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn render_runtime_evaluate_result(result: &Value) -> Result<String, BrowserError> {
-    if let Some(exception) = result.get("exceptionDetails") {
-        return Err(BrowserError::CommandFailed {
-            method: "Runtime.evaluate".to_owned(),
-            message: runtime_exception_message(exception, "Runtime.evaluate exception"),
-        });
-    }
-
-    let result = result
-        .get("result")
-        .ok_or_else(|| BrowserError::MissingResponseData("Runtime.evaluate result".to_owned()))?;
-
-    if result.get("wasThrown").and_then(Value::as_bool) == Some(true) {
-        return Err(BrowserError::CommandFailed {
-            method: "Runtime.evaluate".to_owned(),
-            message: result
-                .get("description")
-                .or_else(|| result.get("value"))
-                .map(render_json_value)
-                .unwrap_or_else(|| "JavaScript execution failed".to_owned()),
-        });
-    }
-
-    if let Some(value) = result.get("value") {
-        return Ok(render_json_value(value));
-    }
-
-    if let Some(unserializable) = result.get("unserializableValue").and_then(Value::as_str) {
-        return Ok(unserializable.to_owned());
-    }
-
-    if result.get("type").and_then(Value::as_str) == Some("undefined") {
-        return Ok("undefined".to_owned());
-    }
-
-    if let Some(description) = result.get("description").and_then(Value::as_str) {
-        return Ok(description.to_owned());
-    }
-
-    Err(BrowserError::MissingResponseData(
-        "Runtime.evaluate rendered value".to_owned(),
-    ))
-}
-
-fn render_json_value(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
-}
-
 async fn attach_or_create_page(connection: &CdpConnection) -> Result<AttachedPage, BrowserError> {
     let targets = connection
         .command("Target.getTargets", json!({}), None)
@@ -2681,7 +2212,7 @@ impl BrowserSession for CdpBrowserSession {
                 )
                 .await
             {
-                Ok(()) => return self.enforce_url_policy_after_settle().await,
+                Ok(()) => return self.enforce_url_policy_after_navigation_settle().await,
                 Err(error) if should_fallback_to_index_traversal(&error) => {}
                 Err(error) => return Err(error),
             }
@@ -2695,7 +2226,7 @@ impl BrowserSession for CdpBrowserSession {
             .unwrap_or(index);
         self.evaluate_effect_for_page(&page, click_element_js(fallback_index))
             .await?;
-        self.enforce_url_policy_after_settle().await
+        self.enforce_url_policy_after_navigation_settle().await
     }
 
     async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
@@ -2716,7 +2247,7 @@ impl BrowserSession for CdpBrowserSession {
                 )
                 .await?;
         }
-        self.enforce_url_policy_after_settle().await
+        self.enforce_url_policy_after_navigation_settle().await
     }
 
     async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError> {
