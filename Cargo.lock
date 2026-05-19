@@ -162,6 +162,7 @@ dependencies = [
  "async-trait",
  "browser-use-dom",
  "futures-util",
+ "percent-encoding",
  "reqwest",
  "schemars",
  "serde",
@@ -170,6 +171,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-tungstenite",
+ "unicode-normalization",
  "url",
 ]
 

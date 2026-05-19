@@ -11,6 +11,7 @@ authors.workspace = true
 async-trait.workspace = true
 browser-use-dom = { path = "../browser-use-dom" }
 futures-util.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -19,4 +20,5 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+unicode-normalization.workspace = true
 url.workspace = true

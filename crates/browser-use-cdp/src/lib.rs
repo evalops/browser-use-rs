@@ -15,6 +15,7 @@ use browser_use_dom::{
     render_element_text,
 };
 use futures_util::{SinkExt, StreamExt};
+use percent_encoding::percent_decode_str;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -26,6 +27,7 @@ use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use unicode_normalization::UnicodeNormalization;
 
 const AX_REF_ATTRIBUTE: &str = "data-browser-use-rs-ax-ref";
 const URL_POLICY_SETTLE_MS: u64 = 200;
@@ -3557,9 +3559,60 @@ fn is_internal_browser_url(url: &str) -> bool {
 }
 
 fn is_ip_address(host: &str) -> bool {
-    host.trim_matches(['[', ']'])
-        .parse::<std::net::IpAddr>()
-        .is_ok()
+    let canonical_host = canonical_ip_host(host);
+    canonical_host.parse::<std::net::IpAddr>().is_ok()
+        || parse_non_standard_ipv4(&canonical_host).is_some()
+}
+
+fn canonical_ip_host(host: &str) -> String {
+    percent_decode_str(host.trim_matches(['[', ']']))
+        .decode_utf8_lossy()
+        .nfkc()
+        .collect::<String>()
+        .replace(['\u{3002}', '\u{ff61}'], ".")
+}
+
+fn parse_non_standard_ipv4(host: &str) -> Option<u32> {
+    if host.is_empty()
+        || host.contains(':')
+        || host.contains('/')
+        || host.chars().any(char::is_whitespace)
+    {
+        return None;
+    }
+    let parts = host
+        .split('.')
+        .map(parse_non_standard_ipv4_part)
+        .collect::<Option<Vec<_>>>()?;
+    match parts.as_slice() {
+        [a] if *a <= u32::MAX as u64 => Some(*a as u32),
+        [a, b] if *a <= 0xff && *b <= 0x00ff_ffff => Some(((*a as u32) << 24) | (*b as u32)),
+        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => {
+            Some(((*a as u32) << 24) | ((*b as u32) << 16) | (*c as u32))
+        }
+        [a, b, c, d] if *a <= 0xff && *b <= 0xff && *c <= 0xff && *d <= 0xff => {
+            Some(((*a as u32) << 24) | ((*b as u32) << 16) | ((*c as u32) << 8) | (*d as u32))
+        }
+        _ => None,
+    }
+}
+
+fn parse_non_standard_ipv4_part(part: &str) -> Option<u64> {
+    if part.is_empty() {
+        return None;
+    }
+    let (radix, digits) =
+        if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+            (16, hex)
+        } else if part.len() > 1 && part.starts_with('0') {
+            (8, &part[1..])
+        } else {
+            (10, part)
+        };
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
+        return None;
+    }
+    u64::from_str_radix(digits, radix).ok()
 }
 
 fn is_url_pattern_match(url: &str, host: &str, scheme: &str, pattern: &str) -> bool {
@@ -4924,7 +4977,8 @@ fn lifecycle_event_for_download_start(event: &CdpEvent) -> Option<BrowserLifecyc
         .params
         .get("suggestedFilename")
         .and_then(Value::as_str)
-        .unwrap_or("download");
+        .map(sanitize_download_filename)
+        .unwrap_or_else(|| "download".to_owned());
     Some(BrowserLifecycleEvent::download_started(
         guid,
         url,
@@ -4959,7 +5013,8 @@ fn lifecycle_events_for_download_progress(event: &CdpEvent) -> Vec<BrowserLifecy
             let file_name = Path::new(file_path)
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("download");
+                .map(sanitize_download_filename)
+                .unwrap_or_else(|| "download".to_owned());
             events.push(BrowserLifecycleEvent::file_downloaded(
                 guid,
                 file_path,
@@ -4970,6 +5025,53 @@ fn lifecycle_events_for_download_progress(event: &CdpEvent) -> Vec<BrowserLifecy
     }
 
     events
+}
+
+fn sanitize_download_filename(name: &str) -> String {
+    let cleaned = name.replace('\0', "").replace('\\', "/");
+    let basename = cleaned
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or("");
+    if matches!(basename, "" | "." | "..") {
+        "download".to_owned()
+    } else {
+        basename.to_owned()
+    }
+}
+
+fn is_path_contained(path: &Path, directory: &Path) -> bool {
+    let Ok(directory) = normalize_existing_or_lexical_path(directory) else {
+        return false;
+    };
+    let Ok(path) = normalize_existing_or_lexical_path(path) else {
+        return false;
+    };
+    path == directory || path.starts_with(&directory)
+}
+
+fn normalize_existing_or_lexical_path(path: &Path) -> Result<PathBuf, std::io::Error> {
+    match std::fs::canonicalize(path) {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(normalize_lexical_path(path))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn normalize_lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn cdp_value_to_string(value: &Value) -> Option<String> {
@@ -10492,6 +10594,21 @@ mod tests {
         );
         assert_eq!(download_start.details["suggested_filename"], "report.pdf");
 
+        let sanitized_download_start = lifecycle_event_for_download_start(&CdpEvent {
+            method: "Browser.downloadWillBegin".to_owned(),
+            params: json!({
+                "guid": "download-guid",
+                "url": "https://example.test/report.pdf",
+                "suggestedFilename": "../../etc/passwd",
+            }),
+            session_id: None,
+        })
+        .expect("sanitized download start event");
+        assert_eq!(
+            sanitized_download_start.details["suggested_filename"],
+            "passwd"
+        );
+
         let download_progress = lifecycle_events_for_download_progress(&CdpEvent {
             method: "Browser.downloadProgress".to_owned(),
             params: json!({
@@ -10514,6 +10631,82 @@ mod tests {
             ]
         );
         assert_eq!(download_progress[1].details["file_name"], "report.pdf");
+
+        let sanitized_download_progress = lifecycle_events_for_download_progress(&CdpEvent {
+            method: "Browser.downloadProgress".to_owned(),
+            params: json!({
+                "guid": "download-guid",
+                "receivedBytes": 4096,
+                "totalBytes": 4096,
+                "state": "completed",
+                "filePath": "/tmp/../../escape.bin",
+            }),
+            session_id: None,
+        });
+        assert_eq!(
+            sanitized_download_progress[1].details["file_name"],
+            "escape.bin"
+        );
+    }
+
+    #[test]
+    fn download_filename_sanitization_matches_upstream_security_boundary() {
+        assert_eq!(sanitize_download_filename("../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_download_filename("/etc/shadow"), "shadow");
+        assert_eq!(
+            sanitize_download_filename("..\\..\\Windows\\System32\\config.txt"),
+            "config.txt"
+        );
+        assert_eq!(sanitize_download_filename("a/b\\c/../d.pdf"), "d.pdf");
+        for malicious in ["..", ".", "/", "\\", "../", "..\\", "/.", "\\.", "/.."] {
+            assert_eq!(
+                sanitize_download_filename(malicious),
+                "download",
+                "{malicious:?} should fall back to default"
+            );
+        }
+        assert_eq!(sanitize_download_filename("file.txt\0.exe"), "file.txt.exe");
+        assert_eq!(sanitize_download_filename(""), "download");
+        assert_eq!(sanitize_download_filename("report.pdf"), "report.pdf");
+        assert_eq!(
+            sanitize_download_filename("file with spaces.pdf"),
+            "file with spaces.pdf"
+        );
+        assert_eq!(sanitize_download_filename(".bashrc"), ".bashrc");
+        assert_eq!(sanitize_download_filename("résumé.pdf"), "résumé.pdf");
+        assert_eq!(sanitize_download_filename("文档.pdf"), "文档.pdf");
+    }
+
+    #[test]
+    fn path_containment_rejects_directory_escape() {
+        let temp_dir = TempDir::new().expect("temp downloads dir");
+        let downloads_dir = temp_dir.path();
+        let nested_dir = downloads_dir.join("nested");
+        std::fs::create_dir(&nested_dir).expect("nested downloads dir");
+        let nested_file = nested_dir.join("report.pdf");
+        std::fs::write(&nested_file, b"pdf").expect("nested file");
+
+        assert!(is_path_contained(downloads_dir, downloads_dir));
+        assert!(is_path_contained(&nested_file, downloads_dir));
+        assert!(!is_path_contained(
+            &downloads_dir.join("../escape.bin"),
+            downloads_dir
+        ));
+
+        let sibling_dir = downloads_dir
+            .parent()
+            .expect("downloads dir parent")
+            .join(format!(
+                "{}_sibling",
+                downloads_dir
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("downloads dir name")
+            ));
+        std::fs::create_dir(&sibling_dir).expect("sibling dir");
+        let sibling_file = sibling_dir.join("report.pdf");
+        std::fs::write(&sibling_file, b"pdf").expect("sibling file");
+        assert!(!is_path_contained(&sibling_file, downloads_dir));
     }
 
     #[tokio::test]
@@ -10904,6 +11097,71 @@ mod tests {
         assert!(!policy.is_allowed("http://127.0.0.1:9222/json"));
         assert!(!policy.is_allowed("http://[::1]/"));
         assert!(policy.is_allowed("https://example.com"));
+    }
+
+    #[test]
+    fn url_policy_blocks_non_standard_ipv4_forms_when_configured() {
+        let policy = UrlAccessPolicy::from_profile(&BrowserProfile {
+            block_ip_addresses: true,
+            ..BrowserProfile::default()
+        });
+
+        for url in [
+            "http://2130706433/",
+            "http://0x7f000001/",
+            "http://0x7F.0x0.0x0.0x1/",
+            "http://0177.0.0.1/",
+            "http://127.1/",
+            "http://127.0.1/",
+            "http://10.1/",
+        ] {
+            assert!(
+                !policy.is_allowed(url),
+                "non-standard IPv4 should be blocked: {url}"
+            );
+        }
+
+        assert!(policy.is_allowed("http://127.0.0.1.evil.test/"));
+        assert!(policy.is_allowed("http://2130706433.evil.test/"));
+        assert!(!is_ip_address("999.999.999.999"));
+        assert!(!is_ip_address("1.2.3.4.5"));
+    }
+
+    #[test]
+    fn ip_classifier_canonicalizes_encoded_and_unicode_hosts() {
+        for host in [
+            "%30x7f000001",
+            "%31%32%37.0.0.1",
+            "%32%31%33%30%37%30%36%34%33%33",
+            "１２７.０.０.１",
+            "０x7f000001",
+            "①②⑦.⓪.⓪.①",
+            "127。0。0。1",
+            "127｡0｡0｡1",
+            "127．0．0．1",
+            "①②⑦。⓪。⓪。①",
+        ] {
+            assert!(
+                is_ip_address(host),
+                "host should classify as an IP address: {host}"
+            );
+        }
+
+        for host in [
+            "%",
+            "%zz",
+            "%2",
+            "café.example",
+            "xn--caf-dma.example",
+            "日本.example",
+            "xn--wgv71a.example",
+            "2130706433.evil.test",
+        ] {
+            assert!(
+                !is_ip_address(host),
+                "host should remain classified as a domain: {host}"
+            );
+        }
     }
 
     #[test]
