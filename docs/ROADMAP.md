@@ -5,7 +5,7 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream recording/profile parity slice after #134 lands and CI is green.
+- [#136 Add BrowserProfile video recording runtime parity](https://github.com/evalops/browser-use-rs/issues/136)
 
 ## Completed Tracks
 
