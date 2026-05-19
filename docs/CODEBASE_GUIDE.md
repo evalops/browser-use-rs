@@ -232,6 +232,24 @@ Review risks:
 - Permission/download setup is session bootstrapping, so failures either need a
   lifecycle diagnostic or a clear `BrowserError`, not silent loss.
 
+### `tests.rs`
+
+Responsibilities:
+
+- browser-use compatibility fixtures that need crate-private helpers;
+- local CDP command-server tests for launch, target, storage, policy,
+  recording, and cloud behavior;
+- ignored live-Chrome conformance tests for DOM indexing, target fallback,
+  browser actions, URL policy, downloads, and artifact recording.
+
+Review risks:
+
+- Keep tests in this child module when they need private CDP helpers; use
+  integration tests only for public API contracts.
+- Preserve ignored live-browser tests as the real browser conformance gate.
+- If a helper becomes owned by a smaller module, move its narrow unit tests with
+  that module and leave cross-module/browser behavior here.
+
 ### `input.rs`
 
 Responsibilities:
