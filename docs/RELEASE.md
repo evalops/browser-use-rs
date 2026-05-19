@@ -371,9 +371,12 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   exposes those diagnostics through `BrowserLifecycleEventSubscription` with
   typed lag and closed-stream errors; `BrowserLifecycleAdapterEventSubscription`
   maps the same stream into upstream-style subscriber categories without adding
-  it to normal agent replies. Profile-wide local/session storage discovery
-  outside the current page plus attached frame tree remains outside the safe CDP
-  boundary documented in `docs/CONFORMANCE.md`.
+  it to normal agent replies. Storage-state local/session storage origin
+  discovery intentionally matches the frozen upstream CDP boundary:
+  `Page.getFrameTree` supplies current page plus attached frame-tree origins,
+  then `DOMStorage.getDOMStorageItems` reads those origins. Unattached
+  profile-wide local/session storage origins are not scraped from browser
+  profile internals.
 - Raw full AX snapshots are intentionally not emitted into normal prompt or
   state surfaces by default; the compact DOM carries the browser-use AX fields
   needed for action selection, evaluator context, hidden/disabled suppression,

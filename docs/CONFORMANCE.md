@@ -246,11 +246,15 @@ The supported storage-state boundary is intentionally the current page plus
 attached frame-tree HTTP(S) origins. CDP `DOMStorage.getDOMStorageItems` works
 from a caller-provided `StorageId` containing a `securityOrigin` or
 `storageKey`, but it does not enumerate every local/session storage origin in a
-browser profile. The CDP `Storage` domain exposes cookies, usage/quota by a
-caller-provided origin, and frame-derived storage keys, but not a safe
-profile-wide localStorage/sessionStorage origin inventory. Profile-wide storage
-discovery therefore remains out of the supported boundary unless a later Chrome
-surface exposes it without navigating pages or reading browser profile internals.
+browser profile. At the frozen upstream target, browser-use's CDP path uses
+`Page.getFrameTree` for exactly this origin inventory before calling
+`DOMStorage.getDOMStorageItems`; it does not scrape profile files or enumerate
+unattached profile origins. The CDP `Storage` domain exposes cookies,
+usage/quota by a caller-provided origin, and frame-derived storage keys, but not
+a safe profile-wide localStorage/sessionStorage origin inventory. Profile-wide
+storage discovery therefore remains an explicit non-goal unless a later Chrome
+surface exposes it without navigating pages or reading browser profile
+internals.
 
 References:
 

@@ -5,13 +5,13 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#139 Resolve storage-state profile-wide origin parity gap](https://github.com/evalops/browser-use-rs/issues/139)
 - [#140 Complete DOM and accessibility snapshot parity audit](https://github.com/evalops/browser-use-rs/issues/140)
 - [#141 Complete provider structured-output fallback parity](https://github.com/evalops/browser-use-rs/issues/141)
 - [#142 Resolve Playwright trace artifact parity boundary](https://github.com/evalops/browser-use-rs/issues/142)
 
 ## Completed Tracks
 
+- [#139 Resolve storage-state profile-wide origin parity gap](https://github.com/evalops/browser-use-rs/issues/139)
 - [#138 Refresh upstream target to 1577793 and pin daemon socket permission audit](https://github.com/evalops/browser-use-rs/issues/138)
 - [#137 Add upstream MP4/WebM video encoding parity](https://github.com/evalops/browser-use-rs/issues/137)
 - [#136 Add BrowserProfile video recording runtime parity](https://github.com/evalops/browser-use-rs/issues/136)
@@ -251,6 +251,8 @@ Implemented:
   `record_video_size`, `record_video_framerate`, and `record_video_format`) as
   runtime direct-CDP screencast capture flushed to MP4/WebM via `ffmpeg` when
   available or GIF fallback on close,
+  storage-state origin discovery explicitly matched to upstream's CDP
+  frame-tree boundary rather than unsafe profile-wide browser storage scraping,
   trace path config (`traces_dir`/`trace_path`) plus best-effort close-time
   JSON trace artifacts that keep trace metadata out of normal browser state
   responses,

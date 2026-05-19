@@ -16244,6 +16244,58 @@ mod tests {
     }
 
     #[test]
+    fn storage_state_origin_discovery_uses_frame_tree_boundary_like_upstream() {
+        let frame_tree = json!({
+            "frameTree": {
+                "frame": {
+                    "id": "root",
+                    "url": "https://app.example.test/dashboard",
+                    "securityOrigin": "https://app.example.test"
+                },
+                "childFrames": [
+                    {
+                        "frame": {
+                            "id": "login",
+                            "url": "https://login.example.test/embedded",
+                            "securityOrigin": "https://login.example.test"
+                        }
+                    },
+                    {
+                        "frame": {
+                            "id": "opaque",
+                            "url": "about:blank",
+                            "securityOrigin": "null"
+                        }
+                    },
+                    {
+                        "frame": {
+                            "id": "browser-internal",
+                            "url": "chrome://settings",
+                            "securityOrigin": "chrome://settings"
+                        }
+                    }
+                ]
+            }
+        });
+
+        assert_eq!(
+            frame_security_origins_from_result(&frame_tree)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                "https://app.example.test".to_owned(),
+                "https://login.example.test".to_owned()
+            ]
+        );
+        assert_eq!(
+            frame_security_origins_from_result(&json!({}))
+                .into_iter()
+                .collect::<Vec<_>>(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn browser_lifecycle_events_are_bounded() {
         let mut events = VecDeque::new();
         for index in 0..(MAX_LIFECYCLE_EVENTS + 2) {
