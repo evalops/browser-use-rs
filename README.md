@@ -80,8 +80,10 @@ includes:
   on `close_browser()`. Video recording config fields (`record_video_dir` with
   `save_recording_path`, `record_video_size`, and `record_video_framerate`)
   round-trip without changing launch behavior until runtime recording lands.
-  Trace config fields (`traces_dir` with `trace_path`) also round-trip as
-  profile-only parity pending runtime trace capture.
+  Trace config fields (`traces_dir` with `trace_path`) also round-trip and
+  write best-effort close-time JSON trace artifacts containing lifecycle,
+  security, current-page, and last-DOM snapshots without adding trace artifact
+  metadata to normal browser state responses.
   `BrowserProfile.channel` accepts upstream browser channel names such as
   `chrome-beta`, `chrome-dev`, `chrome-canary`, and `msedge`, and uses
   channel-specific executable candidates when no explicit executable path or

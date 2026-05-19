@@ -132,8 +132,12 @@ remain separate future recording work.
 in the current direct-CDP implementation and do not affect launch planning
 until the runtime video-recorder slice lands.
 `BrowserProfile.traces_dir` defaults to unset and accepts upstream
-`trace_path`; canonical JSON emits `traces_dir`. This is profile-only parity
-until a direct-CDP or external trace runtime surface is implemented.
+`trace_path`; canonical JSON emits `traces_dir`. When configured, direct-CDP
+sessions write a best-effort JSON trace artifact during `close_browser()` in
+the same close-time recording family as storage state and HAR. The artifact
+captures lifecycle events, security diagnostics, current target ids, and the
+last cached DOM state, but trace artifact paths and metadata are not added to
+normal browser state responses.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail

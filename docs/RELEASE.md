@@ -81,8 +81,10 @@ browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
   `record_video_framerate=30`. These profile fields round-trip without changing
   direct-CDP launch behavior until runtime video recording is implemented.
 - Trace path configuration parity for `traces_dir` with upstream `trace_path`
-  alias. The field round-trips without changing launch/session behavior until
-  runtime trace capture is implemented.
+  alias. Configured direct-CDP sessions write a best-effort close-time JSON
+  trace artifact with lifecycle events, security diagnostics, current target
+  ids, and the last cached DOM state while keeping trace artifact paths and
+  metadata out of normal browser state responses.
 - Browser Use Cloud creation and stop request/response contracts, including
   `BROWSER_USE_API_KEY`/explicit-key client support, `cloud_auth.json`
   API-token fallback, 30-second request timeout, extra request headers merged

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -5201,6 +5201,95 @@ fn har_mime_extension(mime_type: Option<&str>) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CdpTraceRecorder {
+    dir: PathBuf,
+}
+
+impl CdpTraceRecorder {
+    fn from_profile(profile: &BrowserProfile) -> Option<Self> {
+        profile
+            .traces_dir
+            .as_ref()
+            .map(|dir| Self { dir: dir.clone() })
+    }
+
+    async fn write_trace_artifact(&self, artifact: Value) -> Result<PathBuf, BrowserError> {
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+
+        let path = self
+            .unique_artifact_path(trace_epoch_millis())
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(&artifact)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let tmp_path = trace_tmp_path(&path);
+        tokio::fs::write(&tmp_path, bytes)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        tokio::fs::rename(&tmp_path, &path)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        Ok(path)
+    }
+
+    async fn unique_artifact_path(&self, epoch_millis: u128) -> Result<PathBuf, std::io::Error> {
+        for attempt in 0..1_000 {
+            let path = self.artifact_path(epoch_millis, attempt);
+            match tokio::fs::metadata(&path).await {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(self.artifact_path(epoch_millis, 1_000))
+    }
+
+    fn artifact_path(&self, epoch_millis: u128, attempt: usize) -> PathBuf {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        self.dir.join(format!(
+            "browser-use-rs-trace-{epoch_millis}-{}{suffix}.json",
+            std::process::id()
+        ))
+    }
+}
+
+fn trace_epoch_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn trace_timestamp(epoch_millis: u128) -> String {
+    format_har_timestamp(Some(epoch_millis as f64 / 1_000.0))
+}
+
+fn trace_tmp_path(path: &Path) -> PathBuf {
+    path.with_extension(format!(
+        "{}tmp",
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| format!("{extension}."))
+            .unwrap_or_default()
+    ))
+}
+
+fn trace_security_event_json(event: &BrowserSecurityEvent) -> Value {
+    json!({
+        "message": &event.message,
+        "browser_error_message": &event.browser_error_message,
+        "closed_popup_message": &event.closed_popup_message,
+        "lifecycle_event": &event.lifecycle_event,
+    })
+}
+
 fn format_har_timestamp(timestamp: Option<f64>) -> String {
     let Some(timestamp) = timestamp else {
         return String::new();
@@ -5519,6 +5608,7 @@ pub struct CdpBrowserSession {
     dom_highlight: DomHighlightConfig,
     network_activity: Arc<Mutex<NetworkActivityState>>,
     har_recorder: Option<Arc<CdpHarRecorder>>,
+    trace_recorder: Option<CdpTraceRecorder>,
     downloads_path: Option<PathBuf>,
     auto_download_pdfs: bool,
     auto_pdf_downloads: Arc<Mutex<BTreeMap<String, PathBuf>>>,
@@ -5587,6 +5677,7 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let har_recorder = CdpHarRecorder::from_profile(profile);
+        let trace_recorder = CdpTraceRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
             profile.auto_download_pdfs,
@@ -5633,6 +5724,7 @@ impl CdpBrowserSession {
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             har_recorder,
+            trace_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
@@ -5693,6 +5785,7 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let har_recorder = CdpHarRecorder::from_profile(profile);
+        let trace_recorder = CdpTraceRecorder::from_profile(profile);
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
         let cdp_auto_pdf_download = CdpAutoPdfDownloadState::from_downloads(
             profile.auto_download_pdfs,
@@ -5754,6 +5847,7 @@ impl CdpBrowserSession {
             dom_highlight: DomHighlightConfig::from_profile(profile),
             network_activity,
             har_recorder,
+            trace_recorder,
             downloads_path: downloads.path,
             auto_download_pdfs: profile.auto_download_pdfs,
             auto_pdf_downloads,
@@ -5775,6 +5869,7 @@ impl CdpBrowserSession {
         if let Some(har_recorder) = &self.har_recorder {
             let _ = har_recorder.write_har().await;
         }
+        let _ = self.write_trace_artifact().await;
         self.connection.mark_intentional_stop();
         self.connection
             .command("Browser.close", json!({}), None)
@@ -5808,6 +5903,45 @@ impl CdpBrowserSession {
         ))
         .await;
         Ok(())
+    }
+
+    async fn write_trace_artifact(&self) -> Result<Option<PathBuf>, BrowserError> {
+        let Some(trace_recorder) = &self.trace_recorder else {
+            return Ok(None);
+        };
+        let generated_at_millis = trace_epoch_millis();
+        let current_page = self.page.lock().await.clone();
+        let lifecycle_events = self
+            .lifecycle_events
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let security_events = self
+            .security_events
+            .lock()
+            .await
+            .iter()
+            .map(trace_security_event_json)
+            .collect::<Vec<_>>();
+        let last_dom_state = self.last_dom_state.lock().await.clone();
+        let artifact = json!({
+            "schema_version": "browser-use-rs.trace.v1",
+            "generated_at": trace_timestamp(generated_at_millis),
+            "current_page": {
+                "target_id": current_page.target_id,
+                "session_id": current_page.session_id,
+            },
+            "lifecycle_events": lifecycle_events,
+            "security_events": security_events,
+            "last_dom_state": last_dom_state,
+        });
+
+        trace_recorder
+            .write_trace_artifact(artifact)
+            .await
+            .map(Some)
     }
 
     async fn current_page(&self) -> AttachedPage {
@@ -10760,6 +10894,7 @@ mod tests {
             dom_highlight: DomHighlightConfig::from_profile(&BrowserProfile::default()),
             network_activity: Arc::new(Mutex::new(NetworkActivityState::new(Instant::now()))),
             har_recorder: None,
+            trace_recorder: None,
             downloads_path,
             auto_download_pdfs,
             auto_pdf_downloads: Arc::new(Mutex::new(BTreeMap::new())),
@@ -11091,6 +11226,7 @@ mod tests {
                 "sessionId": "session-1"
             }),
             "Browser.grantPermissions"
+            | "Browser.close"
             | "Browser.setDownloadBehavior"
             | "Page.enable"
             | "Network.enable"
@@ -12172,6 +12308,147 @@ mod tests {
         assert_eq!(
             configured.launch_plan().args,
             BrowserProfile::default().launch_plan().args
+        );
+    }
+
+    #[tokio::test]
+    async fn trace_recording_resolves_unique_artifact_paths_inside_traces_dir() {
+        let temp_dir = TempDir::new().expect("trace temp dir");
+        let traces_dir = temp_dir.path().join("traces");
+        let recorder = CdpTraceRecorder {
+            dir: traces_dir.clone(),
+        };
+        let epoch_millis = 1_700_000_000_123;
+        let first = recorder.artifact_path(epoch_millis, 0);
+        assert_eq!(first.parent(), Some(traces_dir.as_path()));
+        let expected_first = format!(
+            "browser-use-rs-trace-{epoch_millis}-{}.json",
+            std::process::id()
+        );
+        assert_eq!(
+            first.file_name().and_then(|name| name.to_str()),
+            Some(expected_first.as_str())
+        );
+
+        tokio::fs::create_dir_all(&traces_dir)
+            .await
+            .expect("create traces dir");
+        tokio::fs::write(&first, b"existing")
+            .await
+            .expect("seed existing trace");
+        let second = recorder
+            .unique_artifact_path(epoch_millis)
+            .await
+            .expect("unique trace path");
+        let expected_second = format!(
+            "browser-use-rs-trace-{epoch_millis}-{}-1.json",
+            std::process::id()
+        );
+        assert_eq!(
+            second.file_name().and_then(|name| name.to_str()),
+            Some(expected_second.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn trace_recording_close_writes_artifact_without_response_metadata() {
+        let temp_dir = TempDir::new().expect("trace temp dir");
+        let traces_dir = temp_dir.path().join("traces");
+        let profile = BrowserProfile {
+            traces_dir: Some(traces_dir.clone()),
+            ..BrowserProfile::default()
+        };
+        let (endpoint, command_log) = cdp_command_test_server(None, 8).await;
+        let session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect traced session");
+        session
+            .set_cached_dom_state(SerializedDomState {
+                text: "cached page text".to_owned(),
+                ..SerializedDomState::default()
+            })
+            .await;
+        session
+            .record_security_event(BrowserSecurityEvent::prevented_navigation(
+                "https://blocked.test".to_owned(),
+                "prohibited_domain".to_owned(),
+            ))
+            .await;
+
+        session.close_browser().await.expect("close traced browser");
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(
+            commands.last().map(|command| command.method.as_str()),
+            Some("Browser.close")
+        );
+
+        let trace_path = std::fs::read_dir(&traces_dir)
+            .expect("trace dir entries")
+            .map(|entry| entry.expect("trace dir entry").path())
+            .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("json"))
+            .expect("trace json artifact");
+        let trace: Value = serde_json::from_slice(
+            &tokio::fs::read(&trace_path)
+                .await
+                .expect("read trace artifact"),
+        )
+        .expect("trace artifact json");
+        assert_eq!(trace["schema_version"], json!("browser-use-rs.trace.v1"));
+        assert!(
+            trace["generated_at"]
+                .as_str()
+                .is_some_and(|value| value.ends_with('Z'))
+        );
+        assert_eq!(trace["current_page"]["target_id"], json!("target-1"));
+        assert_eq!(trace["current_page"]["session_id"], json!("session-1"));
+        assert_eq!(trace["last_dom_state"]["text"], json!("cached page text"));
+        assert!(
+            trace["lifecycle_events"]
+                .as_array()
+                .expect("lifecycle events")
+                .iter()
+                .any(|event| event["kind"] == json!("browser_close_requested"))
+        );
+        assert_eq!(
+            trace["security_events"][0]["lifecycle_event"]["kind"],
+            json!("navigation_blocked")
+        );
+
+        let lifecycle_json =
+            serde_json::to_string(&session.lifecycle_events().await).expect("lifecycle json");
+        assert!(!lifecycle_json.contains("browser-use-rs-trace"));
+        assert!(!lifecycle_json.contains(traces_dir.to_str().expect("trace dir utf8")));
+    }
+
+    #[tokio::test]
+    async fn trace_artifact_write_does_not_mutate_lifecycle_responses() {
+        let temp_dir = TempDir::new().expect("trace temp dir");
+        let mut session = test_session_for_pdf_downloads(None, false);
+        session.trace_recorder = Some(CdpTraceRecorder {
+            dir: temp_dir.path().join("traces"),
+        });
+        session
+            .record_lifecycle_event(BrowserLifecycleEvent::target_switched("target-1"))
+            .await;
+        let before = session.lifecycle_events().await;
+
+        let trace_path = session
+            .write_trace_artifact()
+            .await
+            .expect("write trace")
+            .expect("trace path");
+        let after = session.lifecycle_events().await;
+
+        assert_eq!(after, before);
+        let after_json = serde_json::to_string(&after).expect("lifecycle json");
+        assert!(!after_json.contains("browser-use-rs-trace"));
+        assert!(
+            !after_json.contains(
+                trace_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("trace file name")
+            )
         );
     }
 
