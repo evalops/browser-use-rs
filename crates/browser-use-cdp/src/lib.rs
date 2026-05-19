@@ -1638,6 +1638,10 @@ pub struct BrowserProfile {
     pub deterministic_rendering: bool,
     #[serde(default)]
     pub viewport: BrowserViewport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_size: Option<BrowserViewport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_position: Option<BrowserViewport>,
     #[serde(default = "default_browser_start_timeout_ms")]
     pub browser_start_timeout_ms: u64,
     #[serde(default = "default_navigation_timeout_ms")]
@@ -1672,6 +1676,8 @@ impl Default for BrowserProfile {
             disable_security: false,
             deterministic_rendering: false,
             viewport: BrowserViewport::default(),
+            window_size: None,
+            window_position: None,
             browser_start_timeout_ms: default_browser_start_timeout_ms(),
             navigation_timeout_ms: default_navigation_timeout_ms(),
             network_request_timeout_ms: default_network_request_timeout_ms(),
@@ -1801,15 +1807,20 @@ impl BrowserProfile {
     #[must_use]
     pub fn launch_plan(&self) -> BrowserLaunchPlan {
         let remote_debugging_port = self.remote_debugging_port.unwrap_or(0);
+        let window_size = self.window_size.as_ref().unwrap_or(&self.viewport);
         let mut args = vec![
             format!("--remote-debugging-port={remote_debugging_port}"),
             "--no-first-run".to_owned(),
             "--no-default-browser-check".to_owned(),
-            format!(
-                "--window-size={},{}",
-                self.viewport.width, self.viewport.height
-            ),
+            format!("--window-size={},{}", window_size.width, window_size.height),
         ];
+
+        if let Some(window_position) = &self.window_position {
+            args.push(format!(
+                "--window-position={},{}",
+                window_position.width, window_position.height
+            ));
+        }
 
         if self.headless {
             args.push("--headless=new".to_owned());
@@ -7853,6 +7864,14 @@ mod tests {
         assert!(plan.args.contains(&"--headless=new".to_owned()));
         assert!(plan.args.contains(&"--remote-debugging-port=0".to_owned()));
         assert!(plan.args.contains(&"--window-size=1280,720".to_owned()));
+        assert_eq!(profile.window_size, None);
+        assert_eq!(profile.window_position, None);
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--window-position="))
+        );
         assert!(profile.chromium_sandbox);
         assert!(
             !CHROME_DOCKER_ARGS
@@ -7922,6 +7941,17 @@ mod tests {
 
         let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
         assert_eq!(encoded["chromium_sandbox"], json!(true));
+    }
+
+    #[test]
+    fn browser_profile_window_geometry_defaults_to_omitted_json() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.window_size, None);
+        assert_eq!(decoded.window_position, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("window_size").is_none());
+        assert!(encoded.get("window_position").is_none());
     }
 
     #[test]
@@ -8451,6 +8481,69 @@ mod tests {
                 "generated chromium_sandbox=false launch arg {arg} should come before caller args"
             );
         }
+        assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_uses_explicit_window_size_without_mutating_viewport() {
+        let profile = BrowserProfile {
+            window_size: Some(BrowserViewport {
+                width: 1920,
+                height: 1400,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert_eq!(profile.viewport, BrowserViewport::default());
+        assert!(plan.args.contains(&"--window-size=1920,1400".to_owned()));
+        assert!(!plan.args.contains(&"--window-size=1280,720".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_emits_window_position() {
+        let profile = BrowserProfile {
+            window_position: Some(BrowserViewport {
+                width: 40,
+                height: 80,
+            }),
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+
+        assert!(plan.args.contains(&"--window-position=40,80".to_owned()));
+    }
+
+    #[test]
+    fn launch_plan_keeps_window_geometry_before_custom_args() {
+        let profile = BrowserProfile {
+            window_size: Some(BrowserViewport {
+                width: 1440,
+                height: 900,
+            }),
+            window_position: Some(BrowserViewport {
+                width: 10,
+                height: 20,
+            }),
+            args: vec![
+                "--window-size=1,1".to_owned(),
+                "--window-position=2,2".to_owned(),
+                "--custom-last".to_owned(),
+            ],
+            ..BrowserProfile::default()
+        };
+
+        let plan = profile.launch_plan();
+        let generated_size_index = arg_index(&plan.args, "--window-size=1440,900");
+        let generated_position_index = arg_index(&plan.args, "--window-position=10,20");
+        let custom_size_index = arg_index(&plan.args, "--window-size=1,1");
+        let custom_position_index = arg_index(&plan.args, "--window-position=2,2");
+
+        assert!(generated_size_index < generated_position_index);
+        assert!(generated_position_index < custom_size_index);
+        assert!(custom_size_index < custom_position_index);
         assert_eq!(plan.args.last(), Some(&"--custom-last".to_owned()));
     }
 
