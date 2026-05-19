@@ -42,10 +42,11 @@ ADDITIVE_SUBJECT_RE = re.compile(
 RELEASE_IMPACT_RE = re.compile(
     r"(?im)^\s*(?:Release-Impact|Semver-Impact):\s*(?P<impact>major|minor|patch|none)\s*$"
 )
-SUBSTANTIAL_SUBJECT_RE = re.compile(
+SUBSTANTIAL_CAPABILITY_SUBJECT_RE = re.compile(
     r"\b("
-    r"agent|action|browser|browserprofile|cdp|cli|cloud|download|iframe|launch|lifecycle|"
-    r"mcp|parity|profile|protocol|proxy|public|runtime|schema|session|storage|viewport"
+    r"accept_downloads|action|agent|artifact|auto_download_pdfs|cdp|cli|cloud|"
+    r"download|dom|iframe|launch|lifecycle|llm|mcp|protocol|provider|proxy|"
+    r"recording|runtime|schema|session|state|storage|tool|trace|video|viewport"
     r")\b",
     re.IGNORECASE,
 )
@@ -57,8 +58,11 @@ PATCH_SCOPE_SUBJECT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD = 120
-CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD = 80
+SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD = 240
+TESTED_PUBLIC_SOURCE_LINE_THRESHOLD = 160
+CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD = 120
+BULK_PUBLIC_SOURCE_LINE_THRESHOLD = 400
+SUBSTANTIAL_PUBLIC_FILE_COUNT_THRESHOLD = 3
 RELEASE_VERSION_PATTERN = r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?"
 RELEASE_COMMIT_RE = re.compile(rf"^Cut browser-use-rs {RELEASE_VERSION_PATTERN}$")
 RELEASE_MAINTENANCE_COMMIT_RE = re.compile(
@@ -412,6 +416,15 @@ def source_behavior_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(path for path in changed_files if is_source_behavior_path(path))
 
 
+def public_implementation_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        path
+        for path in changed_files
+        if path.endswith(".rs")
+        and any(path.startswith(prefix) for prefix in PUBLIC_SOURCE_PREFIXES)
+    )
+
+
 def public_source_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         path
@@ -421,6 +434,15 @@ def public_source_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
             path.startswith(prefix)
             for prefix in (*PUBLIC_SOURCE_PREFIXES, *PUBLIC_TEST_PREFIXES)
         )
+    )
+
+
+def public_test_files(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        path
+        for path in changed_files
+        if path.endswith(".rs")
+        and any(path.startswith(prefix) for prefix in PUBLIC_TEST_PREFIXES)
     )
 
 
@@ -470,7 +492,7 @@ def commit_requests_substantial_release(commit: Commit) -> bool:
         return False
     return bool(
         ADDITIVE_SUBJECT_RE.match(commit.subject)
-        and SUBSTANTIAL_SUBJECT_RE.search(commit.full_message)
+        and SUBSTANTIAL_CAPABILITY_SUBJECT_RE.search(commit.full_message)
     )
 
 
@@ -480,7 +502,10 @@ def changed_line_count(
 ) -> int:
     if change_stats is None:
         return 0
-    return sum(change_stats.get(path, ChangeStats(additions=0, deletions=0)).changed_lines for path in files)
+    return sum(
+        change_stats.get(path, ChangeStats(additions=0, deletions=0)).changed_lines
+        for path in files
+    )
 
 
 def substantial_release_signal(
@@ -491,10 +516,10 @@ def substantial_release_signal(
     """Return a reason when the unreleased batch looks like new public behavior.
 
     Auto mode should not infer a minor bump from cadence, commit count, or a
-    source file existing in the diff. A minor release needs either explicit
-    maintainer intent, Conventional Commit feature intent, or enough public
-    source movement to look like a substantial capability rather than a narrow
-    config/doc/alias update.
+    polished additive subject. A minor release needs either explicit maintainer
+    intent, Conventional Commit feature intent, or enough source evidence to
+    look like substantial public behavior instead of a narrow config/doc/alias
+    update.
     """
 
     feature_commit = next(
@@ -504,30 +529,48 @@ def substantial_release_signal(
     if feature_commit:
         return f"feature commit found: {feature_commit}"
 
-    public_sources = public_source_files(changed_files)
+    substantial_subject = next(
+        (commit.subject for commit in commits if commit_requests_substantial_release(commit)),
+        None,
+    )
+    if not substantial_subject:
+        return None
+
+    public_sources = public_implementation_files(changed_files)
     if not public_sources:
         return None
 
     public_source_lines = changed_line_count(public_sources, change_stats)
     capability_docs = public_capability_doc_files(changed_files)
-    substantial_subject = next(
-        (commit.subject for commit in commits if commit_requests_substantial_release(commit)),
-        None,
-    )
-
-    if capability_docs and public_source_lines >= SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD:
-        return f"substantial public source/doc change ({public_source_lines} changed public source lines)"
-
+    public_tests = public_test_files(changed_files)
     crates = changed_workspace_crates(public_sources)
+    line_summary = f"{public_source_lines} changed public source lines"
+
+    if public_source_lines >= BULK_PUBLIC_SOURCE_LINE_THRESHOLD:
+        return f"large public capability change: {substantial_subject} ({line_summary})"
+
     if (
         len(crates) >= 2
         and public_source_lines >= CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD
-        and substantial_subject
     ):
-        return f"cross-crate public capability update: {substantial_subject}"
+        return f"cross-crate public capability change: {substantial_subject} ({line_summary})"
 
-    if capability_docs and substantial_subject:
-        return f"public capability update: {substantial_subject}"
+    if (
+        capability_docs
+        and public_tests
+        and public_source_lines >= TESTED_PUBLIC_SOURCE_LINE_THRESHOLD
+    ):
+        return f"tested public capability change: {substantial_subject} ({line_summary})"
+
+    if capability_docs and public_source_lines >= SUBSTANTIAL_PUBLIC_SOURCE_LINE_THRESHOLD:
+        return f"substantial public source/doc change: {substantial_subject} ({line_summary})"
+
+    if (
+        capability_docs
+        and len(public_sources) >= SUBSTANTIAL_PUBLIC_FILE_COUNT_THRESHOLD
+        and public_source_lines >= CROSS_CRATE_PUBLIC_SOURCE_LINE_THRESHOLD
+    ):
+        return f"multi-file public capability change: {substantial_subject} ({line_summary})"
 
     return None
 
@@ -674,9 +717,19 @@ def run_self_tests() -> int:
                     "crates/browser-use-cdp/tests/browser_profile.rs",
                     "docs/CONFORMANCE.md",
                 ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=156,
+                        deletions=10,
+                    ),
+                    "crates/browser-use-cdp/tests/browser_profile.rs": ChangeStats(
+                        additions=34,
+                        deletions=0,
+                    ),
+                },
             )
             self.assertEqual(release_type, "minor")
-            self.assertIn("public capability", reason)
+            self.assertIn("tested public capability", reason)
 
         def test_large_public_source_change_is_minor_without_trailer(self) -> None:
             release_type, reason = classify_auto_release(
@@ -687,13 +740,48 @@ def run_self_tests() -> int:
                 ),
                 {
                     "crates/browser-use-cdp/src/lib.rs": ChangeStats(
-                        additions=140,
-                        deletions=12,
+                        additions=240,
+                        deletions=22,
                     )
                 },
             )
             self.assertEqual(release_type, "minor")
             self.assertIn("substantial public source/doc", reason)
+
+        def test_bulk_public_source_change_is_minor_without_docs(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add CDP storage replay runtime")],
+                ("crates/browser-use-cdp/src/lib.rs",),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=395,
+                        deletions=12,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("large public capability", reason)
+
+        def test_cross_crate_public_capability_change_is_minor(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add MCP session artifact schema")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "crates/browser-use-mcp/src/lib.rs",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=70,
+                        deletions=0,
+                    ),
+                    "crates/browser-use-mcp/src/lib.rs": ChangeStats(
+                        additions=55,
+                        deletions=0,
+                    ),
+                },
+            )
+            self.assertEqual(release_type, "minor")
+            self.assertIn("cross-crate public capability", reason)
 
         def test_small_config_parity_change_is_patch_without_trailer(self) -> None:
             release_type, reason = classify_auto_release(
@@ -707,6 +795,46 @@ def run_self_tests() -> int:
                     "crates/browser-use-cdp/src/lib.rs": ChangeStats(
                         additions=34,
                         deletions=3,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Rust crate", reason)
+
+        def test_additive_subject_and_docs_without_substance_is_patch(self) -> None:
+            release_type, reason = classify_auto_release(
+                [synthetic_commit("Add BrowserProfile download parity")],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "docs/CONFORMANCE.md",
+                    "README.md",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=28,
+                        deletions=4,
+                    )
+                },
+            )
+            self.assertEqual(release_type, "patch")
+            self.assertIn("Rust crate", reason)
+
+        def test_multiple_small_commits_do_not_become_minor_by_cadence(self) -> None:
+            release_type, reason = classify_auto_release(
+                [
+                    synthetic_commit("Add BrowserProfile download alias"),
+                    synthetic_commit("Document download alias"),
+                    synthetic_commit("Fix download alias serialization"),
+                ],
+                (
+                    "crates/browser-use-cdp/src/lib.rs",
+                    "docs/CONFORMANCE.md",
+                    "README.md",
+                ),
+                {
+                    "crates/browser-use-cdp/src/lib.rs": ChangeStats(
+                        additions=38,
+                        deletions=5,
                     )
                 },
             )

@@ -29,20 +29,28 @@ release-bookkeeping churn, and cuts a release only when release-worthy files
 changed. This keeps manual reruns and historical workflow changes from creating
 accidental empty releases.
 
-Auto mode chooses:
+Auto mode chooses the bump from the unreleased work since the latest stable tag:
 
 - `major` when an unreleased commit contains a breaking-change marker such as
   `BREAKING CHANGE` or a Conventional Commit `!`.
 - `minor` when unreleased work has a substantial public-behavior signal:
   `Release-Impact: minor`, a Conventional Commit `feat:` subject, a large
-  public source change paired with README/conformance/CLI/MCP/install/release
-  docs, or broad cross-crate public-surface work.
+  public capability implementation, a tested source-and-docs capability slice,
+  or broad cross-crate public-surface work.
 - `patch` for smaller release-worthy changes: fixes, dependency or toolchain
   refreshes, packaged install asset changes, README/support-matrix updates, and
   public docs that should ship with the next artifact. Small compatibility
   aliases, config/default/serde parity, and narrowly scoped fixes are treated as
   patch releases unless a maintainer explicitly marks them `Release-Impact:
   minor`.
+
+The automatic minor heuristic is evidence-based rather than cadence-based. A
+batch of several small commits still becomes a patch release unless it includes
+explicit release intent or enough public source evidence to show substantial
+work. The helper currently looks for public crate changes with meaningful line
+volume, tests and public docs, broad cross-crate surface movement, or a large
+single capability implementation. Commit count by itself never changes the bump
+type.
 
 For ambiguous commits, add a trailer to the commit body:
 
