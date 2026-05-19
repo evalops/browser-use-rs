@@ -281,8 +281,8 @@ browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results with dedicated judge LLM
   routing, runtime `generate_gif` GIF artifact output from recorded
-  screenshots, contract-preserved
-  `calculate_cost` and `include_tool_call_examples` settings, and step-error,
+  screenshots, provider token usage/cost summaries for `calculate_cost`, the
+  upstream no-op `include_tool_call_examples` setting, and step-error,
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit
   replay action rematching for historical indexed actions, rematched replay

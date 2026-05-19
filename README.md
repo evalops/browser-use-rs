@@ -214,8 +214,8 @@ includes:
   truncation, upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results with dedicated judge LLM
   routing, runtime `generate_gif` GIF artifact output from recorded
-  screenshots, contract-preserved
-  `calculate_cost` and `include_tool_call_examples` settings, step-error,
+  screenshots, provider token usage/cost summaries for `calculate_cost`, the
+  upstream no-op `include_tool_call_examples` setting, step-error,
   model-output/action/thought, duration, action, model-action and truncated
   action-history interacted-element metadata, and screenshot/URL history
   accessors. Agents can export a serializable

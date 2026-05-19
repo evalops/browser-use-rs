@@ -309,6 +309,25 @@ References:
 - https://chromedevtools.github.io/devtools-protocol/tot/DOMStorage/
 - https://chromedevtools.github.io/devtools-protocol/tot/Storage/
 
+## Token Usage Boundary
+
+Provider responses that expose usage metadata populate `AgentHistory.usage`
+with upstream-style totals and per-model aggregates. The Rust port captures
+OpenAI-compatible, Anthropic, and Gemini usage fields, including cached prompt
+tokens, Anthropic cache-creation tokens, Gemini thought tokens, and Gemini image
+prompt tokens when those providers report them.
+
+When `calculate_cost=true` or `BROWSER_USE_CALCULATE_COST=true`, cost totals are
+calculated from browser-use's custom `bu-*` pricing table plus the upstream
+LiteLLM pricing source. `BROWSER_USE_MODEL_PRICING_URL` overrides that pricing
+URL. Pricing fetch failures do not fail agent runs; token counts remain present
+and cost fields stay at zero for models without pricing data.
+
+At the frozen upstream target, `include_tool_call_examples` is accepted and
+threaded into `MessageManager`, but upstream does not render additional prompt
+examples from it. The Rust port preserves that no-op boundary instead of adding
+a Rust-only prompt mutation.
+
 ## Drift Policy
 
 Upstream bumps must include:

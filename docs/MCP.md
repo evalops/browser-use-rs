@@ -84,8 +84,8 @@ output modes, and prompt-visible DOM attributes plus initial actions,
 upstream-compatible `directly_open_url` task URL auto-navigation,
 `sample_images` prompt parts, excluded action names, conversation transcript
 saving, non-fatal judge trace validation with optional `ground_truth`,
-contract-preserved `generate_gif`, `calculate_cost`, and
-`include_tool_call_examples` flags,
+runtime `generate_gif` artifacts, token usage/cost summaries for
+`calculate_cost`, and the upstream no-op `include_tool_call_examples` flag,
 available file-path and sensitive-data prompt context, opt-in recent browser
 events, and system-message override/extension fields.
 On the final allowed `max_steps` step, `browser_use_agent` uses the same
@@ -96,9 +96,12 @@ upstream budget-warning prompt so the model can consolidate before the final
 step.
 When `generate_gif` is enabled, successful agent runs write an agent-history
 GIF from recorded screenshots to `agent_history.gif` or the provided path.
-Token-cost accounting and tool-call example prompt side effects remain explicit
-later runtime parity slices; the MCP schema accepts and round-trips the
-upstream settings shape now.
+Provider token usage is returned in `AgentHistory.usage`; `calculate_cost`
+also fills cost totals when browser-use custom pricing or the upstream LiteLLM
+pricing source has a matching model. At the frozen upstream target,
+`include_tool_call_examples` is only threaded through `MessageManager`, so the
+MCP schema accepts and round-trips that upstream no-op setting without adding a
+Rust-only prompt side effect.
 Message compaction accepts `true`, `false`, `null`, or a settings object with
 `compact_every_n_steps`, `trigger_char_count` or `trigger_token_count`,
 `chars_per_token`, `keep_last_items`, `summary_max_chars`, and

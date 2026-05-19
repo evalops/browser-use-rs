@@ -189,9 +189,12 @@ claim prior work as completed unless it confirms that work in the active run.
 `--generate-gif[=<path>]` writes an agent-history GIF after successful runs
 when recorded screenshots are available; without a path it uses
 `agent_history.gif`. `--calculate-cost` and `--include-tool-call-examples`
-preserve upstream `AgentSettings` contract flags for migrating callers; token
-cost accounting and tool-call example prompt side effects are tracked as
-separate runtime parity slices.
+preserve upstream `AgentSettings` contract flags for migrating callers.
+Provider token usage is captured into `AgentHistory.usage`; `--calculate-cost`
+also fills cost totals when browser-use custom pricing or the upstream LiteLLM
+pricing source has a matching model. At the frozen upstream target,
+`include_tool_call_examples` is threaded into `MessageManager` but has no
+prompt-rendering side effect.
 Repeated
 `--exclude-action <name>` removes built-in action names from the model output
 schema and rejects them before execution if a loose provider still returns

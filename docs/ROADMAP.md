@@ -342,8 +342,8 @@ Implemented:
   truncation, upstream-compatible action-result success validation,
   upstream-style judge trace validation, judgement results, and dedicated
   judge LLM routing, per-step error slots, runtime `generate_gif` GIF artifact
-  output from recorded screenshots,
-  contract-preserved `calculate_cost` and `include_tool_call_examples` settings,
+  output from recorded screenshots, provider token usage/cost summaries for
+  `calculate_cost`, the upstream no-op `include_tool_call_examples` setting,
   upstream-style message compaction
   settings with non-fatal summary requests, compacted-memory prompt blocks, and
   checkpoint preservation, model-output/action/thought accessors,
