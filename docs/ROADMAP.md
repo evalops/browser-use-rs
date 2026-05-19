@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- Next upstream recording/profile parity slice after #133 lands and CI is green.
+- Next upstream recording/profile parity slice after #135 lands and CI is green.
 
 ## Completed Tracks
 
+- [#135 Add BrowserProfile trace path config parity](https://github.com/evalops/browser-use-rs/issues/135)
 - [#133 Add BrowserProfile video recording config parity](https://github.com/evalops/browser-use-rs/issues/133)
 - [#132 Add BrowserProfile HAR recording parity](https://github.com/evalops/browser-use-rs/issues/132)
 - [#131 Add BrowserProfile executable_path alias parity](https://github.com/evalops/browser-use-rs/issues/131)
@@ -242,6 +243,8 @@ Implemented:
   video recording config fields (`record_video_dir`/`save_recording_path`,
   `record_video_size`, and `record_video_framerate`) as profile-only parity
   pending runtime capture,
+  trace path config (`traces_dir`/`trace_path`) as profile-only parity pending
+  runtime trace capture,
   CDP websocket closure diagnostics, and direct `Page.navigate` plus stuck
   HTTP(S) request timeout diagnostics. Unexpected
   websocket drops trigger bounded actor-level reconnect attempts with

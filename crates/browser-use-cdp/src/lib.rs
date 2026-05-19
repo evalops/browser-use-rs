@@ -2088,6 +2088,8 @@ pub struct BrowserProfile {
     pub record_video_size: Option<BrowserViewport>,
     #[serde(default = "default_record_video_framerate")]
     pub record_video_framerate: u32,
+    #[serde(default, alias = "trace_path", skip_serializing_if = "Option::is_none")]
+    pub traces_dir: Option<PathBuf>,
     #[serde(
         default = "default_minimum_wait_page_load_time",
         deserialize_with = "deserialize_non_negative_f64"
@@ -2171,6 +2173,7 @@ impl Default for BrowserProfile {
             record_video_dir: None,
             record_video_size: None,
             record_video_framerate: default_record_video_framerate(),
+            traces_dir: None,
             minimum_wait_page_load_time: default_minimum_wait_page_load_time(),
             wait_for_network_idle_page_load_time: default_wait_for_network_idle_page_load_time(),
             highlight_elements: default_highlight_elements(),
@@ -12139,6 +12142,33 @@ mod tests {
             json!({ "width": 1024, "height": 768 })
         );
         assert_eq!(encoded["record_video_framerate"], json!(24));
+        assert_eq!(
+            configured.launch_plan().args,
+            BrowserProfile::default().launch_plan().args
+        );
+    }
+
+    #[test]
+    fn browser_profile_trace_path_config_matches_upstream_shape() {
+        let decoded: BrowserProfile = serde_json::from_value(json!({})).expect("empty profile");
+        assert_eq!(decoded.traces_dir, None);
+
+        let encoded = serde_json::to_value(BrowserProfile::default()).expect("profile json");
+        assert!(encoded.get("traces_dir").is_none());
+
+        let trace_path = "/tmp/browser-use-rs/traces";
+        let configured: BrowserProfile = serde_json::from_value(json!({
+            "trace_path": trace_path
+        }))
+        .expect("trace path profile");
+        assert_eq!(
+            configured.traces_dir.as_deref(),
+            Some(Path::new(trace_path))
+        );
+
+        let encoded = serde_json::to_value(&configured).expect("canonical trace profile json");
+        assert_eq!(encoded["traces_dir"], json!(trace_path));
+        assert!(encoded.get("trace_path").is_none());
         assert_eq!(
             configured.launch_plan().args,
             BrowserProfile::default().launch_plan().args

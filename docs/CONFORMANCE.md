@@ -131,6 +131,9 @@ remain separate future recording work.
 `record_video_framerate` defaults to `30`. These fields are config-parity only
 in the current direct-CDP implementation and do not affect launch planning
 until the runtime video-recorder slice lands.
+`BrowserProfile.traces_dir` defaults to unset and accepts upstream
+`trace_path`; canonical JSON emits `traces_dir`. This is profile-only parity
+until a direct-CDP or external trace runtime surface is implemented.
 Unexpected websocket drops trigger bounded actor-level attempts with
 reconnecting/reconnected/failure lifecycle diagnostics. Registered CDP target
 sessions are invalidated after reconnect so stale session-scoped commands fail
