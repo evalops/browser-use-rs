@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 browser-use-dom = { path = "../browser-use-dom" }
 futures-util.workspace = true
 percent-encoding.workspace = true

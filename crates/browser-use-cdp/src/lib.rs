@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::Engine;
 use browser_use_dom::{
     BrowserStateSummary, DomElementRef, DomEvalNode, DomEvalNodeType, DomPageStats, ElementBounds,
     PageInfo, PaginationButton, PaginationButtonType, SerializedDomState, TabInfo,
@@ -4013,6 +4014,9 @@ impl CdpBrowserSession {
         let connection = CdpConnection::connect(&endpoint).await?;
         let permission_grant_event =
             grant_browser_permissions(&connection, &profile.permissions).await;
+        if let Some(downloads_path) = &profile.downloads_path {
+            enable_browser_download_events(&connection, downloads_path).await?;
+        }
         let page = attach_or_create_page(&connection).await?;
         let viewport_emulation = ViewportEmulationConfig::from_profile(profile);
         apply_viewport_emulation_for_page(&connection, &page, viewport_emulation).await?;
@@ -4023,6 +4027,8 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
+        let cdp_auto_pdf_download =
+            CdpAutoPdfDownloadState::from_profile(profile, auto_pdf_downloads.clone());
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -4041,6 +4047,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
             network_activity.clone(),
+            cdp_auto_pdf_download,
         );
         let page_load_wait = PageLoadWaitConfig::from_profile(profile);
 
@@ -4114,6 +4121,8 @@ impl CdpBrowserSession {
         let lifecycle_events = Arc::new(Mutex::new(VecDeque::new()));
         let network_activity = Arc::new(Mutex::new(NetworkActivityState::new(Instant::now())));
         let auto_pdf_downloads = Arc::new(Mutex::new(BTreeMap::new()));
+        let cdp_auto_pdf_download =
+            CdpAutoPdfDownloadState::from_profile(profile, auto_pdf_downloads.clone());
         let (lifecycle_event_tx, _) = broadcast::channel(256);
         {
             let mut events = lifecycle_events.lock().await;
@@ -4135,6 +4144,7 @@ impl CdpBrowserSession {
             lifecycle_event_tx.clone(),
             profile.network_request_timeout_ms,
             network_activity.clone(),
+            cdp_auto_pdf_download,
         );
         let security_watchdog = BrowserSecurityWatchdog::start(
             connection.clone(),
@@ -4972,6 +4982,7 @@ impl BrowserLifecycleWatchdog {
         lifecycle_event_tx: broadcast::Sender<BrowserLifecycleEvent>,
         network_request_timeout_ms: u64,
         network_activity: Arc<Mutex<NetworkActivityState>>,
+        cdp_auto_pdf_download: Option<Arc<CdpAutoPdfDownloadState>>,
     ) -> Self {
         let mut events = connection.subscribe_events();
         let handle = tokio::spawn(async move {
@@ -4991,6 +5002,7 @@ impl BrowserLifecycleWatchdog {
                                     &lifecycle_event_tx,
                                     &mut active_network_requests,
                                     &network_activity,
+                                    &cdp_auto_pdf_download,
                                     event,
                                 )
                                 .await;
@@ -5037,6 +5049,7 @@ async fn handle_lifecycle_cdp_event(
     lifecycle_event_tx: &broadcast::Sender<BrowserLifecycleEvent>,
     active_network_requests: &mut HashMap<String, ActiveNetworkRequest>,
     network_activity: &Arc<Mutex<NetworkActivityState>>,
+    cdp_auto_pdf_download: &Option<Arc<CdpAutoPdfDownloadState>>,
     event: CdpEvent,
 ) {
     match event.method.as_str() {
@@ -5047,6 +5060,21 @@ async fn handle_lifecycle_cdp_event(
         "Network.loadingFinished" | "Network.loadingFailed" => {
             forget_network_request(active_network_requests, &event);
             track_network_activity_finished(network_activity, &event).await;
+            if event.method == "Network.loadingFinished" {
+                if let Some(event) =
+                    cdp_auto_pdf_lifecycle_event(connection, cdp_auto_pdf_download, &event).await
+                {
+                    record_lifecycle_event_in_buffer(lifecycle_events, lifecycle_event_tx, event)
+                        .await;
+                }
+            } else if let Some(cdp_auto_pdf_download) = cdp_auto_pdf_download {
+                cdp_auto_pdf_download.forget_candidate(&event).await;
+            }
+        }
+        "Network.responseReceived" => {
+            if let Some(cdp_auto_pdf_download) = cdp_auto_pdf_download {
+                cdp_auto_pdf_download.observe_response(&event).await;
+            }
         }
         "browser-use-rs.websocket-closed" => {
             record_lifecycle_event_in_buffer(
@@ -5139,6 +5167,237 @@ fn track_network_request(
             started_at: Instant::now(),
         },
     );
+}
+
+#[derive(Debug, Clone)]
+struct CdpAutoPdfCandidate {
+    request_id: String,
+    request_key: String,
+    session_id: Option<String>,
+    url: String,
+    file_name: String,
+}
+
+#[derive(Debug)]
+struct CdpAutoPdfDownloadState {
+    downloads_path: PathBuf,
+    downloaded_urls: Arc<Mutex<BTreeMap<String, PathBuf>>>,
+    candidates: Mutex<BTreeMap<String, CdpAutoPdfCandidate>>,
+}
+
+impl CdpAutoPdfDownloadState {
+    fn from_profile(
+        profile: &BrowserProfile,
+        downloaded_urls: Arc<Mutex<BTreeMap<String, PathBuf>>>,
+    ) -> Option<Arc<Self>> {
+        if !profile.auto_download_pdfs {
+            return None;
+        }
+        profile.downloads_path.clone().map(|downloads_path| {
+            Arc::new(Self {
+                downloads_path,
+                downloaded_urls,
+                candidates: Mutex::new(BTreeMap::new()),
+            })
+        })
+    }
+
+    async fn observe_response(&self, event: &CdpEvent) {
+        let Some(candidate) = cdp_auto_pdf_candidate_from_response(event) else {
+            return;
+        };
+        self.candidates
+            .lock()
+            .await
+            .insert(candidate.request_key.clone(), candidate);
+    }
+
+    async fn forget_candidate(&self, event: &CdpEvent) {
+        let Some(request_key) = cdp_request_key(event) else {
+            return;
+        };
+        self.candidates.lock().await.remove(&request_key);
+    }
+
+    async fn take_finished_candidate(&self, event: &CdpEvent) -> Option<CdpAutoPdfCandidate> {
+        let request_key = cdp_request_key(event)?;
+        let candidate = self.candidates.lock().await.remove(&request_key)?;
+        let cached_path = self
+            .downloaded_urls
+            .lock()
+            .await
+            .get(&candidate.url)
+            .cloned();
+        if let Some(path) = cached_path {
+            if tokio::fs::metadata(&path).await.is_ok() {
+                return None;
+            }
+            let mut downloaded_urls = self.downloaded_urls.lock().await;
+            if downloaded_urls.get(&candidate.url) == Some(&path) {
+                downloaded_urls.remove(&candidate.url);
+            }
+        }
+        Some(candidate)
+    }
+
+    async fn write_candidate(
+        &self,
+        candidate: &CdpAutoPdfCandidate,
+        bytes: &[u8],
+    ) -> Result<BrowserLifecycleEvent, BrowserError> {
+        tokio::fs::create_dir_all(&self.downloads_path)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        let path = unique_download_path(&self.downloads_path, &candidate.file_name).await?;
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
+        self.downloaded_urls
+            .lock()
+            .await
+            .insert(candidate.url.clone(), path.clone());
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| candidate.file_name.clone());
+        Ok(BrowserLifecycleEvent::pdf_auto_downloaded(
+            &candidate.url,
+            path.display().to_string(),
+            file_name,
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        ))
+    }
+}
+
+async fn cdp_auto_pdf_lifecycle_event(
+    connection: &CdpConnection,
+    cdp_auto_pdf_download: &Option<Arc<CdpAutoPdfDownloadState>>,
+    event: &CdpEvent,
+) -> Option<BrowserLifecycleEvent> {
+    let cdp_auto_pdf_download = cdp_auto_pdf_download.as_ref()?;
+    let candidate = cdp_auto_pdf_download.take_finished_candidate(event).await?;
+    match cdp_response_body_bytes(connection, &candidate).await {
+        Ok(bytes) => match cdp_auto_pdf_download
+            .write_candidate(&candidate, &bytes)
+            .await
+        {
+            Ok(event) => Some(event),
+            Err(error) => Some(BrowserLifecycleEvent::pdf_auto_download_failed(
+                candidate.url,
+                error.to_string(),
+            )),
+        },
+        Err(error) => Some(BrowserLifecycleEvent::pdf_auto_download_failed(
+            candidate.url,
+            error.to_string(),
+        )),
+    }
+}
+
+async fn cdp_response_body_bytes(
+    connection: &CdpConnection,
+    candidate: &CdpAutoPdfCandidate,
+) -> Result<Vec<u8>, BrowserError> {
+    let response = connection
+        .command(
+            "Network.getResponseBody",
+            json!({ "requestId": candidate.request_id }),
+            candidate.session_id.as_deref(),
+        )
+        .await?;
+    let body = response
+        .get("body")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            BrowserError::MissingResponseData("Network.getResponseBody.body".to_owned())
+        })?;
+    let base64_encoded = response
+        .get("base64Encoded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if base64_encoded {
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))
+    } else {
+        Ok(body.as_bytes().to_vec())
+    }
+}
+
+fn cdp_auto_pdf_candidate_from_response(event: &CdpEvent) -> Option<CdpAutoPdfCandidate> {
+    let request_id = event.params.get("requestId").and_then(Value::as_str)?;
+    let response = event.params.get("response")?;
+    let url = response.get("url").and_then(Value::as_str)?.to_owned();
+    let mime_type = response
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let headers = response.get("headers");
+    let content_type = headers.and_then(|headers| cdp_header_value(headers, "content-type"));
+    if !is_application_pdf(mime_type) && !content_type.as_deref().is_some_and(is_application_pdf) {
+        return None;
+    }
+    let content_disposition =
+        headers.and_then(|headers| cdp_header_value(headers, "content-disposition"));
+    let file_name = content_disposition
+        .as_deref()
+        .and_then(content_disposition_filename)
+        .unwrap_or_else(|| pdf_download_filename_from_url(&url));
+    Some(CdpAutoPdfCandidate {
+        request_id: request_id.to_owned(),
+        request_key: cdp_request_key(event)?,
+        session_id: event.session_id.clone(),
+        url,
+        file_name,
+    })
+}
+
+fn cdp_request_key(event: &CdpEvent) -> Option<String> {
+    let request_id = event.params.get("requestId").and_then(Value::as_str)?;
+    Some(match event.session_id.as_deref() {
+        Some(session_id) => format!("{session_id}:{request_id}"),
+        None => format!("root:{request_id}"),
+    })
+}
+
+fn cdp_header_value(headers: &Value, name: &str) -> Option<String> {
+    let object = headers.as_object()?;
+    object.iter().find_map(|(header_name, value)| {
+        header_name.eq_ignore_ascii_case(name).then(|| match value {
+            Value::String(value) => value.clone(),
+            other => other.to_string(),
+        })
+    })
+}
+
+fn is_application_pdf(value: &str) -> bool {
+    value
+        .split(';')
+        .any(|part| part.trim().eq_ignore_ascii_case("application/pdf"))
+}
+
+fn content_disposition_filename(value: &str) -> Option<String> {
+    for part in value.split(';') {
+        let Some((name, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        if name == "filename*" {
+            let value = value.trim().trim_matches('"');
+            let encoded = value
+                .rsplit_once("''")
+                .map_or(value, |(_, encoded)| encoded);
+            let decoded = percent_decode_str(encoded).decode_utf8_lossy();
+            return Some(ensure_pdf_extension(sanitize_download_filename(&decoded)));
+        }
+        if name == "filename" {
+            return Some(ensure_pdf_extension(sanitize_download_filename(
+                value.trim().trim_matches('"'),
+            )));
+        }
+    }
+    None
 }
 
 async fn track_network_activity_started(
@@ -9020,9 +9279,14 @@ mod tests {
                 "sessionId": "session-1"
             }),
             "Browser.grantPermissions"
+            | "Browser.setDownloadBehavior"
             | "Page.enable"
             | "Network.enable"
             | "Emulation.setDeviceMetricsOverride" => json!({}),
+            "Network.getResponseBody" => json!({
+                "body": base64::engine::general_purpose::STANDARD.encode(b"%PDF-1.7 cdp body"),
+                "base64Encoded": true
+            }),
             other => panic!("unexpected CDP method {other}"),
         };
         json!({
@@ -9344,6 +9608,37 @@ mod tests {
                 "Network.enable",
                 "Emulation.setDeviceMetricsOverride",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_connect_keeps_download_behavior_when_auto_pdf_disabled() {
+        let downloads_dir = TempDir::new().expect("downloads temp dir");
+        let (endpoint, command_log) = cdp_command_test_server(None, 6).await;
+        let profile = BrowserProfile {
+            permissions: Vec::new(),
+            downloads_path: Some(downloads_dir.path().to_path_buf()),
+            auto_download_pdfs: false,
+            ..BrowserProfile::default()
+        };
+        let _session = CdpBrowserSession::connect_with_profile(endpoint, &profile)
+            .await
+            .expect("connect session");
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(commands[0].method, "Browser.setDownloadBehavior");
+        assert_eq!(
+            commands[0].params,
+            json!({
+                "behavior": "allow",
+                "downloadPath": downloads_dir.path().display().to_string(),
+                "eventsEnabled": true
+            })
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| command.method == "Network.enable")
         );
     }
 
@@ -11812,6 +12107,165 @@ mod tests {
             pdf_download_filename_from_url("https://example.test/docs/..%2Fsecret.pdf"),
             "secret.pdf"
         );
+    }
+
+    #[test]
+    fn cdp_auto_pdf_candidate_uses_response_metadata() {
+        let event = CdpEvent {
+            method: "Network.responseReceived".to_owned(),
+            params: json!({
+                "requestId": "request-1",
+                "response": {
+                    "url": "https://example.test/download?id=123",
+                    "mimeType": "application/pdf",
+                    "headers": {
+                        "Content-Disposition": "attachment; filename*=UTF-8''report%20final",
+                        "Content-Type": "application/pdf; charset=binary"
+                    }
+                }
+            }),
+            session_id: Some("session-1".to_owned()),
+        };
+
+        let candidate = cdp_auto_pdf_candidate_from_response(&event).expect("pdf candidate");
+        assert_eq!(candidate.request_id, "request-1");
+        assert_eq!(candidate.request_key, "session-1:request-1");
+        assert_eq!(candidate.session_id.as_deref(), Some("session-1"));
+        assert_eq!(candidate.url, "https://example.test/download?id=123");
+        assert_eq!(candidate.file_name, "report final.pdf");
+    }
+
+    #[test]
+    fn cdp_auto_pdf_candidate_ignores_non_pdf_responses() {
+        let event = CdpEvent {
+            method: "Network.responseReceived".to_owned(),
+            params: json!({
+                "requestId": "request-1",
+                "response": {
+                    "url": "https://example.test/index.html?file=report.pdf",
+                    "mimeType": "text/html",
+                    "headers": {
+                        "Content-Type": "text/html"
+                    }
+                }
+            }),
+            session_id: None,
+        };
+
+        assert!(cdp_auto_pdf_candidate_from_response(&event).is_none());
+    }
+
+    #[tokio::test]
+    async fn cdp_auto_pdf_state_deduplicates_url_cache_and_paths() {
+        let temp_dir = TempDir::new().expect("downloads dir");
+        let downloaded_urls = Arc::new(Mutex::new(BTreeMap::new()));
+        let state = Arc::new(CdpAutoPdfDownloadState {
+            downloads_path: temp_dir.path().to_path_buf(),
+            downloaded_urls,
+            candidates: Mutex::new(BTreeMap::new()),
+        });
+        let response_event = CdpEvent {
+            method: "Network.responseReceived".to_owned(),
+            params: json!({
+                "requestId": "request-1",
+                "response": {
+                    "url": "https://example.test/report.pdf",
+                    "mimeType": "application/pdf",
+                    "headers": {}
+                }
+            }),
+            session_id: Some("session-1".to_owned()),
+        };
+        let finish_event = CdpEvent {
+            method: "Network.loadingFinished".to_owned(),
+            params: json!({ "requestId": "request-1" }),
+            session_id: Some("session-1".to_owned()),
+        };
+
+        state.observe_response(&response_event).await;
+        let candidate = state
+            .take_finished_candidate(&finish_event)
+            .await
+            .expect("first candidate");
+        let event = state
+            .write_candidate(&candidate, b"%PDF-1.7")
+            .await
+            .expect("write pdf");
+        assert_eq!(event.details["file_name"], "report.pdf");
+        let first_path = temp_dir.path().join("report.pdf");
+        assert!(first_path.exists());
+
+        state.observe_response(&response_event).await;
+        assert!(state.take_finished_candidate(&finish_event).await.is_none());
+
+        std::fs::remove_file(&first_path).expect("remove cached pdf");
+        state.observe_response(&response_event).await;
+        let second_candidate = state
+            .take_finished_candidate(&finish_event)
+            .await
+            .expect("stale cache redownload candidate");
+        std::fs::write(&first_path, b"existing").expect("seed duplicate filename");
+        let second = state
+            .write_candidate(&second_candidate, b"%PDF-1.7")
+            .await
+            .expect("write deduped pdf");
+        assert_eq!(second.details["file_name"], "report-1.pdf");
+    }
+
+    #[tokio::test]
+    async fn cdp_auto_pdf_lifecycle_downloads_response_body() {
+        let temp_dir = TempDir::new().expect("downloads dir");
+        let (endpoint, command_log) = cdp_command_test_server(None, 1).await;
+        let connection = CdpConnection::connect(&endpoint)
+            .await
+            .expect("connect cdp");
+        let downloaded_urls = Arc::new(Mutex::new(BTreeMap::new()));
+        let state = Arc::new(CdpAutoPdfDownloadState {
+            downloads_path: temp_dir.path().to_path_buf(),
+            downloaded_urls,
+            candidates: Mutex::new(BTreeMap::new()),
+        });
+        let response_event = CdpEvent {
+            method: "Network.responseReceived".to_owned(),
+            params: json!({
+                "requestId": "request-1",
+                "response": {
+                    "url": "https://example.test/download",
+                    "mimeType": "application/octet-stream",
+                    "headers": {
+                        "Content-Disposition": "attachment; filename=cdp-report.pdf",
+                        "Content-Type": "application/pdf"
+                    }
+                }
+            }),
+            session_id: Some("session-1".to_owned()),
+        };
+        let finish_event = CdpEvent {
+            method: "Network.loadingFinished".to_owned(),
+            params: json!({ "requestId": "request-1" }),
+            session_id: Some("session-1".to_owned()),
+        };
+
+        state.observe_response(&response_event).await;
+        let auto_pdf_download = Some(state);
+        let event = cdp_auto_pdf_lifecycle_event(&connection, &auto_pdf_download, &finish_event)
+            .await
+            .expect("auto PDF lifecycle event");
+        assert_eq!(event.kind, BrowserLifecycleEventKind::FileDownloaded);
+        assert_eq!(event.reason.as_deref(), Some("pdf_auto_download"));
+        assert_eq!(event.details["file_name"], "cdp-report.pdf");
+        assert_eq!(event.details["file_size"], "17");
+        assert_eq!(
+            tokio::fs::read(temp_dir.path().join("cdp-report.pdf"))
+                .await
+                .expect("downloaded pdf bytes"),
+            b"%PDF-1.7 cdp body"
+        );
+
+        let commands = command_log.await.expect("cdp command log");
+        assert_eq!(commands[0].method, "Network.getResponseBody");
+        assert_eq!(commands[0].params, json!({ "requestId": "request-1" }));
+        assert_eq!(commands[0].session_id.as_deref(), Some("session-1"));
     }
 
     #[tokio::test]
