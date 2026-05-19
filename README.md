@@ -7,7 +7,7 @@ behavioral conformance implementation rather than a line-by-line translation.
 The current frozen upstream target is:
 
 ```text
-browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
+browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
 ```
 
 ## Status
@@ -45,7 +45,7 @@ includes:
   browser connect/close, target create/switch/close, navigation
   start/complete/failure/timeout, target crash, URL-policy reset/popup
   diagnostics, reconnect, non-fatal permission-grant diagnostics,
-  JavaScript dialog, download, and storage-state
+  JavaScript dialog, sanitized download filenames, and storage-state
   diagnostics plus a `BrowserLifecycleEventSubscription` returned by
   `subscribe_lifecycle_events`, with `recv`/`try_recv` lag and closed-stream
   handling, and a `BrowserLifecycleAdapterEventSubscription` that maps the
@@ -63,7 +63,8 @@ includes:
   `network_request_timeout_ms` records lifecycle diagnostics for HTTP(S)
   requests that remain active beyond the watchdog budget.
   Launch profiles can set `downloads_path` to enable Chrome download behavior
-  and browser-level download lifecycle events, and `storage_state_path` to
+  and browser-level download lifecycle events with safe basename normalization
+  for page-controlled filenames, and `storage_state_path` to
   load/save browser cookie and attached frame-tree origin local/session storage
   state with lifecycle notifications. Profile-wide storage discovery outside
   the attached frame tree is outside the safe CDP boundary documented in

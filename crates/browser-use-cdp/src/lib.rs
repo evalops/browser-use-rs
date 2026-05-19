@@ -5040,6 +5040,7 @@ fn sanitize_download_filename(name: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn is_path_contained(path: &Path, directory: &Path) -> bool {
     let Ok(directory) = normalize_existing_or_lexical_path(directory) else {
         return false;
@@ -5050,6 +5051,7 @@ fn is_path_contained(path: &Path, directory: &Path) -> bool {
     path == directory || path.starts_with(&directory)
 }
 
+#[cfg(test)]
 fn normalize_existing_or_lexical_path(path: &Path) -> Result<PathBuf, std::io::Error> {
     match std::fs::canonicalize(path) {
         Ok(path) => Ok(path),
@@ -5060,6 +5062,7 @@ fn normalize_existing_or_lexical_path(path: &Path) -> Result<PathBuf, std::io::E
     }
 }
 
+#[cfg(test)]
 fn normalize_lexical_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {

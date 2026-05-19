@@ -5,10 +5,11 @@ small pushed checkpoints as each surface becomes real.
 
 ## Active Tracks
 
-- [#116 Refresh upstream target to 18aae0b and pin security hardening parity](https://github.com/evalops/browser-use-rs/issues/116)
+- Next upstream parity slice after #116 lands and CI is green.
 
 ## Completed Tracks
 
+- [#116 Refresh upstream target to 18aae0b and pin security hardening parity](https://github.com/evalops/browser-use-rs/issues/116)
 - [#115 Add BrowserProfile env launch parity](https://github.com/evalops/browser-use-rs/issues/115)
 - [#113 Add BrowserProfile ignore_default_args and default Chrome arg parity](https://github.com/evalops/browser-use-rs/issues/113)
 - [#112 Add BrowserProfile permissions grant parity](https://github.com/evalops/browser-use-rs/issues/112)
@@ -120,7 +121,7 @@ Implemented:
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
   install guide, and generated platform-aware Homebrew formula scaffold.
-- Frozen upstream target: `browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244`.
+- Frozen upstream target: `browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.

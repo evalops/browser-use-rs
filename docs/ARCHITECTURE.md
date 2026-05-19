@@ -6,7 +6,7 @@ Python internals with smaller typed Rust boundaries.
 ## Compatibility Target
 
 The current target is `browser-use/browser-use` commit
-`ac2ef545a9000f4ae0ce9409f92fb03287357244`. Upstream bumps should land as
+`18aae0b7523aa77862a4ba4de7e774ab807eb1fb`. Upstream bumps should land as
 explicit conformance updates, not silent rewrites.
 
 ## Layers

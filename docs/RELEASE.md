@@ -3,7 +3,7 @@
 This release targets:
 
 ```text
-browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
+browser-use/browser-use@18aae0b7523aa77862a4ba4de7e774ab807eb1fb
 ```
 
 ## Supported
@@ -45,7 +45,9 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
 - Browser profile URL access policies for explicit navigation, including
   allowed/prohibited domain patterns, allowed-domain precedence, internal
   browser URL allowances, data/blob URL allowances, authentication-bypass
-  resistance, and optional IP-address blocking, plus post-navigation redirect
+  resistance, and optional IP-address blocking that canonicalizes browser-resolvable
+  decimal, hex, octal, short-form, percent-encoded, Unicode-normalized, and
+  IDNA-dot IPv4 hosts before classification, plus post-navigation redirect
   checks, blocked-navigation preflight diagnostics, navigation-capable
   action-boundary checks, newly observed tab closure for disallowed URLs, and
   event-driven target/frame navigation watchdog enforcement while a session is
@@ -53,9 +55,11 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
   browser connect/close, target create/switch/close, navigation start/complete,
   navigation failure/timeout, target crash, URL-policy block/reset/popup
   outcomes, reconnect, non-fatal browser diagnostics such as permission-grant
-  failures, JavaScript dialog, download, and storage-state event shapes.
+  failures, JavaScript dialog, sanitized download filenames, and storage-state event shapes.
   `BrowserProfile.downloads_path` enables browser download behavior and
-  CDP download lifecycle events for launched sessions; `storage_state_path`
+  CDP download lifecycle events for launched sessions; page-controlled download
+  filenames from CDP events are reduced to safe basenames and containment helpers
+  reject paths outside the configured downloads directory model. `storage_state_path`
   loads and saves browser cookie plus attached frame-tree origin local/session
   storage state with storage lifecycle events.
   CDP websocket closure records a browser-stopped lifecycle diagnostic, and
@@ -141,7 +145,7 @@ browser-use/browser-use@ac2ef545a9000f4ae0ce9409f92fb03287357244
   and the CLI `--file-system-path` flag place the managed filesystem under a
   caller-selected base directory while preserving the `browseruse_agent_data`
   subdirectory contract.
-- The upstream MCP allowed-domains advisory in the `ac2ef54` target is not
+- The upstream MCP allowed-domains advisory introduced before this target is not
   applicable to the current Rust MCP surface: `browser-use-rs` does not expose
   the upstream profile-merge retry tool that introduced that Python-side
   allowed-domain handling path.

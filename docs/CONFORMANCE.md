@@ -5,7 +5,7 @@ browser-use where compatibility is claimed.
 
 ## Inputs
 
-- Upstream source at `ac2ef545a9000f4ae0ce9409f92fb03287357244`.
+- Upstream source at `18aae0b7523aa77862a4ba4de7e774ab807eb1fb`.
 - Upstream docs for quickstart, CLI, browser configuration, custom tools, and
   supported models.
 - Upstream test intent from `tests/ci` and task fixtures.
@@ -19,8 +19,9 @@ browser-use where compatibility is claimed.
    widget roles, accessibility names/descriptions, compact AX metadata, and
    eval/judge DOM tree output.
 3. Browser actions: navigation, URL access policy guards for explicit
-   navigation, action boundaries, redirects, and new tabs, search, click,
-   input, scroll, keyboard, tab switching, downloads, screenshots, PDF output,
+   navigation, action boundaries, redirects, non-standard IPv4 blocking, and
+   new tabs, search, click, input, scroll, keyboard, tab switching, downloads
+   with sanitized page-controlled filenames, screenshots, PDF output,
    and cached-node fallback inside same-page and Chrome OOPIF iframe targets.
 4. Agent loop: max steps, max failures, multi-action aborts after navigation,
    loop nudges, planning fields, prompt attribute settings, extraction
