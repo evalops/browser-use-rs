@@ -20,16 +20,17 @@ use std::collections::{BTreeMap, VecDeque};
 
 mod scripts;
 
+#[cfg(test)]
+pub(crate) use scripts::INTERACTIVE_ELEMENTS_JS;
 pub(crate) use scripts::{
     AX_REF_ATTRIBUTE, CLEANUP_AX_REFS_JS, CLICK_ELEMENT_ACTION_JS, DROPDOWN_OPTIONS_BODY_JS,
     FRAME_ELEMENTS_JS, PAGE_INFO_JS, click_element_js, dom_highlight_overlay_elements,
     dom_highlight_overlay_script, dropdown_options_js, element_action_function_js,
-    element_action_js, element_eval_js, element_function_js, interaction_coordinate_highlight_script,
-    interaction_element_highlight_script, interactive_elements_js, scroll_to_text_js,
-    select_dropdown_option_body_js, select_dropdown_option_js,
+    element_action_js, element_eval_js, element_function_js,
+    interaction_coordinate_highlight_script, interaction_element_highlight_script,
+    interactive_elements_js, scroll_to_text_js, select_dropdown_option_body_js,
+    select_dropdown_option_js,
 };
-#[cfg(test)]
-pub(crate) use scripts::INTERACTIVE_ELEMENTS_JS;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct AccessibilityNodeInfo {

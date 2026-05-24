@@ -1276,4 +1276,3 @@ pub(crate) fn scroll_to_text_js(text: &str) -> Result<String, BrowserError> {
 }})()"#
     ))
 }
-
