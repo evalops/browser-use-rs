@@ -6,6 +6,9 @@ This release targets:
 browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
 ```
 
+Release workflow retriggers should use a conventional commit on a release-covered
+path so CI and package publication run from a normal `main` push.
+
 ## Supported
 
 - Local Chrome/Chromium launch and CDP attach, including upstream-style
