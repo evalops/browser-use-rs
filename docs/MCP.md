@@ -98,7 +98,9 @@ When `generate_gif` is enabled, successful agent runs write an agent-history
 GIF from recorded screenshots to `agent_history.gif` or the provided path.
 Provider token usage is returned in `AgentHistory.usage`; `calculate_cost`
 also fills cost totals when browser-use custom pricing or the upstream LiteLLM
-pricing source has a matching model. At the frozen upstream target,
+pricing source has a matching model. OpenRouter-backed usage entries
+disambiguate same-named model ids and can price through OpenRouter's dynamic
+`/api/v1/models` metadata. At the frozen upstream target,
 `include_tool_call_examples` is only threaded through `MessageManager`, so the
 MCP schema accepts and round-trips that upstream no-op setting without adding a
 Rust-only prompt side effect.

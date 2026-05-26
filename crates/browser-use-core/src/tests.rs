@@ -20,6 +20,7 @@ use std::{
     io::Write,
     sync::{Arc, Mutex},
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -4556,6 +4557,28 @@ fn text_pos(text: &str, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("{needle} not found in text"))
 }
 
+async fn one_response_json_server(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind JSON test server");
+    let addr = listener.local_addr().expect("JSON test server addr");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept JSON request");
+        let mut buffer = [0_u8; 1024];
+        let _ = stream.read(&mut buffer).await.expect("read JSON request");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("write JSON response");
+    });
+    (format!("http://{addr}/models"), server)
+}
+
 #[async_trait]
 impl ChatModel for QueueModel {
     fn provider(&self) -> &str {
@@ -4693,6 +4716,115 @@ async fn agent_cost_pricing_maps_bu_latest_to_bu_2_0_like_upstream() {
     assert!((usage.total_prompt_cached_cost - 0.0000024).abs() < 0.0000000001);
     assert!((usage.total_completion_cost - 0.00007).abs() < 0.0000000001);
     assert!((usage.total_cost - 0.0001108).abs() < 0.0000000001);
+}
+
+#[tokio::test]
+async fn openrouter_provider_usage_uses_openrouter_dynamic_pricing() {
+    let litellm_body = r#"{
+        "openai/gpt-4o-mini": {
+            "input_cost_per_token": 0.00000001,
+            "output_cost_per_token": 0.00000002
+        }
+    }"#;
+    let openrouter_body = r#"{
+        "data": [
+            {
+                "id": "openai/gpt-4o-mini",
+                "pricing": {
+                    "prompt": "0.00000030",
+                    "completion": "0.00000090",
+                    "input_cache_read": "0.00000003",
+                    "input_cache_write": "0.00000004"
+                }
+            }
+        ]
+    }"#;
+    let (pricing_url, pricing_server) = one_response_json_server(litellm_body).await;
+    let (openrouter_url, openrouter_server) = one_response_json_server(openrouter_body).await;
+    let settings = AgentSettings {
+        calculate_cost: true,
+        ..AgentSettings::default()
+    };
+    let completion = ChatCompletion {
+        model: "openai/gpt-4o-mini".to_owned(),
+        content: serde_json::json!({ "ok": true }),
+        usage: Some(ChatUsage {
+            prompt_tokens: 100,
+            prompt_cached_tokens: Some(40),
+            prompt_cache_creation_tokens: Some(10),
+            prompt_image_tokens: None,
+            completion_tokens: 20,
+            total_tokens: 120,
+        }),
+        raw_response: None,
+    };
+    let mut tracker = TokenUsageTracker::for_settings(&settings)
+        .with_test_pricing_urls(pricing_url, openrouter_url);
+
+    tracker.add_completion_with_provider("openrouter", &completion);
+    let usage = tracker.summary().await;
+
+    pricing_server.await.expect("pricing server task");
+    openrouter_server.await.expect("openrouter server task");
+    assert_eq!(usage.by_model.len(), 1);
+    assert!(usage.by_model.contains_key("openai/gpt-4o-mini"));
+    assert!((usage.total_prompt_cost - 0.0000196).abs() < 0.0000000001);
+    assert!((usage.total_prompt_cached_cost - 0.0000012).abs() < 0.0000000001);
+    assert!((usage.total_completion_cost - 0.000018).abs() < 0.0000000001);
+    assert!((usage.total_cost - 0.0000388).abs() < 0.0000000001);
+}
+
+#[tokio::test]
+async fn openrouter_pricing_does_not_reprice_non_openrouter_same_named_models() {
+    let litellm_body = r#"{
+        "openai/gpt-4o-mini": {
+            "input_cost_per_token": 0.00000001,
+            "output_cost_per_token": 0.00000002
+        }
+    }"#;
+    let openrouter_body = r#"{
+        "data": [
+            {
+                "id": "openai/gpt-4o-mini",
+                "pricing": {
+                    "prompt": "0.00000030",
+                    "completion": "0.00000090"
+                }
+            }
+        ]
+    }"#;
+    let (pricing_url, pricing_server) = one_response_json_server(litellm_body).await;
+    let (openrouter_url, openrouter_server) = one_response_json_server(openrouter_body).await;
+    let settings = AgentSettings {
+        calculate_cost: true,
+        ..AgentSettings::default()
+    };
+    let completion = ChatCompletion {
+        model: "openai/gpt-4o-mini".to_owned(),
+        content: serde_json::json!({ "ok": true }),
+        usage: Some(ChatUsage {
+            prompt_tokens: 100,
+            prompt_cached_tokens: None,
+            prompt_cache_creation_tokens: None,
+            prompt_image_tokens: None,
+            completion_tokens: 20,
+            total_tokens: 120,
+        }),
+        raw_response: None,
+    };
+    let mut tracker = TokenUsageTracker::for_settings(&settings)
+        .with_test_pricing_urls(pricing_url, openrouter_url);
+
+    tracker.add_completion_with_provider("openrouter", &completion);
+    tracker.add_completion_with_provider("openai-compatible", &completion);
+    let usage = tracker.summary().await;
+
+    pricing_server.await.expect("pricing server task");
+    openrouter_server.await.expect("openrouter server task");
+    assert_eq!(usage.entry_count, 2);
+    assert!((usage.total_prompt_cost - 0.000031).abs() < 0.0000000001);
+    assert!((usage.total_completion_cost - 0.0000184).abs() < 0.0000000001);
+    assert!((usage.total_cost - 0.0000494).abs() < 0.0000000001);
 }
 
 #[tokio::test]

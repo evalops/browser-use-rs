@@ -321,15 +321,16 @@ When `calculate_cost=true` or `BROWSER_USE_CALCULATE_COST=true`, cost totals are
 calculated from browser-use's custom `bu-*` pricing table plus the upstream
 LiteLLM pricing source. `bu-latest` and `smart` resolve to the current upstream
 `bu-2-0` pricing. `BROWSER_USE_MODEL_PRICING_URL` overrides that pricing URL.
+OpenRouter-backed usage can also fetch dynamic OpenRouter metadata from
+`/api/v1/models`; `BROWSER_USE_OPENROUTER_MODELS_URL` overrides that endpoint.
 Pricing fetch failures do not fail agent runs; token counts remain present and
 cost fields stay at zero for models without pricing data.
 
 Upstream `8342696` added a Python `ChatOpenRouter`-specific fallback that can
 disambiguate OpenRouter pricing from same-named model ids by inspecting the LLM
-instance. `browser-use-rs` uses a provider-neutral `ChatCompletion` boundary for
-usage aggregation, so model ids that are present in LiteLLM continue to use the
-shared LiteLLM table. Dynamic OpenRouter model pricing remains a follow-up unless
-the Rust LLM boundary grows provider-aware pricing metadata.
+instance. `browser-use-rs` records the provider alongside each usage entry, so
+`provider=openrouter` model ids price through OpenRouter's `/api/v1/models`
+metadata before falling back to the shared LiteLLM table.
 
 At the frozen upstream target, `include_tool_call_examples` is accepted and
 threaded into `MessageManager`, but upstream does not render additional prompt
@@ -358,8 +359,9 @@ The `8342696` upstream bump covers browser-use `0.12.9`.
   `gemini-3-flash-preview`, and `gemini-3.1-flash-lite` match upstream intent.
 - Not applicable: Python-only `HistoryItem` immutability and `ChatBrowserUse`
   constructor defaults do not have direct Rust struct/adapter equivalents.
-- Deferred boundary: provider-disambiguated dynamic OpenRouter pricing requires
-  extending the Rust usage boundary with provider metadata, as noted above.
+- Implemented: provider-disambiguated dynamic OpenRouter pricing uses provider
+  metadata from the Rust LLM boundary and fetches OpenRouter `/api/v1/models`
+  pricing for OpenRouter-backed usage entries.
 
 ## Current Fixtures
 

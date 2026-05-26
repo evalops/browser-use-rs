@@ -288,7 +288,7 @@ path so CI and package publication run from a normal `main` push.
   routing, runtime `generate_gif` GIF artifact output from recorded
   screenshots, Gemini client attribution headers, provider token usage/cost
   summaries for `calculate_cost`, current Browser Use `bu-latest`/`smart`
-  pricing aliases, the
+  pricing aliases, provider-disambiguated dynamic OpenRouter pricing, the
   upstream no-op `include_tool_call_examples` setting, and step-error,
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit
