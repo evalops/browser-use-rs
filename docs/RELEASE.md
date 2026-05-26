@@ -3,7 +3,7 @@
 This release targets:
 
 ```text
-browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
+browser-use/browser-use@834269609082d187ca0250de2c06d93799dac92d
 ```
 
 Release workflow retriggers should use a conventional commit on a release-covered
@@ -277,14 +277,18 @@ path so CI and package publication run from a normal `main` push.
   thinking/flash output-schema controls, upstream-style flattened required
   output fields, upstream-style prompt-history inclusion and limits,
   clickable-element text limits, upstream-style one-time read-state
-  prompt blocks, upstream-style tagged agent-history/agent-state/browser-state
-  prompt sections, upstream-style available-file-path and sensitive-data
-  placeholder context with `bu_2fa_code` TOTP generation, system-message
-  override/extension controls, upstream-style prompt context/error truncation,
+  prompt blocks, upstream-style tagged user-request/agent-history/agent-state/
+  browser-state prompt sections with per-step metadata at the prompt tail,
+  upstream-style new-tab and placeholder screenshot omission, upstream-style
+  available-file-path and sensitive-data placeholder context with `bu_2fa_code`
+  TOTP generation, system-message override/extension controls, upstream-style
+  prompt context/error truncation,
   typed upstream-style last-result completion helpers, upstream-compatible
   action-result success validation, judgement results with dedicated judge LLM
   routing, runtime `generate_gif` GIF artifact output from recorded
-  screenshots, provider token usage/cost summaries for `calculate_cost`, the
+  screenshots, Gemini client attribution headers, provider token usage/cost
+  summaries for `calculate_cost`, current Browser Use `bu-latest`/`smart`
+  pricing aliases, the
   upstream no-op `include_tool_call_examples` setting, and step-error,
   model-output, model-action, thought, duration, model-action and truncated
   action-history interacted-element metadata for indexed actions, explicit

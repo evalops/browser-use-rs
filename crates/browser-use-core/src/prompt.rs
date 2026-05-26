@@ -34,6 +34,8 @@ use browser_use_llm::{ChatMessage, ChatRequest, ContentPart, ImageDetailLevel, M
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+const PLACEHOLDER_4PX_SCREENSHOT: &str = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAFElEQVR4nGP8//8/AwwwMSAB3BwAlm4DBfIlvvkAAAAASUVORK5CYII=";
+
 mod history;
 mod schema;
 
@@ -279,22 +281,22 @@ pub fn build_step_request_with_file_system(
     let agent_history = render_previous_results(history, settings.max_history_items);
     let page_stats = render_page_stats(state);
     let agent_state =
-        render_agent_state_description(task, &page_stats, history, state, settings, file_system);
+        render_agent_state_description(&page_stats, history, state, settings, file_system);
     let read_state = render_read_state_description(history)
         .map(|description| format!("\n<read_state>\n{description}\n</read_state>\n"))
         .unwrap_or_default();
+    let step_meta = render_step_meta_description(history);
     let sensitive_values = collect_sensitive_data_values(&settings.sensitive_data);
     let user_text = redact_sensitive_string(
         &format!(
-            "<agent_history>\n{agent_history}\n</agent_history>\n\n<agent_state>\n{agent_state}\n</agent_state>\n<browser_state>\n{state_json}\n</browser_state>{read_state}"
+            "{}<agent_history>\n{agent_history}\n</agent_history>\n\n<agent_state>\n{agent_state}\n</agent_state>\n<browser_state>\n{state_json}\n</browser_state>{read_state}{step_meta}",
+            render_user_request_description(task)
         ),
         &sensitive_values,
     );
     let mut user_content = vec![ContentPart::Text { text: user_text }];
     user_content.extend(settings.sample_images.iter().cloned());
-    if settings.use_vision.accepts_prompt_image()
-        && let Some(screenshot) = state.screenshot.as_deref()
-    {
+    if let Some(screenshot) = prompt_visible_screenshot(state, settings) {
         user_content.push(ContentPart::ImageUrl {
             image_url: prompt_screenshot_data_url(screenshot, settings.llm_screenshot_size),
             detail: Some(settings.vision_detail_level),
@@ -559,6 +561,39 @@ fn render_judge_trajectory(history: &AgentHistory) -> String {
         .join("\n\n")
 }
 
+fn render_user_request_description(task: &str) -> String {
+    format!("<user_request>\n{task}\n</user_request>\n\n")
+}
+
+fn render_step_meta_description(history: &AgentHistory) -> String {
+    let next_step = latest_history_step_number(history).unwrap_or(0) + 1;
+    format!(
+        "<step_info>Step {next_step}\nToday:{}</step_info>\n",
+        utc_date_string(now_seconds() as i64)
+    )
+}
+
+fn utc_date_string(unix_seconds: i64) -> String {
+    let days = unix_seconds.div_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
+    // Howard Hinnant's civil-from-days algorithm, using a 1970-01-01 epoch.
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year as i32, month as u32, day as u32)
+}
+
 fn truncate_judge_text(text: &str) -> String {
     const MAX_CHARS: usize = 40_000;
     if text.chars().count() <= MAX_CHARS {
@@ -647,6 +682,24 @@ fn screenshot_base64_payload(screenshot: &str) -> &str {
     } else {
         screenshot
     }
+}
+
+fn prompt_visible_screenshot<'a>(
+    state: &'a BrowserStateSummary,
+    settings: &AgentSettings,
+) -> Option<&'a str> {
+    if !settings.use_vision.accepts_prompt_image() || is_new_tab_page(&state.url) {
+        return None;
+    }
+    state
+        .screenshot
+        .as_deref()
+        .filter(|screenshot| !screenshot.trim().is_empty())
+        .filter(|screenshot| !is_placeholder_4px_screenshot(screenshot))
+}
+
+fn is_placeholder_4px_screenshot(screenshot: &str) -> bool {
+    screenshot_base64_payload(screenshot).trim() == PLACEHOLDER_4PX_SCREENSHOT
 }
 
 fn append_latest_action_result_images(
@@ -774,14 +827,13 @@ fn fallback_page_stats(state: &BrowserStateSummary) -> browser_use_dom::DomPageS
 }
 
 fn render_agent_state_description(
-    task: &str,
     page_stats: &str,
     history: &AgentHistory,
     state: &BrowserStateSummary,
     settings: &AgentSettings,
     file_system: Option<&ManagedFileSystem>,
 ) -> String {
-    let mut description = format!("Task:\n{task}\n\nPage stats:\n{page_stats}");
+    let mut description = format!("Page stats:\n{page_stats}");
     if let Some(file_system) = file_system {
         let todo_contents = file_system.get_todo_contents();
         let todo_contents = if todo_contents.is_empty() {

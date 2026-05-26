@@ -8,7 +8,7 @@ translation of the Python internals.
 Current frozen upstream target:
 
 ```text
-browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c
+browser-use/browser-use@834269609082d187ca0250de2c06d93799dac92d
 ```
 
 The detailed support matrix lives in [docs/RELEASE.md](docs/RELEASE.md). The

@@ -109,7 +109,7 @@ pub(crate) use urls::{
 pub(crate) use usage::TokenUsageTracker;
 
 /// Version of the upstream browser-use source that this crate initially targets.
-pub const INITIAL_UPSTREAM_COMMIT: &str = "157779338afdcc03023010ec3c24ad63d820453c";
+pub const INITIAL_UPSTREAM_COMMIT: &str = "834269609082d187ca0250de2c06d93799dac92d";
 
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
 
 `browser-use-rs` is a behavioral Rust port of
 `browser-use/browser-use`, pinned to upstream commit
-`157779338afdcc03023010ec3c24ad63d820453c`.
+`834269609082d187ca0250de2c06d93799dac92d`.
 
 The port is not a class-by-class translation. The public model stays close to
 browser-use: an agent observes browser state, asks an LLM for structured

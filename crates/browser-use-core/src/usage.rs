@@ -136,8 +136,8 @@ fn custom_model_pricing() -> BTreeMap<String, ModelPricing> {
 
     [
         ("bu-1-0".to_owned(), bu_1_0.clone()),
-        ("bu-latest".to_owned(), bu_1_0.clone()),
-        ("smart".to_owned(), bu_1_0),
+        ("bu-latest".to_owned(), bu_2_0.clone()),
+        ("smart".to_owned(), bu_2_0.clone()),
         ("bu-2-0".to_owned(), bu_2_0),
     ]
     .into_iter()
@@ -159,6 +159,8 @@ fn merge_litellm_pricing(pricing: &mut BTreeMap<String, ModelPricing>, value: Va
 fn litellm_model_alias(model: &str) -> Option<&'static str> {
     match model {
         "gemini-flash-latest" => Some("gemini/gemini-flash-latest"),
+        "gemini-3-flash-preview" => Some("gemini/gemini-3-flash-preview"),
+        "gemini-3.1-flash-lite" => Some("gemini/gemini-3.1-flash-lite-preview"),
         _ => None,
     }
 }

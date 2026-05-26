@@ -45,7 +45,7 @@ impl Drop for CurrentDirGuard {
 fn target_commit_is_pinned() {
     assert_eq!(
         INITIAL_UPSTREAM_COMMIT,
-        "157779338afdcc03023010ec3c24ad63d820453c"
+        "834269609082d187ca0250de2c06d93799dac92d"
     );
 }
 
@@ -4551,6 +4551,11 @@ fn request_text(request: &ChatRequest) -> String {
         .join("\n")
 }
 
+fn text_pos(text: &str, needle: &str) -> usize {
+    text.find(needle)
+        .unwrap_or_else(|| panic!("{needle} not found in text"))
+}
+
 #[async_trait]
 impl ChatModel for QueueModel {
     fn provider(&self) -> &str {
@@ -4640,6 +4645,54 @@ async fn agent_history_records_token_usage_summary_and_costs() {
     assert!((usage.total_prompt_cached_cost - 0.0000008).abs() < 0.0000000001);
     assert!((usage.total_completion_cost - 0.00004).abs() < 0.0000000001);
     assert!((usage.total_cost - 0.0000536).abs() < 0.0000000001);
+}
+
+#[tokio::test]
+async fn agent_cost_pricing_maps_bu_latest_to_bu_2_0_like_upstream() {
+    let done_output = serde_json::json!({
+        "current_state": {
+            "thinking": "done"
+        },
+        "action": [
+            {
+                "done": {
+                    "text": "finished",
+                    "success": true
+                }
+            }
+        ]
+    });
+    let usage = ChatUsage {
+        prompt_tokens: 100,
+        prompt_cached_tokens: Some(40),
+        prompt_cache_creation_tokens: None,
+        prompt_image_tokens: None,
+        completion_tokens: 20,
+        total_tokens: 120,
+    };
+    let settings = AgentSettings {
+        calculate_cost: true,
+        use_judge: false,
+        ..AgentSettings::default()
+    };
+    let mut agent = Agent::with_settings(
+        "finish",
+        settings,
+        QueueModel::with_model_outputs_and_usages(
+            "bu-latest",
+            vec![done_output],
+            vec![Some(usage)],
+        ),
+        MockSession::new(),
+    );
+
+    let history = agent.run(1).await.expect("run");
+    let usage = history.usage.as_ref().expect("usage summary");
+
+    assert!((usage.total_prompt_cost - 0.0000384).abs() < 0.0000000001);
+    assert!((usage.total_prompt_cached_cost - 0.0000024).abs() < 0.0000000001);
+    assert!((usage.total_completion_cost - 0.00007).abs() < 0.0000000001);
+    assert!((usage.total_cost - 0.0001108).abs() < 0.0000000001);
 }
 
 #[tokio::test]
@@ -5873,6 +5926,7 @@ async fn agent_step_saves_conversation_transcript() {
         ]
     });
     let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
     state.screenshot = Some("abc123".to_owned());
     let settings = AgentSettings {
         save_conversation_path: Some(transcript_dir.display().to_string()),
@@ -8112,6 +8166,90 @@ fn step_request_includes_previous_results() {
 }
 
 #[test]
+fn step_request_places_user_request_before_history_and_step_meta_at_suffix() {
+    let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
+    let history = AgentHistory {
+        items: vec![AgentHistoryItem {
+            model_output: None,
+            result: vec![ActionResult::extracted("first step")],
+            state: blank_state(),
+            metadata: Some(StepMetadata {
+                step_start_time: 1.0,
+                step_end_time: 2.0,
+                step_number: 3,
+                step_interval: None,
+            }),
+        }],
+        ..AgentHistory::default()
+    };
+
+    let request = build_step_request(
+        "Do the cacheable thing",
+        &state,
+        &history,
+        &AgentSettings::default(),
+    )
+    .expect("step request");
+    let user_text = request_text(&request);
+
+    assert!(text_pos(&user_text, "<user_request>") < text_pos(&user_text, "<agent_history>"));
+    assert!(text_pos(&user_text, "</agent_history>") < text_pos(&user_text, "<agent_state>"));
+    assert!(text_pos(&user_text, "</agent_state>") < text_pos(&user_text, "<browser_state>"));
+    assert!(text_pos(&user_text, "</browser_state>") < text_pos(&user_text, "<step_info>"));
+    assert!(user_text.ends_with("</step_info>\n"));
+    assert!(user_text.contains("<step_info>Step 4\nToday:"));
+
+    let agent_state =
+        &user_text[text_pos(&user_text, "<agent_state>")..text_pos(&user_text, "</agent_state>")];
+    assert!(!agent_state.contains("<user_request>"));
+    assert!(!agent_state.contains("<step_info>"));
+    assert!(!agent_state.contains("Do the cacheable thing"));
+}
+
+#[test]
+fn step_request_prefix_before_step_info_is_stable_across_steps() {
+    let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
+    let history_with_step = |step_number| AgentHistory {
+        items: vec![AgentHistoryItem {
+            model_output: None,
+            result: vec![ActionResult::extracted("result")],
+            state: blank_state(),
+            metadata: Some(StepMetadata {
+                step_start_time: 1.0,
+                step_end_time: 2.0,
+                step_number,
+                step_interval: None,
+            }),
+        }],
+        ..AgentHistory::default()
+    };
+    let first = request_text(
+        &build_step_request(
+            "Keep the stable prefix",
+            &state,
+            &history_with_step(3),
+            &AgentSettings::default(),
+        )
+        .expect("first request"),
+    );
+    let second = request_text(
+        &build_step_request(
+            "Keep the stable prefix",
+            &state,
+            &history_with_step(4),
+            &AgentSettings::default(),
+        )
+        .expect("second request"),
+    );
+
+    let prefix_end = text_pos(&first, "<step_info>");
+    assert_eq!(&first[..prefix_end], &second[..prefix_end]);
+    assert_ne!(&first[prefix_end..], &second[prefix_end..]);
+}
+
+#[test]
 fn step_request_includes_loading_page_stats_hint_like_upstream() {
     let mut state = blank_state();
     state.dom_state =
@@ -8607,6 +8745,7 @@ fn step_request_redacts_sensitive_values_from_state_and_history() {
 #[test]
 fn step_request_attaches_screenshot_as_image_part() {
     let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
     state.screenshot = Some("abc123".to_owned());
 
     let request = build_step_request(
@@ -8639,6 +8778,7 @@ fn step_request_attaches_screenshot_as_image_part() {
 fn step_request_resizes_screenshot_for_llm_prompt_only() {
     let original_screenshot = test_png_base64(240, 160);
     let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
     state.screenshot = Some(original_screenshot.clone());
     let settings = AgentSettings {
         llm_screenshot_size: Some(LlmScreenshotSize::new(120, 100).expect("valid size")),
@@ -8667,6 +8807,54 @@ fn step_request_resizes_screenshot_for_llm_prompt_only() {
         state.screenshot.as_deref(),
         Some(original_screenshot.as_str())
     );
+}
+
+#[test]
+fn step_request_omits_screenshot_for_new_tab_pages() {
+    let mut state = blank_state();
+    state.url = "chrome://new-tab-page/".to_owned();
+    state.screenshot = Some("abc123".to_owned());
+
+    let request = build_step_request(
+        "inspect new tab",
+        &state,
+        &AgentHistory::default(),
+        &AgentSettings::default(),
+    )
+    .expect("step request");
+    let user_message = request
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+        .expect("user message");
+
+    assert_eq!(user_message.content.len(), 1);
+    assert!(!request_text(&request).contains("abc123"));
+}
+
+#[test]
+fn step_request_omits_placeholder_4px_screenshot() {
+    let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
+    state.screenshot = Some(
+        "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAFElEQVR4nGP8//8/AwwwMSAB3BwAlm4DBfIlvvkAAAAASUVORK5CYII="
+            .to_owned(),
+    );
+
+    let request = build_step_request(
+        "inspect placeholder",
+        &state,
+        &AgentHistory::default(),
+        &AgentSettings::default(),
+    )
+    .expect("step request");
+    let user_message = request
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+        .expect("user message");
+
+    assert_eq!(user_message.content.len(), 1);
 }
 
 #[test]
@@ -8748,6 +8936,7 @@ fn step_request_attaches_latest_action_result_images_as_image_parts() {
 #[test]
 fn step_request_inserts_sample_images_before_runtime_images() {
     let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
     state.screenshot = Some("screen-data".to_owned());
     let history = AgentHistory {
         items: vec![AgentHistoryItem {
@@ -8920,6 +9109,7 @@ fn step_request_omits_screenshot_when_vision_disabled() {
 #[test]
 fn step_request_includes_screenshot_when_auto_vision_state_has_one() {
     let mut state = blank_state();
+    state.url = "https://example.test/app".to_owned();
     state.screenshot = Some("abc123".to_owned());
     let settings = AgentSettings {
         use_vision: VisionMode::Auto,
