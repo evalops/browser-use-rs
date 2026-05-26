@@ -81,6 +81,7 @@ impl ChatModel for GeminiChatModel {
             .client
             .post(self.generate_content_url())
             .header("x-goog-api-key", &self.api_key)
+            .header("x-goog-api-client", gemini_api_client_header())
             .json(&payload)
             .send()
             .await
@@ -115,6 +116,11 @@ impl ChatModel for GeminiChatModel {
             raw_response: Some(raw_response),
         })
     }
+}
+
+#[must_use]
+pub(crate) fn gemini_api_client_header() -> String {
+    format!("browser-use-rs/{}", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]

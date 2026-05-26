@@ -149,7 +149,7 @@ Implemented:
   release workflow, release support matrix, packaged Linux artifact smoke,
   macOS host-triple artifact smoke, cross-tarball SHA-256 checksum metadata,
   install guide, and generated platform-aware Homebrew formula scaffold.
-- Frozen upstream target: `browser-use/browser-use@157779338afdcc03023010ec3c24ad63d820453c`.
+- Frozen upstream target: `browser-use/browser-use@834269609082d187ca0250de2c06d93799dac92d`.
 - Core action, browser state, LLM, and history contracts.
 - Multi-action execution guard behavior for navigation, `done`, errors, and sequence-terminating actions.
 - Browser-backed action executor contract over a CDP session trait.
@@ -335,15 +335,19 @@ Implemented:
   upstream-style flattened required output fields,
   upstream-style prompt-history inclusion and limits, clickable-element text
   limits, upstream-style one-time read-state prompt blocks, upstream-style tagged
-  agent-history/agent-state/browser-state prompt sections, upstream-style
-  available-file-path and sensitive-data placeholder context with `bu_2fa_code`
-  TOTP generation, system-message override/extension controls, upstream-style
-  last-result completion helpers, upstream-style prompt context/error
+  user-request/agent-history/agent-state/browser-state prompt sections with
+  tail-positioned per-step metadata, upstream-style new-tab and placeholder
+  screenshot omission, upstream-style available-file-path and sensitive-data
+  placeholder context with `bu_2fa_code` TOTP generation, system-message
+  override/extension controls, upstream-style last-result completion helpers,
+  upstream-style prompt context/error
   truncation, upstream-compatible action-result success validation,
   upstream-style judge trace validation, judgement results, and dedicated
   judge LLM routing, per-step error slots, runtime `generate_gif` GIF artifact
-  output from recorded screenshots, provider token usage/cost summaries for
-  `calculate_cost`, the upstream no-op `include_tool_call_examples` setting,
+  output from recorded screenshots, Gemini client attribution headers, provider
+  token usage/cost summaries for `calculate_cost`, current Browser Use
+  `bu-latest`/`smart` pricing aliases, the upstream no-op
+  `include_tool_call_examples` setting,
   upstream-style message compaction
   settings with non-fatal summary requests, compacted-memory prompt blocks, and
   checkpoint preservation, model-output/action/thought accessors,

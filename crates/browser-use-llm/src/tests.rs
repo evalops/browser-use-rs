@@ -477,6 +477,14 @@ fn gemini_payload_uses_structured_outputs_format() {
 }
 
 #[test]
+fn gemini_api_client_header_identifies_browser_use_rs() {
+    assert_eq!(
+        crate::gemini::gemini_api_client_header(),
+        format!("browser-use-rs/{}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn gemini_prompt_fallback_embeds_schema_instruction() {
     let payload = gemini_generate_content_payload_with_mode(
         ChatRequest {

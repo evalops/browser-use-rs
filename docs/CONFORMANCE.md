@@ -5,7 +5,7 @@ browser-use where compatibility is claimed.
 
 ## Inputs
 
-- Upstream source at `157779338afdcc03023010ec3c24ad63d820453c`.
+- Upstream source at `834269609082d187ca0250de2c06d93799dac92d`.
 - Upstream docs for quickstart, CLI, browser configuration, custom tools, and
   supported models.
 - Upstream test intent from `tests/ci` and task fixtures.
@@ -319,9 +319,17 @@ prompt tokens when those providers report them.
 
 When `calculate_cost=true` or `BROWSER_USE_CALCULATE_COST=true`, cost totals are
 calculated from browser-use's custom `bu-*` pricing table plus the upstream
-LiteLLM pricing source. `BROWSER_USE_MODEL_PRICING_URL` overrides that pricing
-URL. Pricing fetch failures do not fail agent runs; token counts remain present
-and cost fields stay at zero for models without pricing data.
+LiteLLM pricing source. `bu-latest` and `smart` resolve to the current upstream
+`bu-2-0` pricing. `BROWSER_USE_MODEL_PRICING_URL` overrides that pricing URL.
+Pricing fetch failures do not fail agent runs; token counts remain present and
+cost fields stay at zero for models without pricing data.
+
+Upstream `8342696` added a Python `ChatOpenRouter`-specific fallback that can
+disambiguate OpenRouter pricing from same-named model ids by inspecting the LLM
+instance. `browser-use-rs` uses a provider-neutral `ChatCompletion` boundary for
+usage aggregation, so model ids that are present in LiteLLM continue to use the
+shared LiteLLM table. Dynamic OpenRouter model pricing remains a follow-up unless
+the Rust LLM boundary grows provider-aware pricing metadata.
 
 At the frozen upstream target, `include_tool_call_examples` is accepted and
 threaded into `MessageManager`, but upstream does not render additional prompt
@@ -336,6 +344,22 @@ Upstream bumps must include:
 - A summary of changed contracts.
 - Updated conformance fixtures or explicit deferred gaps.
 - A changelog entry describing compatibility impact.
+
+## Latest Upstream Audit
+
+The `8342696` upstream bump covers browser-use `0.12.9`.
+
+- Implemented: prompt requests render `<user_request>` before
+  `<agent_history>`, keep per-step-varying `<step_info>` at the tail of the
+  user message, and omit screenshots for new-tab pages and the upstream 4x4
+  placeholder image.
+- Implemented: Gemini requests send an `x-goog-api-client` attribution header
+  and token pricing aliases for `bu-latest`, `smart`,
+  `gemini-3-flash-preview`, and `gemini-3.1-flash-lite` match upstream intent.
+- Not applicable: Python-only `HistoryItem` immutability and `ChatBrowserUse`
+  constructor defaults do not have direct Rust struct/adapter equivalents.
+- Deferred boundary: provider-disambiguated dynamic OpenRouter pricing requires
+  extending the Rust usage boundary with provider metadata, as noted above.
 
 ## Current Fixtures
 
