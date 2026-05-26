@@ -24,7 +24,7 @@
 
 #[cfg(test)]
 use std::collections::HashMap;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Stdio;
@@ -32,14 +32,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 #[cfg(test)]
 use base64::Engine;
-use browser_use_dom::{
-    BrowserStateSummary, DomElementRef, ElementBounds, PageInfo, SerializedDomState, TabInfo,
-};
+use browser_use_dom::{DomElementRef, PageInfo, SerializedDomState};
 #[cfg(test)]
-use browser_use_dom::{DomEvalNode, DomPageStats, PaginationButtonType};
+use browser_use_dom::{DomEvalNode, DomPageStats, ElementBounds, PaginationButtonType, TabInfo};
 #[cfg(test)]
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -53,6 +50,7 @@ use tokio::time::sleep;
 #[cfg(test)]
 use tokio_tungstenite::tungstenite::Message;
 
+mod browser_session;
 mod browser_session_impl;
 mod cloud;
 mod dom;
@@ -62,12 +60,14 @@ mod policy;
 mod profile;
 mod recording;
 mod runtime;
+mod session_types;
 mod storage;
 mod target;
 mod transport;
 mod types;
 mod watchdog;
 
+pub use browser_session::BrowserSession;
 pub(crate) use cloud::download_http_client;
 pub use cloud::{
     CloudBrowserClient, CloudBrowserCreateRequest, CloudBrowserResponse, CreateCloudBrowserRequest,
@@ -124,6 +124,11 @@ pub(crate) use recording::{
 pub(crate) use runtime::{
     render_runtime_evaluate_result, runtime_command_value, runtime_evaluate_params,
     runtime_evaluate_value,
+};
+pub(crate) use session_types::{
+    AttachedFramePage, CachedDomElementRef, DomHighlightConfig, FrameElementInfo, FrameOffset,
+    IframeTargetInfo, IframeTraversalConfig, InteractionHighlightConfig, NetworkActivityState,
+    PageLoadWaitConfig, SessionDownloads,
 };
 pub(crate) use storage::{
     apply_origin_storage_state, browser_storage_state, load_browser_storage_state, page_tabs,
@@ -182,192 +187,6 @@ pub(crate) use types::{
 
 const URL_POLICY_SETTLE_MS: u64 = 200;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IframeTraversalConfig {
-    cross_origin_iframes: bool,
-    max_iframes: usize,
-    max_iframe_depth: usize,
-}
-
-impl IframeTraversalConfig {
-    fn from_profile(profile: &BrowserProfile) -> Self {
-        Self {
-            cross_origin_iframes: profile.cross_origin_iframes,
-            max_iframes: profile.max_iframes,
-            max_iframe_depth: profile.max_iframe_depth,
-        }
-    }
-
-    fn max_iframe_depth_for_same_origin(self) -> usize {
-        self.max_iframe_depth
-    }
-
-    fn remaining_same_origin_depth(self, current_depth: usize) -> usize {
-        self.max_iframe_depth.saturating_sub(current_depth)
-    }
-
-    fn allows_cross_origin_depth(self, depth: usize) -> bool {
-        self.cross_origin_iframes && depth <= self.max_iframe_depth && self.max_iframes > 0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PageLoadWaitConfig {
-    minimum_wait: Duration,
-    network_idle_wait: Duration,
-}
-
-impl PageLoadWaitConfig {
-    fn from_profile(profile: &BrowserProfile) -> Self {
-        Self {
-            minimum_wait: Duration::from_secs_f64(profile.minimum_wait_page_load_time),
-            network_idle_wait: Duration::from_secs_f64(
-                profile.wait_for_network_idle_page_load_time,
-            ),
-        }
-    }
-
-    fn is_disabled(self) -> bool {
-        self.minimum_wait.is_zero() && self.network_idle_wait.is_zero()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct InteractionHighlightConfig {
-    enabled: bool,
-    color: String,
-    duration_seconds: f64,
-}
-
-impl InteractionHighlightConfig {
-    fn from_profile(profile: &BrowserProfile) -> Self {
-        Self {
-            enabled: profile.highlight_elements,
-            color: profile.interaction_highlight_color.clone(),
-            duration_seconds: profile.interaction_highlight_duration,
-        }
-    }
-
-    fn element_script(&self, bounds: Option<ElementBounds>) -> Option<String> {
-        if !self.enabled {
-            return None;
-        }
-        let bounds = bounds?;
-        if bounds.width == 0 || bounds.height == 0 {
-            return None;
-        }
-        Some(interaction_element_highlight_script(
-            bounds,
-            &self.color,
-            self.duration_seconds,
-        ))
-    }
-
-    fn coordinate_script(&self, x: i32, y: i32) -> Option<String> {
-        if !self.enabled {
-            return None;
-        }
-        Some(interaction_coordinate_highlight_script(
-            x,
-            y,
-            &self.color,
-            self.duration_seconds,
-        ))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DomHighlightConfig {
-    enabled: bool,
-    filter_highlight_ids: bool,
-}
-
-impl DomHighlightConfig {
-    fn from_profile(profile: &BrowserProfile) -> Self {
-        Self {
-            enabled: profile.dom_highlight_elements,
-            filter_highlight_ids: profile.filter_highlight_ids,
-        }
-    }
-
-    fn overlay_script(&self, selector_map: &BTreeMap<u32, DomElementRef>) -> Option<String> {
-        if !self.enabled {
-            return None;
-        }
-        let elements = dom_highlight_overlay_elements(selector_map, self.filter_highlight_ids);
-        Some(dom_highlight_overlay_script(&elements))
-    }
-}
-
-#[derive(Debug)]
-struct NetworkActivityState {
-    active_request_ids: BTreeSet<String>,
-    last_activity_at: Instant,
-}
-
-impl NetworkActivityState {
-    fn new(now: Instant) -> Self {
-        Self {
-            active_request_ids: BTreeSet::new(),
-            last_activity_at: now,
-        }
-    }
-
-    fn observe_request_started(&mut self, request_id: &str, now: Instant) {
-        self.active_request_ids.insert(request_id.to_owned());
-        self.last_activity_at = now;
-    }
-
-    fn observe_request_finished(&mut self, request_id: &str, now: Instant) {
-        self.active_request_ids.remove(request_id);
-        self.last_activity_at = now;
-    }
-
-    fn idle_remaining(&self, now: Instant, idle_for: Duration) -> Option<Duration> {
-        if !self.active_request_ids.is_empty() {
-            return Some(idle_for);
-        }
-        let elapsed = now.saturating_duration_since(self.last_activity_at);
-        if elapsed >= idle_for {
-            None
-        } else {
-            Some(idle_for - elapsed)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct FrameOffset {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FrameElementInfo {
-    url: String,
-    offset: FrameOffset,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct IframeTargetInfo {
-    target_id: String,
-    offset: FrameOffset,
-    depth: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AttachedFramePage {
-    page: AttachedPage,
-    offset: FrameOffset,
-    depth: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CachedDomElementRef {
-    element: DomElementRef,
-    target_local_index: u32,
-}
-
 /// Browser session backed by a Chrome DevTools Protocol connection.
 ///
 /// The session owns shared, async-safe state: the active page target, latest DOM
@@ -402,36 +221,6 @@ pub struct CdpBrowserSession {
     _security_watchdog: Option<BrowserSecurityWatchdog>,
     _launched_browser: Option<LaunchedBrowser>,
     _downloads_dir: Option<TempDir>,
-}
-
-struct SessionDownloads {
-    path: Option<PathBuf>,
-    temp_dir: Option<TempDir>,
-}
-
-impl SessionDownloads {
-    fn from_profile(profile: &BrowserProfile) -> Result<Self, BrowserError> {
-        if !profile.accept_downloads {
-            return Ok(Self {
-                path: None,
-                temp_dir: None,
-            });
-        }
-        if let Some(downloads_path) = &profile.downloads_path {
-            return Ok(Self {
-                path: Some(downloads_path.clone()),
-                temp_dir: None,
-            });
-        }
-        let temp_dir = tempfile::Builder::new()
-            .prefix("browser-use-downloads-")
-            .tempdir()
-            .map_err(|error| BrowserError::StateUnavailable(error.to_string()))?;
-        Ok(Self {
-            path: Some(temp_dir.path().to_path_buf()),
-            temp_dir: Some(temp_dir),
-        })
-    }
 }
 
 impl CdpBrowserSession {
@@ -1642,200 +1431,6 @@ fn previous_navigation_entry_id(history: &Value) -> Result<i64, BrowserError> {
         .ok_or_else(|| {
             BrowserError::MissingResponseData("Page.getNavigationHistory entries".to_owned())
         })
-}
-
-#[async_trait]
-/// Provider-neutral browser-control interface used by the core executor.
-///
-/// The trait lets tests and future browser backends satisfy the same contract
-/// as [`CdpBrowserSession`]. Each method is intentionally action-shaped: the
-/// core executor should not need to know whether a backend uses CDP,
-/// Playwright, WebDriver, or a mock session.
-pub trait BrowserSession: Send + Sync {
-    /// Subscribes to fine-grained lifecycle events, or returns a closed stream by default.
-    fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
-        BrowserLifecycleEventSubscription::closed()
-    }
-
-    /// Subscribes to adapter lifecycle events derived from the fine-grained stream.
-    fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
-        BrowserLifecycleAdapterEventSubscription::new(self.subscribe_lifecycle_events())
-    }
-
-    /// Captures current browser state for the agent.
-    async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError>;
-
-    /// Navigates to a URL in the current tab or a new tab.
-    async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError>;
-
-    /// Goes back in the active tab history.
-    async fn go_back(&self) -> Result<(), BrowserError>;
-
-    /// Switches focus to a tab by short tab id or full target id.
-    async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError>;
-
-    /// Closes a tab by short tab id or full target id.
-    async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError>;
-
-    /// Clicks an indexed DOM element.
-    async fn click(&self, index: u32) -> Result<(), BrowserError>;
-
-    /// Clicks explicit viewport coordinates.
-    async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError>;
-
-    /// Inputs text into an indexed element.
-    async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError>;
-
-    /// Scrolls the page or an indexed scrollable element.
-    async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError>;
-
-    /// Finds text on the active page.
-    async fn find_text(&self, text: &str) -> Result<bool, BrowserError>;
-
-    /// Evaluates JavaScript on the active page and returns serialized output.
-    async fn evaluate(&self, code: &str) -> Result<String, BrowserError>;
-
-    /// Returns options for an indexed dropdown.
-    async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError>;
-
-    /// Selects an option in an indexed dropdown by visible text.
-    async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError>;
-
-    /// Returns visible page text used by search/extract actions.
-    async fn page_text(&self) -> Result<String, BrowserError>;
-
-    /// Finds elements by CSS selector with optional attributes and text.
-    async fn find_elements(
-        &self,
-        selector: &str,
-        attributes: &[String],
-        max_results: usize,
-        include_text: bool,
-    ) -> Result<Vec<FoundElement>, BrowserError>;
-
-    /// Sends keyboard input to the active page.
-    async fn send_keys(&self, keys: &str) -> Result<(), BrowserError>;
-
-    /// Uploads a file through an indexed file input element.
-    async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError>;
-
-    /// Captures a PNG screenshot.
-    async fn screenshot(&self) -> Result<Screenshot, BrowserError>;
-
-    /// Prints the active page to PDF.
-    async fn save_pdf(
-        &self,
-        print_background: bool,
-        landscape: bool,
-        scale: f64,
-        paper_format: &str,
-    ) -> Result<Pdf, BrowserError>;
-}
-
-#[async_trait]
-impl<T> BrowserSession for Arc<T>
-where
-    T: BrowserSession + ?Sized,
-{
-    fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
-        self.as_ref().subscribe_lifecycle_events()
-    }
-
-    fn subscribe_lifecycle_adapter_events(&self) -> BrowserLifecycleAdapterEventSubscription {
-        self.as_ref().subscribe_lifecycle_adapter_events()
-    }
-
-    async fn state(&self, include_screenshot: bool) -> Result<BrowserStateSummary, BrowserError> {
-        self.as_ref().state(include_screenshot).await
-    }
-
-    async fn navigate(&self, url: &str, new_tab: bool) -> Result<(), BrowserError> {
-        self.as_ref().navigate(url, new_tab).await
-    }
-
-    async fn go_back(&self) -> Result<(), BrowserError> {
-        self.as_ref().go_back().await
-    }
-
-    async fn switch_tab(&self, target_id: &str) -> Result<(), BrowserError> {
-        self.as_ref().switch_tab(target_id).await
-    }
-
-    async fn close_tab(&self, target_id: &str) -> Result<(), BrowserError> {
-        self.as_ref().close_tab(target_id).await
-    }
-
-    async fn click(&self, index: u32) -> Result<(), BrowserError> {
-        self.as_ref().click(index).await
-    }
-
-    async fn click_coordinates(&self, x: i32, y: i32) -> Result<(), BrowserError> {
-        self.as_ref().click_coordinates(x, y).await
-    }
-
-    async fn input_text(&self, index: u32, text: &str, clear: bool) -> Result<(), BrowserError> {
-        self.as_ref().input_text(index, text, clear).await
-    }
-
-    async fn scroll(&self, index: Option<u32>, down: bool, pages: f64) -> Result<(), BrowserError> {
-        self.as_ref().scroll(index, down, pages).await
-    }
-
-    async fn find_text(&self, text: &str) -> Result<bool, BrowserError> {
-        self.as_ref().find_text(text).await
-    }
-
-    async fn evaluate(&self, code: &str) -> Result<String, BrowserError> {
-        self.as_ref().evaluate(code).await
-    }
-
-    async fn dropdown_options(&self, index: u32) -> Result<Vec<String>, BrowserError> {
-        self.as_ref().dropdown_options(index).await
-    }
-
-    async fn select_dropdown_option(&self, index: u32, text: &str) -> Result<(), BrowserError> {
-        self.as_ref().select_dropdown_option(index, text).await
-    }
-
-    async fn page_text(&self) -> Result<String, BrowserError> {
-        self.as_ref().page_text().await
-    }
-
-    async fn find_elements(
-        &self,
-        selector: &str,
-        attributes: &[String],
-        max_results: usize,
-        include_text: bool,
-    ) -> Result<Vec<FoundElement>, BrowserError> {
-        self.as_ref()
-            .find_elements(selector, attributes, max_results, include_text)
-            .await
-    }
-
-    async fn send_keys(&self, keys: &str) -> Result<(), BrowserError> {
-        self.as_ref().send_keys(keys).await
-    }
-
-    async fn upload_file(&self, index: u32, path: &Path) -> Result<(), BrowserError> {
-        self.as_ref().upload_file(index, path).await
-    }
-
-    async fn screenshot(&self) -> Result<Screenshot, BrowserError> {
-        self.as_ref().screenshot().await
-    }
-
-    async fn save_pdf(
-        &self,
-        print_background: bool,
-        landscape: bool,
-        scale: f64,
-        paper_format: &str,
-    ) -> Result<Pdf, BrowserError> {
-        self.as_ref()
-            .save_pdf(print_background, landscape, scale, paper_format)
-            .await
-    }
 }
 
 #[cfg(test)]

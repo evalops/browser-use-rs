@@ -1,5 +1,8 @@
 use super::*;
 
+use async_trait::async_trait;
+use browser_use_dom::{BrowserStateSummary, TabInfo};
+
 #[async_trait]
 impl BrowserSession for CdpBrowserSession {
     fn subscribe_lifecycle_events(&self) -> BrowserLifecycleEventSubscription {
