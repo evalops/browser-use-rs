@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import os
 import re
 import subprocess
@@ -12,6 +13,8 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -52,6 +55,33 @@ class DriftPlan:
         return f"Refresh upstream target to {self.latest_short}"
 
 
+@dataclasses.dataclass(frozen=True)
+class ChangedFile:
+    filename: str
+    status: str
+    additions: int
+    deletions: int
+    changes: int
+
+
+@dataclasses.dataclass(frozen=True)
+class CompareMetadata:
+    ahead_by: int
+    behind_by: int
+    total_commits: int
+    files: tuple[ChangedFile, ...]
+
+    @property
+    def changed_file_count(self) -> int:
+        return len(self.files)
+
+
+@dataclasses.dataclass(frozen=True)
+class ChangeBucket:
+    name: str
+    filenames: tuple[str, ...]
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -86,7 +116,131 @@ def latest_upstream_commit(root: Path) -> str:
     return normalize_sha(sha, "latest upstream HEAD")
 
 
-def issue_body(plan: DriftPlan) -> str:
+def fetch_compare_metadata(current_sha: str, latest_sha: str) -> CompareMetadata | None:
+    url = f"https://api.github.com/repos/{UPSTREAM_REPO}/compare/{current_sha}...{latest_sha}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "browser-use-rs-upstream-drift",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return parse_compare_metadata(json.loads(response.read().decode("utf-8")))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+        print(f"upstream-drift: compare metadata unavailable: {exc}", file=sys.stderr)
+        return None
+
+
+def parse_compare_metadata(value: dict[str, object]) -> CompareMetadata:
+    files = []
+    for raw_file in value.get("files", []):
+        if not isinstance(raw_file, dict):
+            continue
+        filename = raw_file.get("filename")
+        if not isinstance(filename, str):
+            continue
+        files.append(
+            ChangedFile(
+                filename=filename,
+                status=str(raw_file.get("status", "")),
+                additions=int(raw_file.get("additions") or 0),
+                deletions=int(raw_file.get("deletions") or 0),
+                changes=int(raw_file.get("changes") or 0),
+            )
+        )
+    return CompareMetadata(
+        ahead_by=int(value.get("ahead_by") or 0),
+        behind_by=int(value.get("behind_by") or 0),
+        total_commits=int(value.get("total_commits") or 0),
+        files=tuple(files),
+    )
+
+
+SURFACE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("agent-runtime", ("browser_use/agent/",)),
+    ("browser-runtime", ("browser_use/browser/", "browser_use/dom/", "browser_use/controller/")),
+    ("llm-tokens", ("browser_use/llm/", "browser_use/tokens/")),
+    ("mcp-cli-packaging", ("browser_use/mcp/", "browser_use/cli", "pyproject.toml", "uv.lock")),
+    ("docs-examples-tests", ("docs/", "examples/", "tests/", "README", "CONTRIBUTING")),
+)
+
+
+def surface_for_filename(filename: str) -> str:
+    for surface, prefixes in SURFACE_PREFIXES:
+        if any(filename.startswith(prefix) for prefix in prefixes):
+            return surface
+    return "other"
+
+
+def bucket_changed_files(files: tuple[ChangedFile, ...]) -> list[ChangeBucket]:
+    grouped: dict[str, list[str]] = {}
+    for changed_file in files:
+        grouped.setdefault(surface_for_filename(changed_file.filename), []).append(
+            changed_file.filename
+        )
+    surface_order = [surface for surface, _ in SURFACE_PREFIXES] + ["other"]
+    return [
+        ChangeBucket(name=surface, filenames=tuple(sorted(grouped[surface])))
+        for surface in surface_order
+        if surface in grouped
+    ]
+
+
+def compare_metadata_section(metadata: CompareMetadata | None) -> str:
+    if metadata is None:
+        return "Compare metadata unavailable; use the compare URL above for manual audit."
+
+    bucket_lines = []
+    for bucket in bucket_changed_files(metadata.files):
+        bucket_lines.append(f"- `{bucket.name}`: {len(bucket.filenames)} file(s)")
+        for filename in bucket.filenames[:8]:
+            bucket_lines.append(f"  - `{filename}`")
+        if len(bucket.filenames) > 8:
+            bucket_lines.append(f"  - ... {len(bucket.filenames) - 8} more")
+
+    file_rows = [
+        "| File | Upstream status | Delta | Required disposition |",
+        "| --- | --- | ---: | --- |",
+    ]
+    for changed_file in metadata.files:
+        delta = f"+{changed_file.additions}/-{changed_file.deletions}"
+        file_rows.append(
+            f"| `{changed_file.filename}` | `{changed_file.status}` | {delta} | "
+            "[ ] Implemented / [ ] Not applicable / [ ] Deferred |"
+        )
+
+    if not metadata.files:
+        file_rows.append("| _(no files returned by compare API)_ | | | |")
+
+    return "\n".join(
+        [
+            f"- Ahead by: `{metadata.ahead_by}` commit(s)",
+            f"- Behind by: `{metadata.behind_by}` commit(s)",
+            f"- Total compare commits: `{metadata.total_commits}`",
+            f"- Changed files returned: `{metadata.changed_file_count}`",
+            "",
+            "Surface buckets:",
+            *(bucket_lines or ["- `other`: no changed files returned"]),
+            "",
+            "Per-file audit checklist:",
+            *file_rows,
+        ]
+    )
+
+
+def surface_summary(metadata: CompareMetadata | None) -> str:
+    if metadata is None:
+        return ""
+    return ",".join(
+        f"{bucket.name}:{len(bucket.filenames)}" for bucket in bucket_changed_files(metadata.files)
+    )
+
+
+def issue_body(plan: DriftPlan, metadata: CompareMetadata | None = None) -> str:
+    metadata_text = textwrap.indent(compare_metadata_section(metadata), "        ")
     return textwrap.dedent(
         f"""\
         <!-- browser-use-rs-upstream-drift current={plan.current_sha} latest={plan.latest_sha} -->
@@ -96,15 +250,20 @@ def issue_body(plan: DriftPlan) -> str:
         - Latest upstream HEAD: `{plan.latest_sha}`
         - Compare: {plan.compare_url}
 
+        ## Compare metadata
+
+{metadata_text}
+
         Keep this issue open until the new upstream commit has been audited. Do not update
         `INITIAL_UPSTREAM_COMMIT` or the docs target until the behavioral delta has either
         been implemented, explicitly scoped out, or split into concrete follow-up issues.
 
         Suggested audit checklist:
 
-        - Review changes under `browser_use/browser`, `browser_use/dom`, `browser_use/agent`,
-          `browser_use/llm`, `browser_use/mcp`, and packaging/CLI entrypoints.
-        - File focused parity issues for each new or changed public behavior.
+        - Review every file row above and mark exactly one disposition:
+          `Implemented`, `Not applicable`, or `Deferred`.
+        - File focused parity issues for any file or surface bucket that cannot be resolved
+          inside the upstream-target refresh PR.
         - Update the frozen target only after those issues are resolved or documented as
           compatibility boundaries.
         - Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
@@ -159,6 +318,59 @@ def run_self_tests() -> int:
             self.assertIn("/compare/" + ("1" * 40) + "..." + ("2" * 40), plan.compare_url)
             self.assertIn("current=" + ("1" * 40), issue_body(plan))
 
+        def test_compare_metadata_buckets_changed_files(self) -> None:
+            metadata = parse_compare_metadata(
+                {
+                    "ahead_by": 2,
+                    "behind_by": 0,
+                    "total_commits": 2,
+                    "files": [
+                        {
+                            "filename": "browser_use/agent/message_manager/service.py",
+                            "status": "modified",
+                            "additions": 12,
+                            "deletions": 3,
+                            "changes": 15,
+                        },
+                        {
+                            "filename": "browser_use/tokens/openrouter_pricing.py",
+                            "status": "added",
+                            "additions": 90,
+                            "deletions": 0,
+                            "changes": 90,
+                        },
+                    ],
+                }
+            )
+            buckets = bucket_changed_files(metadata.files)
+
+            self.assertEqual(metadata.changed_file_count, 2)
+            self.assertEqual([bucket.name for bucket in buckets], ["agent-runtime", "llm-tokens"])
+            self.assertIn("browser_use/tokens/openrouter_pricing.py", buckets[1].filenames)
+
+        def test_issue_body_includes_per_file_disposition_checklist(self) -> None:
+            plan = DriftPlan(current_sha="1" * 40, latest_sha="2" * 40)
+            metadata = CompareMetadata(
+                ahead_by=1,
+                behind_by=0,
+                total_commits=1,
+                files=(
+                    ChangedFile(
+                        filename="browser_use/browser/session.py",
+                        status="modified",
+                        additions=4,
+                        deletions=1,
+                        changes=5,
+                    ),
+                ),
+            )
+            body = issue_body(plan, metadata)
+
+            self.assertIn("Compare metadata", body)
+            self.assertIn("browser-runtime", body)
+            self.assertIn("browser_use/browser/session.py", body)
+            self.assertIn("[ ] Implemented / [ ] Not applicable / [ ] Deferred", body)
+
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(UpstreamDriftTests)
     )
@@ -170,6 +382,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--current-sha", help="Override the frozen upstream target SHA.")
     parser.add_argument("--latest-sha", help="Override the latest upstream SHA.")
     parser.add_argument("--body-file", type=Path, help="Write the issue body to this path.")
+    parser.add_argument(
+        "--skip-compare-metadata",
+        action="store_true",
+        help="Do not call the GitHub compare API when drift is detected.",
+    )
     parser.add_argument(
         "--github-output",
         default=os.environ.get("GITHUB_OUTPUT"),
@@ -196,7 +413,12 @@ def main() -> int:
         else latest_upstream_commit(root)
     )
     plan = DriftPlan(current_sha=current_sha, latest_sha=latest_sha)
-    body = issue_body(plan) if plan.drifted else ""
+    metadata = (
+        None
+        if not plan.drifted or args.skip_compare_metadata
+        else fetch_compare_metadata(plan.current_sha, plan.latest_sha)
+    )
+    body = issue_body(plan, metadata) if plan.drifted else ""
     write_body(args.body_file, body)
 
     append_github_output(
@@ -209,6 +431,8 @@ def main() -> int:
             "latest_short": plan.latest_short,
             "issue_title": plan.issue_title if plan.drifted else "",
             "compare_url": plan.compare_url if plan.drifted else "",
+            "changed_file_count": str(metadata.changed_file_count) if metadata else "0",
+            "surface_summary": surface_summary(metadata),
         },
     )
 

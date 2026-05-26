@@ -13,18 +13,19 @@ compares `INITIAL_UPSTREAM_COMMIT` with the upstream repository's default-branch
 - If upstream moved, the workflow creates one `upstream-drift` issue or edits
   the existing open drift issue in place.
 - The issue body includes the current target, latest upstream commit, compare
-  URL, and the audit checklist.
+  URL, GitHub compare metadata, changed-file surface buckets, and a per-file
+  disposition checklist.
 - The workflow does not change source, docs, versions, or release tags.
 
 When resolving a drift issue:
 
-1. Review upstream changes in `browser_use/browser`, `browser_use/dom`,
-   `browser_use/agent`, `browser_use/llm`, `browser_use/mcp`, and CLI/package
-   entrypoints.
-2. Split new or changed public behavior into focused parity issues.
-3. Implement those issues or record explicit compatibility boundaries.
-4. Update `INITIAL_UPSTREAM_COMMIT` plus all docs target references in the same
+1. Review every file row in the generated drift issue.
+2. Mark each row with exactly one disposition: implemented, not applicable, or
+   deferred.
+3. Split any deferred public behavior into focused parity issues.
+4. Implement in-scope changes or record explicit compatibility boundaries.
+5. Update `INITIAL_UPSTREAM_COMMIT` plus all docs target references in the same
    reviewed slice.
-5. Run `cargo fmt --all --check`,
+6. Run `cargo fmt --all --check`,
    `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo test --workspace`, and the release-helper checks.
