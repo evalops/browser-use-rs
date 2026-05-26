@@ -45,14 +45,15 @@ use crate::{
 };
 use browser_use_cdp::{BrowserError, BrowserSession};
 use browser_use_dom::BrowserStateSummary;
-use browser_use_llm::{ChatCompletion, ChatModel, ChatRequest, LlmError};
-use serde_json::Value;
+use browser_use_llm::{ChatModel, ChatRequest};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 mod artifacts;
 mod callbacks;
+mod llm;
+mod run_state;
 mod types;
 
 pub(crate) use artifacts::{
@@ -60,9 +61,10 @@ pub(crate) use artifacts::{
 };
 use artifacts::{
     format_conversation_snapshot, initial_actions_model_output, initial_actions_state_history,
-    is_single_done_output, managed_file_system_for_settings, result_requests_screenshot,
-    settings_with_direct_start_url, settings_with_llm_screenshot_default, write_history_gif,
+    is_single_done_output, managed_file_system_for_settings, settings_with_direct_start_url,
+    settings_with_llm_screenshot_default, write_history_gif,
 };
+use llm::{AgentLlmCallError, agent_llm_call_error_to_run_error};
 pub(crate) use types::new_agent_id;
 pub use types::{
     AgentCallbackFuture, AgentCheckpoint, AgentDoneCallback, AgentExternalStatusCallback,
@@ -96,23 +98,6 @@ enum StepRequestKind {
     Normal,
     BudgetWarning { steps_used: usize, max_steps: usize },
     FinalStep { max_steps: usize },
-}
-
-#[derive(Debug)]
-enum AgentLlmCallError {
-    TimedOut { seconds: u64 },
-    Provider(LlmError),
-}
-
-fn is_fallback_eligible_llm_error(error: &LlmError) -> bool {
-    matches!(error, LlmError::Provider(_) | LlmError::RateLimited(_))
-}
-
-fn agent_llm_call_error_to_run_error(error: AgentLlmCallError) -> AgentRunError {
-    match error {
-        AgentLlmCallError::TimedOut { seconds } => AgentRunError::LlmTimedOut { seconds },
-        AgentLlmCallError::Provider(error) => AgentRunError::Llm(error),
-    }
 }
 
 impl<M, S> Agent<M, S>
@@ -322,58 +307,6 @@ where
     /// Returns a serializable managed file-system snapshot.
     pub fn file_system_state(&self) -> FileSystemState {
         self.executor.file_system().get_state()
-    }
-
-    async fn invoke_json_with_fallback(
-        &mut self,
-        request: ChatRequest,
-    ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
-        let seconds = self.settings.llm_timeout_seconds;
-        let first = Self::invoke_json_once(&self.llm, seconds, request.clone()).await;
-        match first {
-            Err(AgentLlmCallError::Provider(error)) if self.try_switch_to_fallback_llm(&error) => {
-                let completion = Self::invoke_json_once(&self.llm, seconds, request).await?;
-                self.record_completion_usage(&completion).await;
-                Ok(completion)
-            }
-            Ok(completion) => {
-                self.record_completion_usage(&completion).await;
-                Ok(completion)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn invoke_json_once(
-        llm: &M,
-        seconds: u64,
-        request: ChatRequest,
-    ) -> Result<ChatCompletion<Value>, AgentLlmCallError> {
-        timeout(Duration::from_secs(seconds), llm.invoke_json(request))
-            .await
-            .map_err(|_| AgentLlmCallError::TimedOut { seconds })?
-            .map_err(AgentLlmCallError::Provider)
-    }
-
-    fn try_switch_to_fallback_llm(&mut self, error: &LlmError) -> bool {
-        if self.using_fallback_llm || !is_fallback_eligible_llm_error(error) {
-            return false;
-        }
-        let Some(fallback_llm) = self.fallback_llm.take() else {
-            return false;
-        };
-        self.llm = fallback_llm;
-        self.using_fallback_llm = true;
-        true
-    }
-
-    async fn record_completion_usage(&mut self, completion: &ChatCompletion<Value>) {
-        self.token_usage.add_completion(completion);
-        self.refresh_usage_summary().await;
-    }
-
-    async fn refresh_usage_summary(&mut self) {
-        self.history.usage = Some(self.token_usage.summary().await);
     }
 
     /// Runs the agent until completion, failure, stop, pause, or step budget exhaustion.
@@ -1032,42 +965,5 @@ where
             compaction_settings.keep_last_items,
         );
         true
-    }
-
-    fn step_metadata(&self, step_start_time: f64, step_end_time: f64) -> StepMetadata {
-        let step_interval = self
-            .history
-            .items
-            .last()
-            .and_then(|item| item.metadata.as_ref())
-            .map(|metadata| metadata.duration_seconds().max(0.0));
-
-        StepMetadata {
-            step_start_time,
-            step_end_time,
-            step_number: self.next_step_number(),
-            step_interval,
-        }
-    }
-
-    fn next_step_number(&self) -> usize {
-        self.history
-            .items
-            .iter()
-            .filter_map(|item| item.metadata.as_ref().map(|metadata| metadata.step_number))
-            .max()
-            .unwrap_or(0)
-            + 1
-    }
-
-    fn should_include_screenshot(&self) -> bool {
-        let action_requested_screenshot = self
-            .history
-            .items
-            .last()
-            .is_some_and(|item| item.result.iter().any(result_requests_screenshot));
-        self.settings
-            .use_vision
-            .should_include_screenshot(action_requested_screenshot)
     }
 }
