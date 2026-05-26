@@ -16,18 +16,20 @@
 //! ```
 
 mod extract;
+mod files;
+mod page_results;
 
 use crate::{
     ActionResult, AgentHistory, AgentHistoryReplayExecution, AgentHistoryReplayExecutionItem,
     AgentHistoryReplayPlan, AgentHistoryReplayPlanError, AgentHistoryReplayPlanItem,
     AgentHistoryReplayRun, AgentHistoryReplayRunError, AgentHistoryReplayStop,
     AgentHistoryReplayStopReason, ManagedFileSystem, action_timeout_duration,
-    coerce_valid_action_timeout_seconds, default_action_timeout_seconds, display_done_file,
-    historical_replay_actions, rematch_action_for_replay, search_url, timed_out_action_result,
+    coerce_valid_action_timeout_seconds, default_action_timeout_seconds, historical_replay_actions,
+    rematch_action_for_replay, search_url, timed_out_action_result,
 };
 use async_trait::async_trait;
 use base64::Engine;
-use browser_use_cdp::{BrowserError, BrowserSession, FoundElement};
+use browser_use_cdp::{BrowserError, BrowserSession};
 use browser_use_dom::BrowserStateSummary;
 use browser_use_tools::BrowserAction;
 use extract::{
@@ -36,6 +38,13 @@ use extract::{
 };
 pub(crate) use extract::{
     build_extract_llm_request, complete_llm_extract_result, extract_action_result,
+};
+use files::{done_action_result, upload_file_action_path};
+pub(crate) use files::{next_available_pdf_path, pdf_output_path, screenshot_output_path};
+pub(crate) use page_results::truncate_chars;
+use page_results::{
+    default_find_element_attributes, format_find_elements_results, format_search_page_results,
+    search_text_matches, truncate_evaluate_result,
 };
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -841,373 +850,6 @@ fn is_file_input_click_validation_error(error: &BrowserError) -> bool {
     error
         .to_string()
         .contains("Cannot click on file input elements.")
-}
-
-fn done_action_result(
-    params: &browser_use_tools::DoneAction,
-    file_system: Option<&ManagedFileSystem>,
-    display_files_in_done_text: bool,
-) -> ActionResult {
-    let mut user_message = params.text.clone();
-    let mut file_sections = Vec::new();
-    let mut attachments = Vec::new();
-
-    for file_name in &params.files_to_display {
-        let displayed_file = file_system
-            .and_then(|file_system| file_system.display_done_file(file_name))
-            .or_else(|| display_done_file(file_name));
-        if let Some((section, attachment)) = displayed_file {
-            if display_files_in_done_text {
-                file_sections.push(section);
-            }
-            attachments.push(attachment);
-        }
-    }
-
-    if !file_sections.is_empty() {
-        user_message.push_str("\n\nAttachments:");
-        for section in file_sections {
-            user_message.push_str("\n\n");
-            user_message.push_str(&section);
-        }
-    }
-
-    ActionResult::done_with_attachments(user_message, params.success, attachments)
-}
-
-fn upload_file_action_path(
-    params: &browser_use_tools::UploadFileAction,
-    file_system: &ManagedFileSystem,
-    enforce_upload_file_availability: bool,
-    available_file_paths: &BTreeSet<String>,
-) -> Result<std::path::PathBuf, String> {
-    if !enforce_upload_file_availability {
-        return Ok(std::path::PathBuf::from(&params.path));
-    }
-
-    let path = if available_file_paths.contains(&params.path) {
-        std::path::PathBuf::from(&params.path)
-    } else if let Some(path) = file_system.upload_file_path(&params.path) {
-        path
-    } else {
-        return Err(format!(
-            "File path {} is not available. Add it to AgentSettings.available_file_paths before using upload_file.",
-            params.path
-        ));
-    };
-
-    if !path.exists() {
-        return Err(format!("File {} does not exist", path.display()));
-    }
-    if path.metadata().map(|metadata| metadata.len()).unwrap_or(0) == 0 {
-        return Err(format!(
-            "File {} is empty (0 bytes). The file may not have been saved correctly.",
-            path.display()
-        ));
-    }
-
-    Ok(path)
-}
-
-pub(crate) fn pdf_output_path(
-    file_name: Option<&str>,
-    page_title: Option<&str>,
-) -> std::path::PathBuf {
-    let raw_name = file_name
-        .filter(|name| !name.trim().is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            page_title
-                .map(sanitize_pdf_title)
-                .filter(|title| !title.is_empty())
-                .unwrap_or_else(|| "page".to_owned())
-        });
-    let path = std::path::PathBuf::from(raw_name);
-    ensure_pdf_extension(path)
-}
-
-fn sanitize_pdf_title(title: &str) -> String {
-    title
-        .chars()
-        .filter(|character| {
-            character.is_alphanumeric()
-                || *character == '_'
-                || *character == ' '
-                || *character == '-'
-        })
-        .collect::<String>()
-        .trim()
-        .chars()
-        .take(50)
-        .collect()
-}
-
-fn ensure_pdf_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
-    let has_pdf_extension = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|file_name| file_name.to_ascii_lowercase().ends_with(".pdf"));
-    if has_pdf_extension {
-        return path;
-    }
-
-    let Some(file_name) = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .map(str::to_owned)
-    else {
-        return std::path::PathBuf::from("page.pdf");
-    };
-    path.set_file_name(format!("{file_name}.pdf"));
-    path
-}
-
-pub(crate) fn next_available_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
-    if !path.exists() {
-        return path;
-    }
-
-    let parent = path.parent().map(std::path::Path::to_path_buf);
-    let stem = path
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("page");
-    let extension = path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("pdf");
-
-    for counter in 1.. {
-        let candidate_name = format!("{stem} ({counter}).{extension}");
-        let candidate = parent.as_ref().map_or_else(
-            || std::path::PathBuf::from(&candidate_name),
-            |parent| parent.join(&candidate_name),
-        );
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded PDF filename counter should always return")
-}
-
-pub(crate) fn screenshot_output_path(file_name: &str) -> std::path::PathBuf {
-    let path = std::path::PathBuf::from(if file_name.trim().is_empty() {
-        "screenshot".to_owned()
-    } else {
-        file_name.to_owned()
-    });
-    ensure_png_extension(path)
-}
-
-fn ensure_png_extension(mut path: std::path::PathBuf) -> std::path::PathBuf {
-    let has_png_extension = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|file_name| file_name.to_ascii_lowercase().ends_with(".png"));
-    if has_png_extension {
-        return path;
-    }
-
-    let Some(file_name) = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .map(str::to_owned)
-    else {
-        return std::path::PathBuf::from("screenshot.png");
-    };
-    path.set_file_name(format!("{file_name}.png"));
-    path
-}
-
-fn default_find_element_attributes() -> Vec<String> {
-    [
-        "id",
-        "class",
-        "name",
-        "type",
-        "placeholder",
-        "href",
-        "aria-label",
-        "role",
-        "title",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
-}
-
-fn truncate_evaluate_result(result: String) -> String {
-    const MAX_CHARS: usize = 20_000;
-    const PREFIX_CHARS: usize = 19_950;
-
-    if result.chars().count() <= MAX_CHARS {
-        return result;
-    }
-
-    let mut truncated: String = result.chars().take(PREFIX_CHARS).collect();
-    truncated.push_str("\n... [Truncated after 20000 characters]");
-    truncated
-}
-
-struct SearchTextResult {
-    matches: Vec<String>,
-    total: usize,
-    has_more: bool,
-}
-
-fn search_text_matches(
-    text: &str,
-    pattern: &str,
-    regex: bool,
-    case_sensitive: bool,
-    context_chars: usize,
-    max_results: usize,
-) -> Result<SearchTextResult, String> {
-    if pattern.is_empty() || max_results == 0 {
-        return Ok(SearchTextResult {
-            matches: Vec::new(),
-            total: 0,
-            has_more: false,
-        });
-    }
-
-    let pattern = if regex {
-        pattern.to_owned()
-    } else {
-        regex::escape(pattern)
-    };
-    let matcher = regex::RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive)
-        .build()
-        .map_err(|error| error.to_string())?;
-
-    let mut matches = Vec::new();
-    let mut total = 0;
-    for hit in matcher.find_iter(text) {
-        total += 1;
-        if matches.len() < max_results {
-            matches.push(context_snippet(text, hit.start(), hit.end(), context_chars));
-        }
-    }
-
-    Ok(SearchTextResult {
-        has_more: total > matches.len(),
-        matches,
-        total,
-    })
-}
-
-fn format_search_page_results(pattern: &str, result: &SearchTextResult) -> String {
-    if result.total == 0 {
-        return format!("No matches found for \"{pattern}\" on page.");
-    }
-
-    let mut lines = vec![format!(
-        "Found {} {} for \"{pattern}\" on page:",
-        result.total,
-        if result.total == 1 {
-            "match"
-        } else {
-            "matches"
-        }
-    )];
-    lines.push(String::new());
-    lines.extend(
-        result
-            .matches
-            .iter()
-            .enumerate()
-            .map(|(index, context)| format!("[{}] {context}", index + 1)),
-    );
-
-    if result.has_more {
-        lines.push(format!(
-            "\n... showing {} of {} total matches. Increase max_results to see more.",
-            result.matches.len(),
-            result.total
-        ));
-    }
-
-    lines.join("\n")
-}
-
-fn format_find_elements_results(selector: &str, elements: &[FoundElement]) -> String {
-    if elements.is_empty() {
-        return format!("No elements found matching \"{selector}\".");
-    }
-
-    let mut lines = vec![format!(
-        "Found {} {} matching \"{selector}\":",
-        elements.len(),
-        if elements.len() == 1 {
-            "element"
-        } else {
-            "elements"
-        }
-    )];
-    lines.push(String::new());
-    lines.extend(
-        elements
-            .iter()
-            .enumerate()
-            .map(|(index, element)| format_found_element(index, element)),
-    );
-    lines.join("\n")
-}
-
-fn format_found_element(index: usize, element: &FoundElement) -> String {
-    let mut parts = vec![format!("[{index}] <{}>", element.tag_name)];
-    if let Some(text) = element
-        .text
-        .as_deref()
-        .map(collapse_whitespace)
-        .filter(|text| !text.is_empty())
-    {
-        parts.push(format!("\"{}\"", truncate_chars(&text, 120)));
-    }
-    if !element.attributes.is_empty() {
-        let attrs = element
-            .attributes
-            .iter()
-            .map(|(key, value)| format!("{key}=\"{}\"", truncate_chars(value, 500)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        parts.push(format!("{{{attrs}}}"));
-    }
-    parts.join(" ")
-}
-
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-pub(crate) fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    let mut truncated = text.chars().take(max_chars).collect::<String>();
-    truncated.push_str("...");
-    truncated
-}
-
-fn context_snippet(text: &str, start: usize, end: usize, context_chars: usize) -> String {
-    let has_prefix = text[..start].chars().count() > context_chars;
-    let has_suffix = text[end..].chars().count() > context_chars;
-    let prefix: String = text[..start]
-        .chars()
-        .rev()
-        .take(context_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let suffix: String = text[end..].chars().take(context_chars).collect();
-    format!(
-        "{}{prefix}{}{suffix}{}",
-        if has_prefix { "..." } else { "" },
-        &text[start..end],
-        if has_suffix { "..." } else { "" }
-    )
 }
 
 /// Execute actions with the same high-level guard shape as browser-use:
