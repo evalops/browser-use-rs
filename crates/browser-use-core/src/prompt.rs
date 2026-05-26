@@ -26,17 +26,14 @@
 
 use crate::{
     AgentHistory, AgentRunError, AgentSettings, BrowserAction, BrowserStateSummary,
-    LlmScreenshotSize, ManagedFileSystem, MessageCompactionSettings, SensitiveDataValue,
-    now_seconds,
+    ManagedFileSystem, MessageCompactionSettings, SensitiveDataValue, now_seconds,
 };
-use base64::Engine;
-use browser_use_llm::{ChatMessage, ChatRequest, ContentPart, ImageDetailLevel, MessageRole};
+use browser_use_llm::{ChatMessage, ChatRequest, ContentPart, MessageRole};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-const PLACEHOLDER_4PX_SCREENSHOT: &str = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAFElEQVR4nGP8//8/AwwwMSAB3BwAlm4DBfIlvvkAAAAASUVORK5CYII=";
-
 mod history;
+mod images;
 mod schema;
 
 #[cfg(test)]
@@ -45,6 +42,9 @@ use history::{non_empty_prompt_text, render_loop_awareness, render_planning_cont
 pub(crate) use history::{
     render_history_items_for_compaction, render_previous_results, render_read_state_description,
     repeated_action_loop,
+};
+use images::{
+    append_latest_action_result_images, prompt_screenshot_data_url, prompt_visible_screenshot,
 };
 
 pub use schema::schema_to_compat_value;
@@ -634,116 +634,6 @@ pub(crate) fn retain_first_and_recent_history_items(
         retained.extend(history.items[recent_start..].iter().cloned());
     }
     history.items = retained;
-}
-
-fn screenshot_data_url(screenshot: &str) -> String {
-    if screenshot.starts_with("data:image/") {
-        screenshot.to_owned()
-    } else {
-        format!("data:image/png;base64,{screenshot}")
-    }
-}
-
-fn prompt_screenshot_data_url(screenshot: &str, size: Option<LlmScreenshotSize>) -> String {
-    size.and_then(|size| resize_screenshot_for_prompt(screenshot, size))
-        .unwrap_or_else(|| screenshot_data_url(screenshot))
-}
-
-fn resize_screenshot_for_prompt(screenshot: &str, size: LlmScreenshotSize) -> Option<String> {
-    let base64_png = screenshot_base64_payload(screenshot);
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64_png)
-        .ok()?;
-    let image = image::load_from_memory(&bytes).ok()?;
-    if image.width() == size.width() && image.height() == size.height() {
-        return Some(screenshot_data_url(screenshot));
-    }
-
-    let resized = image.resize_exact(
-        size.width(),
-        size.height(),
-        image::imageops::FilterType::Lanczos3,
-    );
-    let mut buffer = std::io::Cursor::new(Vec::new());
-    resized
-        .write_to(&mut buffer, image::ImageFormat::Png)
-        .ok()?;
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(buffer.into_inner())
-    ))
-}
-
-fn screenshot_base64_payload(screenshot: &str) -> &str {
-    if let Some((prefix, payload)) = screenshot.split_once(',')
-        && prefix.starts_with("data:image/")
-    {
-        payload
-    } else {
-        screenshot
-    }
-}
-
-fn prompt_visible_screenshot<'a>(
-    state: &'a BrowserStateSummary,
-    settings: &AgentSettings,
-) -> Option<&'a str> {
-    if !settings.use_vision.accepts_prompt_image() || is_new_tab_page(&state.url) {
-        return None;
-    }
-    state
-        .screenshot
-        .as_deref()
-        .filter(|screenshot| !screenshot.trim().is_empty())
-        .filter(|screenshot| !is_placeholder_4px_screenshot(screenshot))
-}
-
-fn is_placeholder_4px_screenshot(screenshot: &str) -> bool {
-    screenshot_base64_payload(screenshot).trim() == PLACEHOLDER_4PX_SCREENSHOT
-}
-
-fn append_latest_action_result_images(
-    content: &mut Vec<ContentPart>,
-    history: &AgentHistory,
-    vision_detail_level: ImageDetailLevel,
-) {
-    let Some(latest) = history.items.last() else {
-        return;
-    };
-
-    for image in latest.result.iter().flat_map(|result| result.images.iter()) {
-        let Some(data) = image.get("data").and_then(Value::as_str) else {
-            continue;
-        };
-        if data.is_empty() {
-            continue;
-        }
-        let name = image
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-
-        content.push(ContentPart::Text {
-            text: format!("Image from file: {name}"),
-        });
-        content.push(ContentPart::ImageUrl {
-            image_url: action_result_image_data_url(name, data),
-            detail: Some(vision_detail_level),
-        });
-    }
-}
-
-fn action_result_image_data_url(name: &str, data: &str) -> String {
-    if data.starts_with("data:image/") {
-        return data.to_owned();
-    }
-
-    let media_type = if name.to_ascii_lowercase().ends_with(".png") {
-        "image/png"
-    } else {
-        "image/jpeg"
-    };
-    format!("data:{media_type};base64,{data}")
 }
 
 fn truncate_clickable_elements_text(text: &str, max_chars: usize) -> String {
