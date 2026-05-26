@@ -71,7 +71,9 @@ where
     }
 
     pub(super) async fn record_completion_usage(&mut self, completion: &ChatCompletion<Value>) {
-        self.token_usage.add_completion(completion);
+        let provider = self.llm.provider().to_owned();
+        self.token_usage
+            .add_completion_with_provider(&provider, completion);
         self.refresh_usage_summary().await;
     }
 

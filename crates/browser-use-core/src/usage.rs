@@ -12,10 +12,12 @@ use std::collections::BTreeMap;
 
 const DEFAULT_MODEL_PRICING_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const DEFAULT_OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 
 #[derive(Debug, Clone)]
 struct TokenUsageEntry {
     model: String,
+    pricing_model: String,
     usage: ChatUsage,
 }
 
@@ -30,10 +32,13 @@ struct ModelPricing {
 pub(crate) struct TokenUsageTracker {
     include_cost: bool,
     pricing_url: String,
+    openrouter_models_url: String,
     base_summary: Option<UsageSummary>,
     entries: Vec<TokenUsageEntry>,
     pricing_data: Option<BTreeMap<String, ModelPricing>>,
     pricing_loaded: bool,
+    openrouter_pricing_data: Option<BTreeMap<String, ModelPricing>>,
+    openrouter_pricing_loaded: bool,
     client: reqwest::Client,
 }
 
@@ -52,15 +57,31 @@ impl TokenUsageTracker {
                 .is_ok_and(|value| value.eq_ignore_ascii_case("true"));
         let pricing_url = std::env::var("BROWSER_USE_MODEL_PRICING_URL")
             .unwrap_or_else(|_| DEFAULT_MODEL_PRICING_URL.to_owned());
+        let openrouter_models_url = std::env::var("BROWSER_USE_OPENROUTER_MODELS_URL")
+            .unwrap_or_else(|_| DEFAULT_OPENROUTER_MODELS_URL.to_owned());
         Self {
             include_cost,
             pricing_url,
+            openrouter_models_url,
             base_summary: None,
             entries: Vec::new(),
             pricing_data: None,
             pricing_loaded: false,
+            openrouter_pricing_data: None,
+            openrouter_pricing_loaded: false,
             client: reqwest::Client::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_pricing_urls(
+        mut self,
+        pricing_url: String,
+        openrouter_models_url: String,
+    ) -> Self {
+        self.pricing_url = pricing_url;
+        self.openrouter_models_url = openrouter_models_url;
+        self
     }
 
     pub(crate) fn with_base_summary(mut self, base_summary: Option<UsageSummary>) -> Self {
@@ -68,25 +89,31 @@ impl TokenUsageTracker {
         self
     }
 
-    pub(crate) fn add_completion(&mut self, completion: &ChatCompletion<Value>) {
+    pub(crate) fn add_completion_with_provider(
+        &mut self,
+        provider: &str,
+        completion: &ChatCompletion<Value>,
+    ) {
         let Some(usage) = completion.usage.clone() else {
             return;
         };
         self.entries.push(TokenUsageEntry {
             model: completion.model.clone(),
+            pricing_model: pricing_model_name(provider, &completion.model),
             usage,
         });
     }
 
     pub(crate) async fn summary(&mut self) -> UsageSummary {
         self.ensure_pricing_loaded().await;
+        self.ensure_openrouter_pricing_loaded().await;
         let mut summary = self.base_summary.clone().unwrap_or_default();
 
         for entry in &self.entries {
             add_usage_to_summary(
                 &mut summary,
                 entry,
-                self.pricing_for_model(&entry.model)
+                self.pricing_for_model(&entry.pricing_model)
                     .map(|pricing| calculate_usage_cost(&entry.usage, pricing)),
             );
         }
@@ -109,14 +136,51 @@ impl TokenUsageTracker {
         self.pricing_data = Some(pricing);
     }
 
+    async fn ensure_openrouter_pricing_loaded(&mut self) {
+        if !self.include_cost
+            || self.openrouter_pricing_loaded
+            || !self
+                .entries
+                .iter()
+                .any(|entry| is_openrouter_pricing_model(&entry.pricing_model))
+        {
+            return;
+        }
+        self.openrouter_pricing_loaded = true;
+        if let Ok(response) = self.client.get(&self.openrouter_models_url).send().await {
+            if let Ok(value) = response.json::<Value>().await {
+                self.openrouter_pricing_data = Some(openrouter_pricing_from_models_response(value));
+            }
+        }
+    }
+
     fn pricing_for_model(&self, model: &str) -> Option<&ModelPricing> {
         if !self.include_cost {
             return None;
+        }
+        if let Some(pricing) = self.openrouter_pricing_for_model(model) {
+            return Some(pricing);
         }
         let pricing = self.pricing_data.as_ref()?;
         pricing
             .get(model)
             .or_else(|| litellm_model_alias(model).and_then(|alias| pricing.get(alias)))
+    }
+
+    fn openrouter_pricing_for_model(&self, model: &str) -> Option<&ModelPricing> {
+        if !is_openrouter_pricing_model(model) {
+            return None;
+        }
+        let model_id = normalize_openrouter_model_id(model)?;
+        self.openrouter_pricing_data.as_ref()?.get(model_id)
+    }
+}
+
+fn pricing_model_name(provider: &str, model: &str) -> String {
+    if provider.eq_ignore_ascii_case("openrouter") && !is_openrouter_pricing_model(model) {
+        format!("openrouter/{model}")
+    } else {
+        model.to_owned()
     }
 }
 
@@ -161,6 +225,61 @@ fn litellm_model_alias(model: &str) -> Option<&'static str> {
         "gemini-flash-latest" => Some("gemini/gemini-flash-latest"),
         "gemini-3-flash-preview" => Some("gemini/gemini-3-flash-preview"),
         "gemini-3.1-flash-lite" => Some("gemini/gemini-3.1-flash-lite-preview"),
+        _ => None,
+    }
+}
+
+fn is_openrouter_pricing_model(model: &str) -> bool {
+    model.starts_with("openrouter/") || model.starts_with("openrouter-")
+}
+
+fn normalize_openrouter_model_id(model: &str) -> Option<&str> {
+    let model = model
+        .strip_prefix("openrouter/")
+        .or_else(|| model.strip_prefix("openrouter-"))
+        .unwrap_or(model);
+    model.contains('/').then_some(model)
+}
+
+fn openrouter_pricing_from_models_response(value: Value) -> BTreeMap<String, ModelPricing> {
+    let Some(models) = value.get("data").and_then(Value::as_array) else {
+        return BTreeMap::new();
+    };
+
+    let mut pricing = BTreeMap::new();
+    for model in models {
+        let Some(model_id) = model.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(openrouter_pricing) = model.get("pricing").and_then(Value::as_object) else {
+            continue;
+        };
+        let input_cost_per_token = pricing_number(openrouter_pricing.get("prompt"));
+        let output_cost_per_token = pricing_number(openrouter_pricing.get("completion"));
+        if input_cost_per_token.is_none() && output_cost_per_token.is_none() {
+            continue;
+        }
+        pricing.insert(
+            model_id.to_owned(),
+            ModelPricing {
+                input_cost_per_token,
+                output_cost_per_token,
+                cache_read_input_token_cost: pricing_number(
+                    openrouter_pricing.get("input_cache_read"),
+                ),
+                cache_creation_input_token_cost: pricing_number(
+                    openrouter_pricing.get("input_cache_write"),
+                ),
+            },
+        );
+    }
+    pricing
+}
+
+fn pricing_number(value: Option<&Value>) -> Option<f64> {
+    match value? {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) if !text.trim().is_empty() => text.parse::<f64>().ok(),
         _ => None,
     }
 }

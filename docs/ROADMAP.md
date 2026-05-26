@@ -346,8 +346,8 @@ Implemented:
   judge LLM routing, per-step error slots, runtime `generate_gif` GIF artifact
   output from recorded screenshots, Gemini client attribution headers, provider
   token usage/cost summaries for `calculate_cost`, current Browser Use
-  `bu-latest`/`smart` pricing aliases, the upstream no-op
-  `include_tool_call_examples` setting,
+  `bu-latest`/`smart` pricing aliases, provider-disambiguated dynamic
+  OpenRouter pricing, the upstream no-op `include_tool_call_examples` setting,
   upstream-style message compaction
   settings with non-fatal summary requests, compacted-memory prompt blocks, and
   checkpoint preservation, model-output/action/thought accessors,
