@@ -122,6 +122,8 @@ cargo test --workspace
 python3 scripts/release-version.py --check
 python3 scripts/release-version.py --self-test
 python3 scripts/upstream-drift.py --self-test
+python3 -m unittest scripts/test_openai_mcp_smoke.py
+python3 scripts/openai_mcp_smoke.py
 ```
 
 ## License

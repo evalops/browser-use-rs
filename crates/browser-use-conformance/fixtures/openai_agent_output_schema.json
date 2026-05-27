@@ -1,0 +1,1223 @@
+{
+  "$defs": {
+    "AgentCurrentState": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation_previous_goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "memory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thinking": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "evaluation_previous_goal",
+        "memory",
+        "next_goal",
+        "thinking"
+      ],
+      "type": "object"
+    },
+    "BrowserAction": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "extract": {
+              "additionalProperties": false,
+              "description": "Free-text or schema-guided page extraction.",
+              "properties": {
+                "already_collected": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "extract_images": {
+                  "type": "boolean"
+                },
+                "extract_links": {
+                  "type": "boolean"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "start_from_char": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "already_collected",
+                "extract_images",
+                "extract_links",
+                "query",
+                "start_from_char"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "extract"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "search_page": {
+              "additionalProperties": false,
+              "description": "Text or regex search against page content.",
+              "properties": {
+                "case_sensitive": {
+                  "type": "boolean"
+                },
+                "context_chars": {
+                  "type": "integer"
+                },
+                "css_scope": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "max_results": {
+                  "type": "integer"
+                },
+                "regex": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "case_sensitive",
+                "context_chars",
+                "css_scope",
+                "max_results",
+                "regex"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "search_page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "find_elements": {
+              "additionalProperties": false,
+              "description": "CSS selector lookup against the page.",
+              "properties": {
+                "attributes": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "include_text": {
+                  "type": "boolean"
+                },
+                "max_results": {
+                  "type": "integer"
+                },
+                "selector": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "attributes",
+                "include_text",
+                "max_results",
+                "selector"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "find_elements"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "search": {
+              "additionalProperties": false,
+              "properties": {
+                "engine": {
+                  "$ref": "#/$defs/SearchEngine"
+                },
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "engine",
+                "query"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "search"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "navigate": {
+              "additionalProperties": false,
+              "properties": {
+                "new_tab": {
+                  "type": "boolean"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "new_tab",
+                "url"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "navigate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "go_back": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "description"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "go_back"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "click": {
+              "additionalProperties": false,
+              "properties": {
+                "coordinate_x": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "coordinate_y": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "index": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "coordinate_x",
+                "coordinate_y",
+                "index"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "click"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "additionalProperties": false,
+              "properties": {
+                "clear": {
+                  "type": "boolean"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "clear",
+                "index",
+                "text"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "done": {
+              "additionalProperties": false,
+              "properties": {
+                "files_to_display": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "files_to_display",
+                "success",
+                "text"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "done"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "switch_tab": {
+              "additionalProperties": false,
+              "properties": {
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "switch_tab"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "close_tab": {
+              "additionalProperties": false,
+              "properties": {
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "close_tab"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "scroll": {
+              "additionalProperties": false,
+              "properties": {
+                "down": {
+                  "type": "boolean"
+                },
+                "index": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "pages": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "down",
+                "index",
+                "pages"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "scroll"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "find_text": {
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "find_text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "evaluate": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "evaluate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "wait": {
+              "additionalProperties": false,
+              "properties": {
+                "seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "seconds"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "send_keys": {
+              "additionalProperties": false,
+              "properties": {
+                "keys": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "keys"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "send_keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "upload_file": {
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index",
+                "path"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "upload_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "write_file": {
+              "additionalProperties": false,
+              "properties": {
+                "append": {
+                  "type": "boolean"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "file_name": {
+                  "type": "string"
+                },
+                "leading_newline": {
+                  "type": "boolean"
+                },
+                "trailing_newline": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "append",
+                "content",
+                "file_name",
+                "leading_newline",
+                "trailing_newline"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "write_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "read_file": {
+              "additionalProperties": false,
+              "properties": {
+                "file_name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file_name"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "read_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "replace_file": {
+              "additionalProperties": false,
+              "properties": {
+                "file_name": {
+                  "type": "string"
+                },
+                "new_str": {
+                  "type": "string"
+                },
+                "old_str": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file_name",
+                "new_str",
+                "old_str"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "replace_file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "save_as_pdf": {
+              "additionalProperties": false,
+              "properties": {
+                "file_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "landscape": {
+                  "type": "boolean"
+                },
+                "paper_format": {
+                  "type": "string"
+                },
+                "print_background": {
+                  "type": "boolean"
+                },
+                "scale": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "file_name",
+                "landscape",
+                "paper_format",
+                "print_background",
+                "scale"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "save_as_pdf"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "get_dropdown_options": {
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "index"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "get_dropdown_options"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "select_dropdown_option": {
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index",
+                "text"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "select_dropdown_option"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "Browser-use action model: each serialized action is a one-key object."
+    },
+    "ClickElementAction": {
+      "additionalProperties": false,
+      "properties": {
+        "coordinate_x": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "coordinate_y": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "coordinate_x",
+        "coordinate_y",
+        "index"
+      ],
+      "type": "object"
+    },
+    "CloseTabAction": {
+      "additionalProperties": false,
+      "properties": {
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "DoneAction": {
+      "additionalProperties": false,
+      "properties": {
+        "files_to_display": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "files_to_display",
+        "success",
+        "text"
+      ],
+      "type": "object"
+    },
+    "EvaluateAction": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "ExtractAction": {
+      "additionalProperties": false,
+      "description": "Free-text or schema-guided page extraction.",
+      "properties": {
+        "already_collected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extract_images": {
+          "type": "boolean"
+        },
+        "extract_links": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string"
+        },
+        "start_from_char": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "already_collected",
+        "extract_images",
+        "extract_links",
+        "query",
+        "start_from_char"
+      ],
+      "type": "object"
+    },
+    "FindElementsAction": {
+      "additionalProperties": false,
+      "description": "CSS selector lookup against the page.",
+      "properties": {
+        "attributes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "include_text": {
+          "type": "boolean"
+        },
+        "max_results": {
+          "type": "integer"
+        },
+        "selector": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attributes",
+        "include_text",
+        "max_results",
+        "selector"
+      ],
+      "type": "object"
+    },
+    "FindTextAction": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "GetDropdownOptionsAction": {
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "type": "object"
+    },
+    "InputTextAction": {
+      "additionalProperties": false,
+      "properties": {
+        "clear": {
+          "type": "boolean"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clear",
+        "index",
+        "text"
+      ],
+      "type": "object"
+    },
+    "NavigateAction": {
+      "additionalProperties": false,
+      "properties": {
+        "new_tab": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "new_tab",
+        "url"
+      ],
+      "type": "object"
+    },
+    "NoParamsAction": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "type": "object"
+    },
+    "ReadFileAction": {
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name"
+      ],
+      "type": "object"
+    },
+    "ReplaceFileAction": {
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "new_str": {
+          "type": "string"
+        },
+        "old_str": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name",
+        "new_str",
+        "old_str"
+      ],
+      "type": "object"
+    },
+    "SaveAsPdfAction": {
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "landscape": {
+          "type": "boolean"
+        },
+        "paper_format": {
+          "type": "string"
+        },
+        "print_background": {
+          "type": "boolean"
+        },
+        "scale": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "file_name",
+        "landscape",
+        "paper_format",
+        "print_background",
+        "scale"
+      ],
+      "type": "object"
+    },
+    "ScreenshotAction": {
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "file_name"
+      ],
+      "type": "object"
+    },
+    "ScrollAction": {
+      "additionalProperties": false,
+      "properties": {
+        "down": {
+          "type": "boolean"
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pages": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "down",
+        "index",
+        "pages"
+      ],
+      "type": "object"
+    },
+    "SearchAction": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/SearchEngine"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "query"
+      ],
+      "type": "object"
+    },
+    "SearchEngine": {
+      "enum": [
+        "duckduckgo",
+        "google",
+        "bing"
+      ],
+      "type": "string"
+    },
+    "SearchPageAction": {
+      "additionalProperties": false,
+      "description": "Text or regex search against page content.",
+      "properties": {
+        "case_sensitive": {
+          "type": "boolean"
+        },
+        "context_chars": {
+          "type": "integer"
+        },
+        "css_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_results": {
+          "type": "integer"
+        },
+        "regex": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_sensitive",
+        "context_chars",
+        "css_scope",
+        "max_results",
+        "regex"
+      ],
+      "type": "object"
+    },
+    "SelectDropdownOptionAction": {
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SendKeysAction": {
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "type": "object"
+    },
+    "SwitchTabAction": {
+      "additionalProperties": false,
+      "properties": {
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "UploadFileAction": {
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WaitAction": {
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "type": "object"
+    },
+    "WriteFileAction": {
+      "additionalProperties": false,
+      "properties": {
+        "append": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "leading_newline": {
+          "type": "boolean"
+        },
+        "trailing_newline": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "append",
+        "content",
+        "file_name",
+        "leading_newline",
+        "trailing_newline"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "items": {
+        "$ref": "#/$defs/BrowserAction"
+      },
+      "type": "array"
+    },
+    "current_plan_item": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "evaluation_previous_goal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "memory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "next_goal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_update": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "thinking": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "current_plan_item",
+    "evaluation_previous_goal",
+    "memory",
+    "next_goal",
+    "plan_update",
+    "thinking"
+  ],
+  "title": "AgentOutput",
+  "type": "object"
+}
