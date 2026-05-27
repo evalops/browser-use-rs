@@ -37,6 +37,9 @@ jobs:
       - name: Upstream drift helper self-test
         run: python3 scripts/upstream-drift.py --self-test
 
+      - name: OpenAI MCP smoke helper self-test
+        run: python3 -m unittest scripts/test_openai_mcp_smoke.py
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -47,3 +50,6 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: No-secret OpenAI MCP smoke
+        run: python3 scripts/openai_mcp_smoke.py
