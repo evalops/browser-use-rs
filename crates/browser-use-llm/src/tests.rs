@@ -157,6 +157,119 @@ fn openai_payload_uses_structured_outputs_format() {
 }
 
 #[test]
+fn openai_json_schema_mode_makes_schema_strict() {
+    let payload = openai_chat_payload(
+        "gpt-test",
+        "agent_output",
+        OpenAiStructuredOutputMode::JsonSchema,
+        OpenAiSchemaTransform::Default,
+        ChatRequest {
+            messages: vec![ChatMessage::text(MessageRole::User, "Return JSON")],
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "optional_note": { "type": ["string", "null"] },
+                    "engine": {
+                        "allOf": [
+                            { "$ref": "#/definitions/SearchEngine" }
+                        ],
+                        "default": "duckduckgo"
+                    },
+                    "freeform": true,
+                    "nested": {
+                        "type": "object",
+                        "properties": {
+                            "ok": {
+                                "type": "boolean",
+                                "default": true,
+                                "format": "custom"
+                            }
+                        }
+                    },
+                    "choice": {
+                        "oneOf": [
+                            { "type": "string" },
+                            { "type": "number" }
+                        ]
+                    },
+                    "action": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "find_elements": {
+                                        "$ref": "#/definitions/FindElementsAction"
+                                    }
+                                },
+                                "required": ["find_elements"]
+                            }
+                        ]
+                    }
+                },
+                "required": ["nested"],
+                "definitions": {
+                    "SearchEngine": {
+                        "enum": ["duckduckgo", "google"],
+                        "type": "string"
+                    },
+                    "FindElementsAction": {
+                        "type": "object",
+                        "properties": {
+                            "attributes": {
+                                "type": ["array", "null"],
+                                "items": { "type": "string" }
+                            },
+                            "include_text": { "type": "boolean" }
+                        }
+                    }
+                }
+            })),
+        },
+    );
+
+    let schema = &payload["response_format"]["json_schema"]["schema"];
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(
+        schema["required"],
+        json!(["action", "choice", "engine", "nested", "optional_note"])
+    );
+    assert!(schema.get("definitions").is_none());
+    assert!(schema.get("$defs").is_some());
+    assert_eq!(
+        schema["properties"]["engine"]["$ref"],
+        "#/$defs/SearchEngine"
+    );
+    assert!(schema["properties"].get("freeform").is_none());
+    assert_eq!(
+        schema["properties"]["nested"]["additionalProperties"],
+        false
+    );
+    assert_eq!(schema["properties"]["nested"]["required"], json!(["ok"]));
+    assert!(
+        schema["properties"]["nested"]["properties"]["ok"]
+            .get("default")
+            .is_none()
+    );
+    assert!(
+        schema["properties"]["nested"]["properties"]["ok"]
+            .get("format")
+            .is_none()
+    );
+    assert!(schema["properties"]["choice"].get("oneOf").is_none());
+    assert!(schema["properties"]["choice"].get("anyOf").is_some());
+    assert!(
+        schema["properties"]["action"]["anyOf"][0]["properties"]["find_elements"]
+            .get("$ref")
+            .is_none()
+    );
+    assert_eq!(
+        schema["properties"]["action"]["anyOf"][0]["properties"]["find_elements"]["properties"]["attributes"]
+            ["type"],
+        json!(["array", "null"])
+    );
+}
+
+#[test]
 fn mistral_schema_transform_strips_unsupported_validation_keywords() {
     let payload = openai_chat_payload(
         "mistral-test",

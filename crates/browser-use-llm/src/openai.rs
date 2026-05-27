@@ -236,10 +236,17 @@ pub(crate) fn openai_chat_payload(
     schema_transform: OpenAiSchemaTransform,
     mut request: ChatRequest,
 ) -> Value {
-    let output_schema = request
-        .output_schema
-        .take()
-        .map(|schema| transform_schema(schema, schema_transform));
+    let output_schema = request.output_schema.take().map(|schema| {
+        let schema = transform_schema(schema, schema_transform);
+        if matches!(
+            structured_output_mode,
+            OpenAiStructuredOutputMode::JsonSchema | OpenAiStructuredOutputMode::ToolCall
+        ) {
+            strict_openai_schema(schema)
+        } else {
+            schema
+        }
+    });
     if matches!(
         structured_output_mode,
         OpenAiStructuredOutputMode::JsonObject | OpenAiStructuredOutputMode::PromptOnly
@@ -308,6 +315,163 @@ fn transform_schema(schema: Value, schema_transform: OpenAiSchemaTransform) -> V
         OpenAiSchemaTransform::MistralCompatible => {
             strip_mistral_unsupported_schema_keywords(schema)
         }
+    }
+}
+
+fn strict_openai_schema(value: Value) -> Value {
+    let mut schema = strict_openai_schema_value(value);
+    if let Some(definitions) = schema.get("$defs").and_then(Value::as_object).cloned() {
+        // OpenAI accepts local refs generally, but rejects the browser action
+        // union when an anyOf variant's property is only a $defs ref.
+        inline_any_of_property_refs(&mut schema, &definitions);
+    }
+    schema
+}
+
+fn strict_openai_schema_value(value: Value) -> Value {
+    match value {
+        Value::Object(mut entries) => {
+            for entry in entries.values_mut() {
+                *entry = strict_openai_schema_value(std::mem::take(entry));
+            }
+
+            if let Some(definitions) = entries.remove("definitions") {
+                entries.insert("$defs".to_owned(), definitions);
+            }
+            if let Some(Value::String(reference)) = entries.get_mut("$ref") {
+                if let Some(target) = reference.strip_prefix("#/definitions/") {
+                    *reference = format!("#/$defs/{target}");
+                }
+            }
+
+            remove_openai_strict_unsupported_keywords(&mut entries);
+
+            if let Some(ref_schema) = single_ref_all_of(&entries) {
+                return ref_schema;
+            }
+
+            if let Some(one_of) = entries.remove("oneOf") {
+                entries.entry("anyOf".to_owned()).or_insert(one_of);
+            }
+
+            if is_object_schema(&entries) {
+                if let Some(Value::Object(properties)) = entries.get_mut("properties") {
+                    properties.retain(|_, schema| !matches!(schema, Value::Bool(_)));
+                }
+                entries.insert("additionalProperties".to_owned(), Value::Bool(false));
+                if let Some(Value::Object(properties)) = entries.get("properties") {
+                    entries.insert(
+                        "required".to_owned(),
+                        Value::Array(properties.keys().cloned().map(Value::String).collect()),
+                    );
+                }
+            }
+
+            Value::Object(entries)
+        }
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(strict_openai_schema_value).collect())
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value,
+    }
+}
+
+fn inline_any_of_property_refs(value: &mut Value, definitions: &serde_json::Map<String, Value>) {
+    match value {
+        Value::Object(entries) => {
+            if let Some(Value::Array(variants)) = entries.get_mut("anyOf") {
+                for variant in variants {
+                    inline_direct_property_refs(variant, definitions);
+                }
+            }
+
+            for entry in entries.values_mut() {
+                inline_any_of_property_refs(entry, definitions);
+            }
+        }
+        Value::Array(values) => {
+            for entry in values {
+                inline_any_of_property_refs(entry, definitions);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn inline_direct_property_refs(value: &mut Value, definitions: &serde_json::Map<String, Value>) {
+    let Value::Object(entries) = value else {
+        return;
+    };
+    let Some(Value::Object(properties)) = entries.get_mut("properties") else {
+        return;
+    };
+
+    for property in properties.values_mut() {
+        if let Some(definition) = local_definition_ref(property, definitions) {
+            *property = definition;
+        }
+    }
+}
+
+fn local_definition_ref(
+    value: &Value,
+    definitions: &serde_json::Map<String, Value>,
+) -> Option<Value> {
+    let reference = value.as_object()?.get("$ref")?.as_str()?;
+    let name = reference.strip_prefix("#/$defs/")?;
+    definitions.get(name).cloned()
+}
+
+fn remove_openai_strict_unsupported_keywords(entries: &mut serde_json::Map<String, Value>) {
+    for key in [
+        "default",
+        "format",
+        "minimum",
+        "maximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "patternProperties",
+        "not",
+        "dependentRequired",
+        "dependentSchemas",
+        "if",
+        "then",
+        "else",
+    ] {
+        entries.remove(key);
+    }
+}
+
+fn single_ref_all_of(entries: &serde_json::Map<String, Value>) -> Option<Value> {
+    if entries.len() != 1 {
+        return None;
+    }
+    let Some(Value::Array(items)) = entries.get("allOf") else {
+        return None;
+    };
+    let [Value::Object(item)] = items.as_slice() else {
+        return None;
+    };
+    if item.len() == 1 && item.contains_key("$ref") {
+        Some(Value::Object(item.clone()))
+    } else {
+        None
+    }
+}
+
+fn is_object_schema(entries: &serde_json::Map<String, Value>) -> bool {
+    if entries.contains_key("properties") {
+        return true;
+    }
+
+    match entries.get("type") {
+        Some(Value::String(kind)) => kind == "object",
+        Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "object"),
+        _ => false,
     }
 }
 
